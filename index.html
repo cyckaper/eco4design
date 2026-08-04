@@ -1,0 +1,3266 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>棲共生 · Qi-Coexistence · 生態基地分析工作流工具</title>
+<meta name="description" content="景觀生態設計工作流工具——選擇基地位置、設定焦點物種與條件，自動生成結構化提示詞進行完整的生態共存設計分析。" />
+<meta name="author" content="NTU Horticulture and Landscape Architecture" />
+<meta name="theme-color" content="#4a5d3f" />
+<meta property="og:title" content="棲共生 Qi-Coexistence" />
+<meta property="og:description" content="生態基地分析工作流工具——以實證為基礎的景觀生態設計輔助。" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌿%3C/text%3E%3C/svg%3E" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Noto+Serif+TC:wght@300;400;500;700&family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet-image@0.4.0/leaflet-image.js"></script>
+<style>
+  :root {
+    --bg: #f3eedf; --bg-alt: #ebe4cf; --paper: #faf6ea;
+    --ink: #1f2d22; --ink-soft: #3d4a3f;
+    --moss: #4a5d3f; --moss-light: #7a8a6a; --moss-pale: #dfe7d2;
+    --clay: #b86b4a; --clay-light: #d49477; --clay-pale: #f4dcd0;
+    --gold: #a08438; --gold-pale: #f0e2c4;
+    --border: #c9bd9a; --border-soft: #dcd2b3;
+    --serif: "Noto Serif TC", "Fraunces", serif;
+    --display: "Fraunces", "Noto Serif TC", serif;
+    --body: "Noto Sans TC", "Inter", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(ellipse at top, var(--paper) 0%, var(--bg) 45%, var(--bg-alt) 100%); font-family: var(--body); color: var(--ink); line-height: 1.6; min-height: 100vh; }
+  .container { max-width: 920px; margin: 0 auto; padding: 2rem 1rem 5rem; }
+  header.app-header { text-align: center; margin-bottom: 2rem; }
+  .tag { display: inline-flex; align-items: center; gap: 8px; padding: 5px 14px; border: 1px solid var(--border); border-radius: 999px; font-size: 10.5px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--moss-light); background: rgba(250, 246, 234, 0.6); margin-bottom: 16px; }
+  h1.title { font-family: var(--display); font-weight: 400; font-size: clamp(2rem, 5vw, 3rem); margin: 0 0 6px; letter-spacing: -0.01em; line-height: 1.1; }
+  h1.title .dot { color: var(--clay); font-style: italic; }
+  .subtitle { font-family: var(--serif); font-size: 14px; color: var(--ink-soft); margin: 0 auto; max-width: 540px; line-height: 1.65; }
+  .divider { width: 60px; height: 1px; background: var(--border); margin: 18px auto 0; position: relative; }
+  .divider::after { content: "❋"; position: absolute; top: -9px; left: 50%; transform: translateX(-50%); background: var(--bg); color: var(--moss-light); padding: 0 6px; font-size: 11px; }
+
+  section.card { background: var(--paper); border: 1px solid var(--border); border-radius: 4px; padding: 1.5rem 1.25rem 1.25rem; margin-bottom: 22px; box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 14px 28px -22px rgba(60,40,20,0.15); }
+  .section-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border-soft); }
+  .section-num { width: 30px; height: 30px; border-radius: 50%; background: var(--clay); color: white; display: flex; align-items: center; justify-content: center; font-family: var(--display); font-weight: 500; font-size: 14px; font-style: italic; }
+  .section-num.moss { background: var(--moss); }
+  .section-head h2 { font-family: var(--display); font-weight: 500; font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  .section-eng { font-family: var(--display); font-style: italic; font-size: 11px; color: var(--moss-light); letter-spacing: 0.08em; margin-top: 1px; }
+
+  /* Map */
+  #map { height: 380px; width: 100%; border-radius: 3px; border: 1px solid var(--border); margin-bottom: 14px; position: relative; z-index: 0; }
+  .map-fallback { display: none; padding: 20px; text-align: center; background: var(--bg-alt); border: 1px dashed var(--border); border-radius: 3px; color: var(--ink-soft); font-size: 13px; font-family: var(--serif); }
+
+  /* Coord inputs */
+  .coord-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 10px; }
+  .coord-row label { display: flex; flex-direction: column; gap: 4px; }
+  .coord-row label span { font-size: 11px; color: var(--clay); font-family: var(--serif); letter-spacing: 0.05em; }
+  input[type="text"], input[type="number"], textarea { font-family: var(--body); font-size: 14px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 3px; background: rgba(255,255,255,0.55); color: var(--ink); width: 100%; }
+  input:focus, textarea:focus { outline: none; border-color: var(--moss); background: white; }
+  .name-row { margin-bottom: 6px; }
+  .name-row label { display: flex; flex-direction: column; gap: 4px; }
+  .name-row label span { font-size: 11px; color: var(--clay); font-family: var(--serif); letter-spacing: 0.05em; }
+  .name-row .name-label { display: block; font-size: 11px; color: var(--clay); font-family: var(--serif); letter-spacing: 0.05em; margin-bottom: 4px; }
+  .name-input-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
+  .geocode-results { margin-top: 6px; border: 1px solid var(--border); border-radius: 3px; background: #fff; overflow: hidden; }
+  .geocode-item { display: block; width: 100%; text-align: left; background: none; border: none;
+    border-bottom: 1px solid var(--border-soft); padding: 9px 12px; cursor: pointer; font-family: var(--serif); }
+  .geocode-item:last-child { border-bottom: none; }
+  .geocode-item:hover { background: var(--moss-pale); }
+  .geocode-item .g-name { display: block; font-size: 13.5px; color: var(--ink); font-weight: 500; }
+  .geocode-item .g-addr { display: block; font-size: 11.5px; color: var(--moss-light); margin-top: 2px; line-height: 1.45; }
+  .btn-mini { padding: 6px 14px; background: var(--moss-pale); color: var(--moss); border: 1px solid var(--moss-light); border-radius: 3px; font-family: var(--serif); font-size: 12px; cursor: pointer; align-self: end; transition: all 0.15s; }
+  .btn-mini:hover { background: var(--moss); color: white; }
+
+  /* Preset combo buttons */
+  .preset-label { font-size: 12px; color: var(--ink-soft); font-family: var(--serif); margin: 12px 0 6px; letter-spacing: 0.03em; }
+  .preset-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .preset-btn { padding: 6px 12px; background: rgba(255,255,255,0.4); border: 1px solid var(--border); border-radius: 999px; font-family: var(--serif); font-size: 12px; cursor: pointer; color: var(--ink-soft); transition: all 0.15s; }
+  .preset-btn:hover { background: var(--gold-pale); color: var(--ink); border-color: var(--gold); }
+  .preset-btn .desc { display: block; font-size: 10px; color: var(--moss-light); margin-top: 1px; }
+
+  /* Chip input */
+  .chip-container { border: 1px solid var(--border); background: rgba(255,255,255,0.55); border-radius: 3px; padding: 8px 10px 4px; min-height: 44px; cursor: text; transition: all 0.15s; }
+  .chip-container:focus-within { border-color: var(--moss); background: white; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 4px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; background: var(--moss-pale); border: 1px solid var(--moss-light); color: var(--moss); border-radius: 999px; font-size: 12.5px; font-family: var(--serif); }
+  .chip button { background: none; border: none; color: var(--moss); cursor: pointer; padding: 0 4px; font-size: 16px; line-height: 1; opacity: 0.6; transition: opacity 0.15s; }
+  .chip button:hover { opacity: 1; color: var(--clay); }
+  .chip-input { border: none !important; background: none !important; padding: 4px 0 !important; min-width: 120px; flex: 1; font-size: 13px !important; }
+  .chip-input:focus { outline: none; }
+  .chips-empty { color: var(--moss-light); font-family: var(--serif); font-size: 12px; font-style: italic; padding: 2px 4px; }
+
+  /* Dedicated "add custom item" row — explicit + button for clarity */
+  .chip-add-row { display: flex; gap: 8px; align-items: stretch; margin-top: 8px; }
+  .chip-add-input { flex: 1; padding: 9px 12px; border: 1px solid var(--border); border-radius: 3px; background: white; font-family: var(--body); font-size: 13.5px; color: var(--ink); transition: border-color 0.15s, box-shadow 0.15s; }
+  .chip-add-input::placeholder { color: var(--moss-light); font-style: italic; font-size: 12.5px; }
+  .chip-add-input:focus { outline: none; border-color: var(--moss); box-shadow: 0 0 0 2px var(--moss-pale); }
+  .btn-chip-add { padding: 8px 18px; background: var(--moss); color: white; border: none; border-radius: 3px; font-family: var(--serif); font-size: 13.5px; font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap; box-shadow: 0 1px 0 rgba(0,0,0,0.12); }
+  .btn-chip-add:hover { background: var(--clay); }
+  .btn-chip-add:active { transform: translateY(1px); box-shadow: none; }
+  .chip-hint { font-size: 11px; color: var(--moss-light); font-family: var(--serif); font-style: italic; margin-top: 4px; }
+
+  /* Quick chip suggestions */
+  .quick-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .quick-chip { padding: 3px 10px; background: rgba(255,255,255,0.3); border: 1px dashed var(--border); border-radius: 999px; font-size: 11.5px; font-family: var(--serif); cursor: pointer; color: var(--ink-soft); transition: all 0.15s; }
+  .quick-chip:hover { background: var(--moss-pale); color: var(--moss); border-color: var(--moss-light); border-style: solid; }
+  .quick-chip.taken { opacity: 0.35; cursor: default; pointer-events: none; }
+  .quick-cat { font-size: 10.5px; color: var(--clay); font-family: var(--serif); margin-top: 8px; margin-bottom: 3px; letter-spacing: 0.05em; }
+  .subsection-divider { border-top: 1px dashed var(--border); margin: 20px 0 14px; }
+  .subsection-head { margin-bottom: 4px; }
+  .subsection-title { display:block; font-family: var(--display); font-size: 15px; color: var(--moss); letter-spacing: 0.02em; }
+  .subsection-eng { display:block; font-family: var(--serif); font-size: 11.5px; color: var(--moss-light); font-style: italic; line-height: 1.5; margin-top: 2px; }
+
+  textarea { resize: vertical; min-height: 60px; font-family: var(--body); }
+
+  /* Prompt preview */
+  .prompt-preview { background: #1f2d22; color: #d4dccc; padding: 14px 16px; border-radius: 3px; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow-y: auto; border: 1px solid var(--ink); }
+  .prompt-preview .placeholder { color: var(--clay-light); font-style: italic; }
+
+  /* Action buttons */
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+  .btn { padding: 10px 18px; border: none; border-radius: 3px; font-family: var(--serif); font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-primary { background: var(--clay); color: white; }
+  .btn-primary:hover { background: #9a5538; transform: translateY(-1px); }
+  .btn-secondary { background: var(--moss); color: white; }
+  .btn-secondary:hover { background: #3a4d2f; transform: translateY(-1px); }
+  .btn-ghost { background: transparent; color: var(--ink-soft); border: 1px solid var(--border); }
+  .btn-ghost:hover { background: var(--bg-alt); border-color: var(--ink-soft); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  /* Big primary analyze button — full width, prominent */
+  .btn-analyze-big { display: flex; width: 100%; justify-content: center; align-items: center; padding: 16px 28px; font-size: 16px; font-weight: 600; background: var(--clay); color: white; border: none; border-radius: 4px; cursor: pointer; transition: all 0.15s; box-shadow: 0 2px 0 #7a3a1f, 0 4px 12px -2px rgba(184,107,74,0.4); margin: 14px 0 12px; font-family: var(--serif); letter-spacing: 0.02em; }
+  .btn-analyze-big:hover:not(:disabled) { background: #a05538; transform: translateY(-1px); box-shadow: 0 3px 0 #7a3a1f, 0 6px 16px -2px rgba(184,107,74,0.5); }
+  .btn-analyze-big:active:not(:disabled) { transform: translateY(1px); box-shadow: 0 1px 0 #7a3a1f, 0 2px 6px -1px rgba(184,107,74,0.3); }
+  .btn-analyze-big:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Alternative actions row — small text links */
+  .alt-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 8px 4px; font-family: var(--serif); font-size: 12.5px; line-height: 1.8; }
+  .alt-actions .alt-label { color: var(--moss-light); font-style: italic; font-size: 11.5px; margin-right: 4px; }
+  .btn-link { background: none; border: none; color: var(--moss); font-family: var(--serif); font-size: 12.5px; cursor: pointer; padding: 2px 0; text-decoration: underline dotted; text-underline-offset: 3px; transition: color 0.15s; }
+  .btn-link:hover { color: var(--clay); text-decoration: underline solid; }
+  .btn-link.danger { color: #a04848; }
+  .btn-link.danger:hover { color: #7a2828; }
+
+  /* Prompt preview collapsible */
+  .prompt-preview-details { background: rgba(255,255,255,0.3); border: 1px solid var(--border-soft); border-radius: 3px; padding: 6px 10px; margin-bottom: 10px; }
+  .prompt-preview-details summary { font-family: var(--serif); font-size: 13px; color: var(--moss); cursor: pointer; padding: 4px 0; font-weight: 500; user-select: none; }
+  .prompt-preview-details summary:hover { color: var(--clay); }
+  .prompt-preview-details[open] summary { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed var(--border-soft); }
+
+  /* History */
+  .history-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .history-empty { padding: 20px; text-align: center; color: var(--moss-light); font-family: var(--serif); font-style: italic; font-size: 13px; }
+  .history-list { display: flex; flex-direction: column; gap: 8px; }
+  .history-item { padding: 10px 12px; background: rgba(255,255,255,0.35); border: 1px solid var(--border-soft); border-left: 3px solid var(--moss-light); border-radius: 3px; cursor: pointer; transition: all 0.15s; }
+  .history-item:hover { background: rgba(255,255,255,0.6); border-left-color: var(--clay); }
+  .history-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+  .history-loc { font-family: var(--display); font-weight: 500; color: var(--moss); }
+  .history-date { font-size: 11px; color: var(--moss-light); font-style: italic; }
+  .history-sub { font-size: 12px; color: var(--ink-soft); margin-top: 3px; font-family: var(--serif); line-height: 1.5; }
+  .history-actions { margin-top: 6px; display: flex; gap: 8px; }
+  .history-actions button { font-size: 11px; padding: 3px 8px; background: none; border: 1px solid var(--border); border-radius: 3px; cursor: pointer; color: var(--ink-soft); font-family: var(--serif); }
+  .history-actions button:hover { background: var(--clay-pale); color: var(--clay); border-color: var(--clay); }
+  .history-actions button.danger:hover { background: #f4dcdc; color: #a02828; border-color: #a02828; }
+
+  /* Toast */
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--ink); color: white; padding: 10px 20px; border-radius: 3px; font-family: var(--serif); font-size: 13px; opacity: 0; transition: all 0.3s; pointer-events: none; z-index: 1000; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* Footer */
+  footer.app-footer { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--border); text-align: center; font-family: var(--serif); font-size: 11.5px; color: var(--moss-light); font-style: italic; line-height: 1.7; }
+  footer.app-footer a { color: var(--clay); text-decoration: none; }
+  .footer-actions { display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-style: normal; }
+  .footer-link { background: none; border: none; color: var(--moss); font-family: var(--serif); font-size: 12.5px; cursor: pointer; padding: 4px 8px; text-decoration: underline dotted; text-underline-offset: 3px; font-style: normal; transition: color 0.15s; }
+  .footer-link:hover { color: var(--clay); text-decoration: underline solid; }
+  .footer-sep { color: var(--border); }
+  .footer-version { font-family: var(--display); font-size: 11px; color: var(--moss-light); font-style: italic; padding: 0 6px; }
+  .footer-text { padding: 0 8px; }
+
+  /* About / Feedback modal sections */
+  .modal-section { padding: 10px 0; border-top: 1px dashed var(--border-soft); }
+  .modal-section:first-of-type { border-top: none; padding-top: 0; }
+  .modal-section h4 { font-family: var(--serif); font-size: 11.5px; color: var(--clay); margin: 0 0 6px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 500; }
+  .modal-section p { font-family: var(--serif); font-size: 13px; color: var(--ink); margin: 4px 0; line-height: 1.7; }
+  .modal-section ul { font-family: var(--serif); font-size: 12.5px; color: var(--ink); margin: 4px 0; padding-left: 20px; line-height: 1.75; }
+  .modal-section ul li { margin-bottom: 2px; }
+  .modal-section code { background: rgba(255,255,255,0.6); padding: 1px 6px; border-radius: 2px; font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--moss); }
+  .modal-section a { color: var(--clay); text-decoration: none; }
+  .modal-section a:hover { text-decoration: underline; }
+  .modal-meta { font-family: var(--display); font-size: 11px; color: var(--moss-light); font-style: italic; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); text-align: center; }
+
+  /* Feedback form */
+  .feedback-form label { display: block; margin-bottom: 12px; }
+  .feedback-form label span { display: block; font-family: var(--serif); font-size: 12px; color: var(--clay); margin-bottom: 4px; letter-spacing: 0.03em; }
+  .feedback-form select, .feedback-form textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 3px; background: white; font-family: var(--body); font-size: 13px; color: var(--ink); }
+  .feedback-form textarea { min-height: 130px; resize: vertical; }
+  .feedback-checkbox { display: flex; flex-direction: row !important; align-items: flex-start; gap: 8px; padding: 8px; background: var(--moss-pale); border-radius: 3px; margin-bottom: 12px; }
+  .feedback-checkbox input { margin-top: 3px; width: auto !important; }
+  .feedback-checkbox span { color: var(--ink-soft) !important; font-size: 12px !important; line-height: 1.55 !important; }
+  .feedback-context-preview { font-family: ui-monospace, monospace; font-size: 11px; color: var(--moss); background: white; padding: 8px 10px; border: 1px dashed var(--border-soft); border-radius: 3px; margin-top: 6px; max-height: 130px; overflow-y: auto; white-space: pre-wrap; line-height: 1.5; }
+
+  .leaflet-popup-content { font-family: var(--body); font-size: 13px; }
+  .marker-tip { background: var(--paper); border: 1px solid var(--border); padding: 6px 10px; font-size: 12px; font-family: var(--serif); color: var(--ink); border-radius: 3px; }
+
+  /* iNaturalist panel */
+  .inat-panel { border: 1px solid var(--border-soft); background: rgba(255,255,255,0.35); border-radius: 3px; padding: 12px; margin-bottom: 16px; }
+  .inat-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .inat-head-title { font-family: var(--serif); font-size: 13.5px; color: var(--moss); font-weight: 500; display: flex; align-items: center; gap: 6px; }
+  .inat-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .inat-controls select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 3px; background: rgba(255,255,255,0.6); font-family: var(--body); font-size: 12px; color: var(--ink); }
+  .inat-controls .btn-mini { padding: 5px 10px; font-size: 11.5px; }
+  .inat-status { font-family: var(--serif); font-size: 12.5px; color: var(--ink-soft); padding: 9px 12px; background: var(--moss-pale); border-radius: 3px; margin-bottom: 10px; line-height: 1.5; }
+  .inat-status.error { background: var(--clay-pale); color: #7a3a1f; }
+  .inat-results { display: flex; flex-direction: column; gap: 14px; max-height: 480px; overflow-y: auto; padding-right: 4px; }
+  .inat-results::-webkit-scrollbar { width: 6px; }
+  .inat-results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .inat-group-head { font-family: var(--serif); font-size: 12.5px; color: var(--moss); margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px dashed var(--border-soft); display: flex; justify-content: space-between; }
+  .inat-group-head em { font-style: italic; color: var(--moss-light); font-size: 11px; }
+  .inat-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px; }
+  .inat-item { display: grid; grid-template-columns: 42px 1fr auto; gap: 8px; align-items: center; padding: 6px 8px; border: 1px solid var(--border-soft); border-radius: 3px; background: rgba(255,255,255,0.5); transition: all 0.15s; }
+  .inat-item:hover { background: rgba(255,255,255,0.85); border-color: var(--moss-light); }
+  .inat-item.added { background: var(--moss-pale); border-color: var(--moss); }
+  .inat-photo { width: 42px; height: 42px; border-radius: 3px; object-fit: cover; cursor: pointer; }
+  .inat-photo-empty { width: 42px; height: 42px; border-radius: 3px; background: var(--bg-alt); display: flex; align-items: center; justify-content: center; opacity: 0.45; font-size: 18px; }
+  .inat-info { min-width: 0; }
+  .inat-name { font-family: var(--serif); font-size: 12.5px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
+  .inat-sci { font-family: var(--display); font-style: italic; font-size: 10.5px; color: var(--moss-light); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
+  .inat-count { font-size: 10px; color: var(--clay); font-family: var(--serif); margin-top: 1px; }
+  .inat-add { background: var(--moss); color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-size: 14px; line-height: 1; transition: all 0.15s; padding: 0; font-weight: 600; }
+  .inat-add:hover { background: var(--clay); transform: scale(1.15); }
+  .inat-item.added .inat-add { background: var(--moss-light); cursor: default; transform: none; }
+  .inat-item.added .inat-add::before { content: "✓"; }
+  .inat-attribution { font-size: 10.5px; color: var(--moss-light); font-family: var(--serif); font-style: italic; margin-top: 10px; text-align: right; }
+  .inat-attribution a { color: var(--clay); text-decoration: none; }
+
+  /* OSM Overpass panel — reuses inat panel skeleton with green-tinted accents */
+  .osm-panel { border: 1px solid var(--border-soft); background: rgba(223, 231, 210, 0.25); border-radius: 3px; padding: 12px; margin-bottom: 16px; }
+  .osm-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .osm-head-title { font-family: var(--serif); font-size: 13.5px; color: var(--moss); font-weight: 500; display: flex; align-items: center; gap: 6px; }
+  .osm-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .osm-controls select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 3px; background: rgba(255,255,255,0.6); font-family: var(--body); font-size: 12px; color: var(--ink); }
+  .osm-controls .btn-mini { padding: 5px 10px; font-size: 11.5px; }
+  .osm-status { font-family: var(--serif); font-size: 12.5px; color: var(--ink-soft); padding: 9px 12px; background: rgba(223, 231, 210, 0.6); border-radius: 3px; margin-bottom: 10px; line-height: 1.5; }
+  .osm-status.error { background: var(--clay-pale); color: #7a3a1f; }
+  .osm-warning { background: #fbf0ea; border: 1px solid var(--clay); border-left: 4px solid var(--clay); padding: 10px 12px; border-radius: 3px; margin-bottom: 10px; font-family: var(--serif); font-size: 13px; color: #5a2810; line-height: 1.6; }
+  .osm-warning strong { color: var(--clay); }
+  .osm-results { display: flex; flex-direction: column; gap: 12px; max-height: 380px; overflow-y: auto; padding-right: 4px; }
+  .osm-results::-webkit-scrollbar { width: 6px; }
+  .osm-results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .osm-group { padding-bottom: 8px; border-bottom: 1px dashed var(--border-soft); }
+  .osm-group:last-child { border-bottom: none; padding-bottom: 0; }
+  .osm-group.osm-protected { background: rgba(184, 107, 74, 0.06); padding: 8px 10px; border-radius: 3px; border-bottom: none; border-left: 3px solid var(--clay); }
+  .osm-group-head { font-family: var(--serif); font-size: 12.5px; color: var(--moss); font-weight: 500; margin-bottom: 6px; display: flex; justify-content: space-between; }
+  .osm-group.osm-protected .osm-group-head { color: var(--clay); }
+  .osm-group-head em { font-style: italic; color: var(--moss-light); font-size: 11px; font-weight: 400; }
+  .osm-items { display: flex; flex-wrap: wrap; gap: 5px; }
+  .osm-item { display: inline-block; padding: 3px 10px; background: rgba(255,255,255,0.6); border: 1px solid var(--border-soft); border-radius: 999px; font-size: 12px; font-family: var(--serif); color: var(--ink); }
+  .osm-item.osm-item-count { background: transparent; border-style: dashed; color: var(--moss-light); font-style: italic; }
+  .osm-group.osm-protected .osm-item { background: rgba(255,255,255,0.85); border-color: var(--clay-light); }
+  .osm-attribution { font-size: 10.5px; color: var(--moss-light); font-family: var(--serif); font-style: italic; margin-top: 10px; text-align: right; }
+  .osm-attribution a { color: var(--clay); text-decoration: none; }
+
+  /* OSM detected land-use types — togglable chips */
+  .osm-detected-panel { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
+  .osm-detected-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; font-family: var(--serif); font-size: 12.5px; color: var(--moss); font-weight: 500; margin-bottom: 8px; }
+  .osm-detected-head em { font-style: italic; font-size: 11px; color: var(--moss-light); font-weight: 400; }
+  .osm-detected-bulk { display: flex; gap: 10px; font-size: 11.5px; font-family: var(--serif); }
+  .osm-detected-bulk button { background: none; border: none; color: var(--moss); cursor: pointer; padding: 2px 0; text-decoration: underline dotted; text-underline-offset: 3px; font-family: inherit; font-size: inherit; }
+  .osm-detected-bulk button:hover { color: var(--clay); }
+  .osm-detected-items { display: flex; flex-wrap: wrap; gap: 5px; }
+  .osm-detected-chip { padding: 4px 11px; background: rgba(255,255,255,0.5); border: 1px solid var(--border); color: var(--ink-soft); border-radius: 999px; font-family: var(--serif); font-size: 12.5px; cursor: pointer; transition: all 0.12s; user-select: none; }
+  .osm-detected-chip:hover { border-color: var(--moss-light); background: rgba(255,255,255,0.75); }
+  .osm-detected-chip.added { background: var(--moss-pale); color: var(--moss); border-color: var(--moss); font-weight: 500; }
+  .osm-detected-chip.added:hover { background: var(--clay-pale); color: var(--clay); border-color: var(--clay-light); }
+
+  /* API key & model section */
+  .api-key-section { background: rgba(255,255,255,0.35); border: 1px solid var(--border-soft); border-radius: 3px; padding: 8px 12px; margin-bottom: 14px; }
+  .api-key-section summary { font-family: var(--serif); font-size: 13px; color: var(--moss); cursor: pointer; padding: 4px 0; font-weight: 500; user-select: none; }
+  .api-key-section summary:hover { color: var(--clay); }
+  .api-key-section[open] summary { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px dashed var(--border-soft); }
+  .api-key-body label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+  .api-key-body label span { font-size: 11px; color: var(--clay); font-family: var(--serif); letter-spacing: 0.03em; }
+  .api-key-body input[type="password"] { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12.5px; letter-spacing: 0.02em; }
+  .api-key-actions { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+  .checkbox-inline { display: flex !important; flex-direction: row !important; gap: 6px !important; align-items: center !important; margin-bottom: 0 !important; cursor: pointer; }
+  .checkbox-inline input { width: auto !important; }
+  .checkbox-inline span { font-size: 12.5px !important; color: var(--ink-soft) !important; }
+  .api-key-note { font-size: 11.5px; color: var(--moss-light); font-family: var(--serif); font-style: italic; margin: 10px 0 0; line-height: 1.7; }
+  .api-key-note a { color: var(--clay); }
+  .model-row { margin-bottom: 14px; }
+  .model-row label { display: flex; flex-direction: column; gap: 4px; }
+  .model-row label span { font-size: 11px; color: var(--clay); font-family: var(--serif); }
+  .model-row select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 3px; background: rgba(255,255,255,0.55); font-family: var(--body); font-size: 13px; color: var(--ink); }
+
+  /* Loading state */
+  .loading-state { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 20px; background: var(--moss-pale); border: 1px solid var(--moss-light); border-radius: 3px; margin: 14px 0; }
+  .spinner { width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--moss); border-radius: 50%; animation: qi-spin 0.8s linear infinite; }
+  @keyframes qi-spin { to { transform: rotate(360deg); } }
+  .loading-text { font-family: var(--serif); font-size: 14px; color: var(--moss); text-align: center; font-weight: 500; }
+  .loading-subtext { font-family: var(--serif); font-size: 12px; color: var(--moss-light); font-style: italic; text-align: center; }
+
+  /* Result display */
+  .result-display { margin-top: 14px; }
+  .result-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding: 10px 12px; background: var(--moss-pale); border-radius: 3px; border-left: 3px solid var(--moss); }
+  .result-actions .btn { padding: 7px 14px; font-size: 13px; }
+  .result-frame { width: 100%; height: 720px; border: 1px solid var(--border); border-radius: 3px; background: white; display: block; }
+  .result-meta { font-family: var(--serif); font-size: 11.5px; color: var(--moss-light); font-style: italic; margin-top: 6px; text-align: right; }
+  .result-error { padding: 14px 16px; background: var(--clay-pale); border: 1px solid var(--clay); border-left: 4px solid var(--clay); border-radius: 3px; color: #5a2810; font-family: var(--serif); font-size: 13px; line-height: 1.65; margin: 14px 0; }
+  .result-error strong { color: var(--clay); }
+  .result-error code { background: rgba(255,255,255,0.6); padding: 1px 5px; border-radius: 2px; font-family: ui-monospace, monospace; font-size: 11.5px; }
+
+  /* Paste-back modal */
+  .paste-modal { position: fixed; inset: 0; background: rgba(31, 45, 34, 0.55); display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 20px; backdrop-filter: blur(2px); }
+  .paste-modal-content { background: var(--paper); border-radius: 4px; padding: 22px; max-width: 720px; width: 100%; max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.35); border: 1px solid var(--border); }
+  .paste-modal-content h3 { font-family: var(--display); font-size: 20px; font-weight: 500; margin: 0 0 8px; color: var(--moss); }
+  .paste-modal-content p { font-family: var(--serif); font-size: 13px; color: var(--ink-soft); margin: 0 0 10px; }
+  .paste-modal-content textarea { width: 100%; min-height: 280px; max-height: 50vh; font-family: ui-monospace, "SF Mono", monospace; font-size: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 3px; background: white; resize: vertical; }
+  .paste-modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; flex-wrap: wrap; }
+
+  /* History — has-result badge */
+  .history-item.has-result { border-left-color: var(--clay); }
+  .history-result-badge { display: inline-block; font-size: 10px; padding: 1px 7px; background: var(--clay); color: white; border-radius: 999px; margin-left: 6px; vertical-align: middle; letter-spacing: 0.05em; }
+
+  /* Visually hidden file input */
+  .file-input-hidden { display: none; }
+
+  @media (max-width: 600px) {
+    .coord-row { grid-template-columns: 1fr 1fr; }
+    .coord-row .btn-mini { grid-column: span 2; }
+    #map { height: 320px; }
+    .actions { flex-direction: column; }
+    .btn { width: 100%; justify-content: center; }
+  }
+
+  /* ░░ HEALS 上游 Map 整合 · 三狀態 banner（botanical 對齊版）░░ */
+  .heals-banner{
+    display:none; align-items:center; gap:13px; flex-wrap:wrap;
+    padding:11px 24px; font-size:13px;
+    border-bottom:1px solid var(--border-soft);
+    font-family:var(--serif);
+  }
+  .heals-banner.active{display:flex}
+  .heals-banner .icon{font-size:16px}
+  .heals-banner .label{
+    font-weight:600; font-size:10.5px; letter-spacing:.14em;
+    text-transform:uppercase; padding:3px 11px; border-radius:999px;
+  }
+  .heals-banner .prompt-text{font-size:13px; line-height:1.5; color:var(--ink-soft)}
+  .heals-banner .site-name{font-size:14.5px; font-weight:600; color:var(--ink)}
+  .heals-banner .site-meta{font-size:12px; opacity:.78; color:var(--ink-soft)}
+  .heals-banner .spacer{flex:1; min-width:8px}
+  .heals-banner button{font:inherit; cursor:pointer; transition:all .15s}
+  .heals-banner button.action{
+    border:0; color:#fff; padding:7px 16px; border-radius:999px;
+    font-size:12.5px; font-weight:600; letter-spacing:.02em;
+  }
+  .heals-banner button.dismiss{
+    background:transparent; padding:6px 14px; border-radius:999px;
+    font-size:12px; font-weight:500;
+  }
+  /* STANDALONE — 米色紙感，預設常駐 */
+  .heals-banner.standalone{
+    background:var(--paper); border-bottom-color:var(--border);
+    color:var(--moss-light); padding:8px 24px; font-size:12.5px;
+  }
+  .heals-banner.standalone .label{background:var(--gold-pale); color:var(--gold)}
+  .heals-banner.standalone .prompt-text{color:var(--moss-light)}
+  /* PENDING — 陶土／赭色，邀請套用 */
+  .heals-banner.pending{
+    background:var(--clay-pale); border-bottom-color:var(--clay-light); color:#7a3f28;
+  }
+  .heals-banner.pending .label{background:rgba(184,107,74,.16); color:var(--clay)}
+  .heals-banner.pending button.action{background:var(--clay)}
+  .heals-banner.pending button.action:hover{background:#9c5536}
+  .heals-banner.pending button.dismiss{border:1px solid var(--clay-light); color:#8a4a2e}
+  .heals-banner.pending button.dismiss:hover{background:rgba(184,107,74,.08)}
+  /* APPLIED — 苔綠，已接續 */
+  .heals-banner.applied{
+    background:var(--moss-pale); border-bottom-color:var(--moss-light); color:#37492c;
+  }
+  .heals-banner.applied .label{background:rgba(74,93,63,.14); color:var(--moss)}
+  .heals-banner.applied button.action{background:var(--moss)}
+  .heals-banner.applied button.action:hover{background:#3a4b30}
+  .heals-banner.applied button.dismiss{border:1px solid var(--moss-light); color:var(--moss)}
+  .heals-banner.applied button.dismiss:hover{background:rgba(74,93,63,.08)}
+</style>
+</head>
+<body>
+
+<!-- ░░ HEALS 上游 Map 整合 · 三狀態 banner（外加，預設 standalone）░░ -->
+<!-- STANDALONE: 預設顯示 -->
+<div class="heals-banner standalone active" id="modeStandalone" role="region">
+  <span class="icon">🏠</span>
+  <span class="label">獨立模式 · Standalone</span>
+  <span class="prompt-text">未連接上游 Map 工具；以下操作為您獨立進行的分析。</span>
+  <span class="prompt-text" style="opacity:.7">No upstream site connected — this session is fully independent.</span>
+</div>
+<!-- PENDING: 偵測到 site 後 JS 啟用 -->
+<div class="heals-banner pending" id="healsPending" role="region">
+  <span class="icon">🗺</span>
+  <span class="label">上游基地可用 · Site Data Available</span>
+  <span class="prompt-text">偵測到從 Map 工具帶來的基地：</span>
+  <span class="site-name" id="healsPendingName"></span>
+  <span class="site-meta" id="healsPendingMeta"></span>
+  <span class="spacer"></span>
+  <button class="action" id="healsAccept">✓ 套用基地 · Use Map Site</button>
+  <button class="dismiss" id="healsReject">獨立使用 · Standalone</button>
+</div>
+<!-- APPLIED: 使用者確認後 JS 啟用 -->
+<div class="heals-banner applied" id="healsApplied" role="region">
+  <span class="icon">📍</span>
+  <span class="label">接續 Map 模式 · Map Mode</span>
+  <span class="site-name" id="healsName"></span>
+  <span class="site-meta" id="healsMeta"></span>
+  <span class="spacer"></span>
+  <button class="action" id="healsSendBack">✓ 送回總控台 · Send to Control</button>
+  <button class="dismiss" id="healsDismiss">改用手動 · Switch to Manual</button>
+</div>
+
+<div class="container">
+
+  <header class="app-header">
+    <div class="tag">🌿 Qi-Coexistence Workflow · v1.28</div>
+    <h1 class="title">棲<span class="dot">·</span>共生</h1>
+    <p class="subtitle">
+      生態基地分析工作流工具——選擇位置、設定焦點物種與基地條件，自動生成結構化提示詞送入 Claude 進行完整的生態共存設計分析。
+    </p>
+    <div class="divider"></div>
+  </header>
+
+  <!-- STEP 1: LOCATION -->
+  <section class="card">
+    <div class="section-head">
+      <div class="section-num">1</div>
+      <div>
+        <h2>選擇基地位置</h2>
+        <div class="section-eng">Site Location · 點地圖、拖曳標記、或直接輸入經緯度</div>
+      </div>
+    </div>
+    <div id="map"></div>
+    <div class="map-fallback" id="mapFallback">
+      ⚠️ 地圖未能載入（可能離線或防火牆阻擋）——可直接輸入經緯度繼續使用。
+    </div>
+    <div class="coord-row">
+      <label>
+        <span>緯度 LAT (°N)</span>
+        <input type="number" id="lat" step="0.0001" placeholder="24.7833" />
+      </label>
+      <label>
+        <span>經度 LON (°E)</span>
+        <input type="number" id="lon" step="0.0001" placeholder="121.5500" />
+      </label>
+      <button class="btn-mini" id="goCoord">移到此點</button>
+    </div>
+    <div class="name-row">
+      <span class="name-label">地點名稱（輸入地名可直接搜尋定位，也會寫進提示詞）</span>
+      <div class="name-input-row">
+        <input type="text" id="locname" placeholder="例如「大安森林公園」— 按 Enter 或右側按鈕搜尋" />
+        <button type="button" class="btn-mini" id="geocodeBtn">🔍 搜尋地名</button>
+      </div>
+      <div id="geocodeResults" class="geocode-results" style="display:none;"></div>
+      <div class="chip-hint" style="margin-top:5px;">搜尋結果由 OpenStreetMap Nominatim 提供；也可直接在地圖上點選、或在上方輸入經緯度。</div>
+    </div>
+  </section>
+
+  <!-- STEP 2: FOCAL SPECIES -->
+  <section class="card">
+    <div class="section-head">
+      <div class="section-num">2</div>
+      <div>
+        <h2>焦點物種</h2>
+        <div class="section-eng">Focal Species · iNaturalist 在地觀察 · 預設組合 · 自訂輸入</div>
+      </div>
+    </div>
+
+    <!-- iNaturalist Panel -->
+    <div class="inat-panel">
+      <div class="inat-head">
+        <div class="inat-head-title">📡 iNaturalist 在地物種觀察</div>
+        <div class="inat-controls">
+          <select id="inatRadius" title="搜尋半徑">
+            <option value="1">1 km</option>
+            <option value="2" selected>2 km</option>
+            <option value="5">5 km</option>
+            <option value="10">10 km</option>
+            <option value="20">20 km</option>
+          </select>
+          <select id="inatQuality" title="資料品質">
+            <option value="research" selected>研究級</option>
+            <option value="any">全部</option>
+          </select>
+          <select id="inatTaxon" title="類群篩選">
+            <option value="">全部類群</option>
+            <option value="Aves">鳥類</option>
+            <option value="Mammalia">哺乳類</option>
+            <option value="Amphibia">兩棲類</option>
+            <option value="Reptilia">爬蟲類</option>
+            <option value="Insecta">昆蟲</option>
+            <option value="Plantae">植物</option>
+            <option value="Actinopterygii">魚類</option>
+          </select>
+          <button class="btn-mini" id="inatRefresh">🔄 查詢</button>
+        </div>
+      </div>
+      <div id="inatStatus" class="inat-status">📍 請先選擇基地位置，會自動載入鄰近觀察記錄</div>
+      <div id="inatResults" class="inat-results"></div>
+      <p class="inat-attribution">
+        資料來源 © <a href="https://www.inaturalist.org/" target="_blank" rel="noopener">iNaturalist</a> 貢獻者 ·
+        CC BY-NC · 點選圖片可開啟該物種頁面
+      </p>
+    </div>
+
+    <div class="preset-label">📦 預設組合（點選套用）</div>
+    <div class="preset-row" id="speciesCombos"></div>
+
+    <div class="preset-label">🏷️ 已選物種</div>
+    <div class="chip-container" id="speciesChips">
+      <div class="chips"></div>
+    </div>
+    <div class="chip-add-row" data-target="speciesChips">
+      <input type="text" class="chip-add-input" placeholder="自訂物種：輸入中文或學名後按 + 或 Enter" />
+      <button type="button" class="btn-chip-add">＋ 加入</button>
+    </div>
+    <div class="chip-hint">資料庫沒收錄的、或想額外指定的物種，可在此手動加入。支援多個輸入用頓號（、）或逗號分隔</div>
+
+    <div class="quick-cat">— 鳥類 · Birds —</div>
+    <div class="quick-chips" data-cat="species" data-list="鳥類"></div>
+    <div class="quick-cat">— 哺乳類 · Mammals —</div>
+    <div class="quick-chips" data-cat="species" data-list="哺乳"></div>
+    <div class="quick-cat">— 兩棲爬蟲 · Herpetofauna —</div>
+    <div class="quick-chips" data-cat="species" data-list="兩爬"></div>
+  </section>
+
+  <!-- STEP 3: SITE CONDITIONS -->
+  <section class="card">
+    <div class="section-head">
+      <div class="section-num">3</div>
+      <div>
+        <h2>基地條件</h2>
+        <div class="section-eng">Site Conditions · OSM 自動偵測 · 林相、水體、地形、人為設施</div>
+      </div>
+    </div>
+
+    <!-- OSM Overpass Panel -->
+    <div class="osm-panel">
+      <div class="osm-head">
+        <div class="osm-head-title">🌍 OSM 環境脈絡（Overpass API）</div>
+        <div class="osm-controls">
+          <select id="osmRadius" title="搜尋半徑">
+            <option value="1">1 km</option>
+            <option value="2" selected>2 km</option>
+            <option value="5">5 km</option>
+          </select>
+          <button class="btn-mini" id="osmRefresh">🔄 查詢</button>
+        </div>
+      </div>
+      <div id="osmStatus" class="osm-status">📍 請先選擇基地位置，會自動偵測周邊森林、水體、保護區、聚落、步道</div>
+      <div id="osmResults" class="osm-results"></div>
+      <p class="osm-attribution">
+        資料來源 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> 貢獻者 ·
+        <a href="https://overpass-api.de/" target="_blank" rel="noopener">Overpass API</a> · ODbL
+      </p>
+    </div>
+
+    <div class="preset-label">📦 預設條件組合（點選套用）</div>
+    <div class="preset-row" id="conditionCombos"></div>
+
+    <div class="preset-label">🏷️ 已選條件</div>
+    <div class="chip-container" id="conditionChips">
+      <div class="chips"></div>
+    </div>
+    <div class="chip-add-row" data-target="conditionChips">
+      <input type="text" class="chip-add-input" placeholder="自訂條件：輸入後按 + 或 Enter（如「東向陡坡」「夏季缺水」）" />
+      <button type="button" class="btn-chip-add">＋ 加入</button>
+    </div>
+    <div class="chip-hint">OSM 沒標到、或時效落差的環境特徵，可在此手動補充。支援多個輸入用頓號（、）或逗號分隔</div>
+
+    <div class="quick-cat">— 林相 · Forest —</div>
+    <div class="quick-chips" data-cat="conditions" data-list="林相"></div>
+    <div class="quick-cat">— 水體 · Water —</div>
+    <div class="quick-chips" data-cat="conditions" data-list="水體"></div>
+    <div class="quick-cat">— 地形與開放地 · Terrain —</div>
+    <div class="quick-chips" data-cat="conditions" data-list="地形"></div>
+    <div class="quick-cat">— 人為設施 · Human Features —</div>
+    <div class="quick-chips" data-cat="conditions" data-list="人為"></div>
+
+    <div class="subsection-divider"></div>
+    <div class="subsection-head">
+      <span class="subsection-title">🪺 棲地需求 · Habitat Needs</span>
+      <span class="subsection-eng">焦點物種對棲地資源的具體需求 — 獨立於基地條件，供下游分區設計逐項讀取</span>
+    </div>
+    <div class="preset-label">🏷️ 已選棲地需求</div>
+    <div class="chip-container" id="habitatNeedsChips">
+      <div class="chips"></div>
+    </div>
+    <div class="chip-add-row" data-target="habitatNeedsChips">
+      <input type="text" class="chip-add-input" placeholder="自訂棲地需求：輸入後按 + 或 Enter（如「近水源覓食」「需枯立木營巢」）" />
+      <button type="button" class="btn-chip-add">＋ 加入</button>
+    </div>
+    <div class="chip-hint">描述物種存續所需的棲地資源（食、住、繁殖、空間）。與「基地條件」分開填，匯出時成為獨立的 habitatNeeds 欄位。</div>
+
+    <div class="quick-cat">— 食物 · Food —</div>
+    <div class="quick-chips" data-cat="habitatNeeds" data-list="食物"></div>
+    <div class="quick-cat">— 棲身 · Shelter —</div>
+    <div class="quick-chips" data-cat="habitatNeeds" data-list="棲身"></div>
+    <div class="quick-cat">— 繁殖 · Breeding —</div>
+    <div class="quick-chips" data-cat="habitatNeeds" data-list="繁殖"></div>
+    <div class="quick-cat">— 空間配置 · Spatial —</div>
+    <div class="quick-chips" data-cat="habitatNeeds" data-list="空間"></div>
+  </section>
+
+  <!-- STEP 4: SPECIAL -->
+  <section class="card">
+    <div class="section-head">
+      <div class="section-num">4</div>
+      <div>
+        <h2>特別考量</h2>
+        <div class="section-eng">Special Considerations · 例如「注意有無裸露地」「部落共管」</div>
+      </div>
+    </div>
+    <textarea id="special" placeholder="可選填，例如：注意有無裸露地（坍塌地、路切邊坡、廢耕地）；或：部落共管優先；或：賞鳥人為干擾敏感"></textarea>
+  </section>
+
+  <!-- STEP 5: ANALYSIS (merged from old Step 5 + 6) -->
+  <section class="card">
+    <div class="section-head">
+      <div class="section-num moss">5</div>
+      <div>
+        <h2>執行分析與結果</h2>
+        <div class="section-eng">Run Analysis · 輸入通行碼即可分析（無需自備金鑰）· 結果自動回到表單可下載</div>
+      </div>
+    </div>
+
+    <div class="api-key-section" id="passcodeSection">
+      <div class="api-key-body">
+        <label>
+          <span>🔑 通行碼 PASSCODE</span>
+          <input type="password" id="passcode" placeholder="請輸入課程通行碼" autocomplete="off" spellcheck="false" />
+        </label>
+        <div class="api-key-actions">
+          <label class="checkbox-inline">
+            <input type="checkbox" id="savePasscode" checked />
+            <span>記住通行碼（儲存於本機瀏覽器）</span>
+          </label>
+          <button class="btn-mini" id="clearPasscode">🗑 清除</button>
+        </div>
+        <p class="api-key-note">
+          本工具已內建分析服務，您<strong>不需要自備 API 金鑰</strong>，只需輸入授課教師提供的通行碼。
+          通行碼僅儲存於您本機瀏覽器；分析請求經由本站伺服器轉送，金鑰不會出現在瀏覽器端。
+        </p>
+      </div>
+    </div>
+
+    <div class="model-row">
+      <label>
+        <span>分析模型 MODEL</span>
+        <select id="apiModel">
+          <option value="claude-sonnet-4-6" selected>Claude Sonnet 4.6（建議：快速、品質佳、性價比高）</option>
+          <option value="claude-opus-4-7">Claude Opus 4.7（最高品質，較慢、約 5× 費用）</option>
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5（最快、便宜，深度較低）</option>
+        </select>
+      </label>
+    </div>
+
+    <details class="prompt-preview-details">
+      <summary>📝 檢視即將送出的提示詞（可選）</summary>
+      <div class="prompt-preview" id="promptPreview"></div>
+    </details>
+
+    <button class="btn btn-primary btn-analyze-big" id="analyzeBtn">🚀 開始分析</button>
+
+    <div class="alt-actions">
+      <span class="alt-label">其他選項：</span>
+      <button type="button" class="btn-link" id="copyBtn">📋 複製提示詞</button>
+      <button type="button" class="btn-link" id="openClaudeBtn">🔗 改在 Claude.ai 手動分析</button>
+      <button type="button" class="btn-link" id="pasteHtmlBtn">📋 貼上手動結果</button>
+      <button type="button" class="btn-link danger" id="resetBtn">↺ 重設表單</button>
+    </div>
+
+    <div id="loadingState" class="loading-state" style="display:none;">
+      <div class="spinner"></div>
+      <div class="loading-text">⏳ Claude 正在分析中⋯</div>
+      <div class="loading-subtext" id="loadingTimer">經過時間：0 秒</div>
+      <div class="loading-subtext" id="loadingProgress">連線中…</div>
+      <div class="loading-subtext">含網路搜尋與引用驗證通常需要數分鐘</div>
+    </div>
+
+    <div id="resultError" class="result-error" style="display:none;"></div>
+
+    <div id="resultDisplay" class="result-display" style="display:none;">
+      <div class="result-actions">
+        <button class="btn btn-secondary" id="downloadResultBtn">⬇ 下載 HTML</button>
+        <button class="btn btn-secondary" id="downloadPdfBtn">🖨 列印 PDF</button>
+        <button class="btn btn-ghost" id="openResultBtn">↗ 新分頁開啟</button>
+        <button class="btn btn-ghost" id="copyResultBtn">📋 複製原始碼</button>
+        <button class="btn btn-ghost" id="closeResultBtn">✕ 收起預覽</button>
+      </div>
+      <iframe id="resultFrame" class="result-frame" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
+      <div class="result-meta" id="resultMeta"></div>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section class="card">
+    <div class="section-head">
+      <div class="section-num moss">📚</div>
+      <div>
+        <h2>歷史紀錄</h2>
+        <div class="section-eng">History · 過去的分析記錄（儲存在瀏覽器本機）</div>
+      </div>
+    </div>
+    <div class="history-controls">
+      <button class="btn btn-ghost" id="exportBtn">⬇ 匯出 JSON</button>
+      <button class="btn btn-ghost" id="importBtn">⬆ 匯入 JSON</button>
+      <input type="file" class="file-input-hidden" id="importFile" accept=".json,application/json" />
+      <button class="btn btn-ghost" id="clearHistoryBtn">🗑 清除全部</button>
+    </div>
+    <div class="history-controls" style="margin-top:8px;">
+      <input type="text" id="healsProject" placeholder="專案名稱（選填）· Project name" style="max-width:240px;" />
+      <button class="btn btn-ghost" id="healsExportBtn" title="輸出本站生態結果 JSON，供總控台『完成打卡』">{ } 匯出 JSON · Export</button>
+      <button class="btn btn-ghost" id="healsCopyBtn" title="複製生態結果 JSON 到剪貼簿">📋 複製 JSON · Copy</button>
+    </div>
+    <div id="historyList" class="history-list"></div>
+  </section>
+
+  <footer class="app-footer">
+    <div class="footer-actions">
+      <button type="button" class="footer-link" id="aboutBtn">📖 關於與版權</button>
+      <span class="footer-sep">·</span>
+      <button type="button" class="footer-link" id="feedbackBtn">💬 提供回饋</button>
+      <span class="footer-sep">·</span>
+      <span class="footer-version">v1.9</span>
+    </div>
+    <div class="footer-text">
+      棲共生 Qi-Coexistence · 景觀生態設計工作流 ·
+      歷史紀錄儲存於瀏覽器本機 localStorage，可匯出 JSON 備份
+    </div>
+  </footer>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ========== 預設資料 ==========
+  const SPECIES_COMBOS = [
+    { name: '北部低海拔經典', desc: '次生闊葉林', items: ['藍腹鷴', '山羌', '白鼻心', '翡翠樹蛙'] },
+    { name: '溪流—森林立體', desc: '水域+樹冠', items: ['鉛色水鶇', '小剪尾', '翡翠樹蛙', '台灣獼猴'] },
+    { name: '平原都市公園', desc: '中海拔以下', items: ['台灣藍鵲', '五色鳥', '貢德式赤蛙', '紅嘴黑鵯'] },
+    { name: '低海拔山溝敏感', desc: '需嚴格保育', items: ['八色鳥', '領角鴞', '白鼻心'] },
+    { name: '中海拔混合林', desc: '海拔 1500-2500', items: ['帝雉', '藍腹鷴', '台灣獼猴', '山羌'] },
+    { name: '河川中下游', desc: '河岸與灘地', items: ['翠鳥', '夜鷺', '貢德氏赤蛙', '台灣石鮒'] },
+    { name: '海岸林組合', desc: '濱海風衝林', items: ['黑鳶', '玄燕鷗', '台灣狗母魚', '招潮蟹'] },
+    { name: '濕地候鳥', desc: '冬季棲息', items: ['黑面琵鷺', '小鸊鷉', '反嘴鴴', '東方環頸鴴'] }
+  ];
+
+  const CONDITION_COMBOS = [
+    { name: '低海拔淺山', desc: '次生林+山溝', items: ['次生林', '山溝', '林道', '岩壁'] },
+    { name: '都市公園', desc: '人工水體+草地', items: ['公園草地', '人工水池', '喬木林', '步道'] },
+    { name: '部落周邊', desc: '農作與部落', items: ['部落', '果園', '廢耕地', '產業道路', '溪流'] },
+    { name: '溪流上游', desc: '清淨水域', items: ['原始闊葉林', '溪流', '瀑布', '岩壁', '苔蘚'] },
+    { name: '河岸帶', desc: '中下游', items: ['河岸帶', '灘地', '濕地', '堤防', '河口'] },
+    { name: '海岸帶', desc: '濱海地景', items: ['海岸林', '沙灘', '潮間帶', '岩岸', '木麻黃林'] },
+    { name: '校園生態池', desc: '教學基地', items: ['校園', '生態池', '蜜源植物帶', '喬木列植'] }
+  ];
+
+  const QUICK_CHIPS = {
+    species: {
+      '鳥類': ['台灣藍鵲', '五色鳥', '紅嘴黑鵯', '白頭翁', '八色鳥', '領角鴞', '藍腹鷴', '帝雉',
+              '繡眼畫眉', '台灣紫嘯鶇', '紅尾水鴝', '翠鳥', '夜鷺', '黑面琵鷺', '黃鸝',
+              '鉛色水鶇', '小剪尾', '紫嘯鶇', '黑鳶', '冠羽畫眉'],
+      '哺乳': ['山羌', '台灣獼猴', '白鼻心', '穿山甲', '食蟹獴', '台灣黑熊', '石虎',
+              '台灣野山羊', '水鹿', '長吻松鼠', '台灣鼴鼠', '台灣大蹄鼻蝠'],
+      '兩爬': ['翡翠樹蛙', '台北樹蛙', '莫氏樹蛙', '面天樹蛙', '艾氏樹蛙', '橙腹樹蛙',
+              '貢德氏赤蛙', '褐樹蛙', '台灣山椒魚', '攀木蜥蜴', '蛇蜥', '雨傘節', '龜殼花']
+    },
+    conditions: {
+      '林相': ['次生林', '原始闊葉林', '針葉林', '混合林', '竹林', '人工林', '相思樹林', '樟科殼斗科林'],
+      '水體': ['溪流', '山溝', '湖泊', '人工水池', '水圳', '瀑布', '河岸', '濕地', '生態池'],
+      '地形': ['草原', '灌叢', '廢耕地', '果園', '梯田', '岩壁', '崩塌地', '岩塊裸露', '稜線'],
+      '人為': ['部落', '校園', '公園', '廟宇', '步道', '林道', '產業道路', '橋梁', '堤防', '隧道']
+    },
+    habitatNeeds: {
+      '食物': ['蜜源植物', '果實/漿果', '種子/穀物', '昆蟲獵物', '小型脊椎獵物', '腐植質/落葉層', '水生無脊椎', '花蜜/花粉'],
+      '棲身': ['樹洞/枯立木', '密灌叢遮蔽', '岩縫/石堆', '連續林冠', '挺水植物帶', '裸露沙地', '倒木/枝堆', '洞穴/岩壁'],
+      '繁殖': ['靜水繁殖域', '產卵沙洲', '築巢高枝', '穩定水位', '低干擾核心區', '求偶開闊地'],
+      '空間': ['水源可及', '廊道連結', '覓食開闊地', '日照岩面', '緩衝隔離帶', '垂直分層結構']
+    }
+  };
+
+  // ========== iNaturalist ==========
+  const INAT_API = 'https://api.inaturalist.org/v1/observations/species_counts';
+  const INAT_TAXON_INFO = {
+    'Aves':           { label: '🐦 鳥類 Aves',           order: 1 },
+    'Mammalia':       { label: '🦌 哺乳類 Mammalia',     order: 2 },
+    'Reptilia':       { label: '🦎 爬蟲類 Reptilia',     order: 3 },
+    'Amphibia':       { label: '🐸 兩棲類 Amphibia',     order: 4 },
+    'Actinopterygii': { label: '🐟 魚類 Actinopterygii', order: 5 },
+    'Insecta':        { label: '🦋 昆蟲 Insecta',        order: 6 },
+    'Arachnida':      { label: '🕷 蛛形類 Arachnida',    order: 7 },
+    'Mollusca':       { label: '🐚 軟體動物 Mollusca',   order: 8 },
+    'Plantae':        { label: '🌿 植物 Plantae',        order: 9 },
+    'Fungi':          { label: '🍄 真菌 Fungi',          order: 10 },
+    'Protozoa':       { label: '🦠 原生生物 Protozoa',   order: 11 },
+    'Chromista':      { label: '🦠 色藻界 Chromista',    order: 12 },
+    'Animalia':       { label: '🐛 其他動物 Animalia',   order: 13 },
+  };
+  const TAIWAN_PLACE_ID = 7887; // 正確的 iNaturalist Taiwan place_id（用於優先取得台灣俗名）
+  let inatCache = {};
+  let inatTimer = null;
+  let inatLastSummary = null;
+
+  // ========== OSM Overpass ==========
+  const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
+  const OSM_CATEGORIES = {
+    protected:  { icon: '🛡️', name: '保護區' },
+    water:      { icon: '💧', name: '水體' },
+    forest:     { icon: '🌲', name: '森林與植被' },
+    settlement: { icon: '🏘️', name: '聚落' },
+    trail:      { icon: '🛤️', name: '步道／林道' },
+    natural:    { icon: '⛰️', name: '自然地形' },
+    other:      { icon: '📍', name: '其他' },
+  };
+  // OSM tag → 基地條件 chip 對應表
+  const OSM_TO_CHIP = {
+    'leisure:nature_reserve':   '自然保留區',
+    'boundary:protected_area':  '保護區',
+    'boundary:national_park':   '國家公園',
+    'landuse:forest':           '林地',
+    'natural:wood':             '次生林',
+    'natural:water':            '湖泊',
+    'natural:waterfall':        '瀑布',
+    'natural:spring':           '湧泉',
+    'waterway:river':           '河川',
+    'waterway:stream':          '溪流',
+    'waterway:canal':           '水圳',
+    'place:village':            '部落',
+    'place:hamlet':             '聚落',
+    'place:isolated_dwelling':  '聚落',
+    'place:farm':               '農地',
+    'highway:path':             '步道',
+    'highway:track':            '林道',
+    'highway:footway':          '步道',
+    'highway:bridleway':        '步道',
+    'natural:peak':             '稜線',
+    'natural:cliff':            '岩壁',
+    'natural:valley':           '山溝',
+    'natural:ridge':            '稜線',
+  };
+  let osmCache = {};
+  let osmTimer = null;
+  let osmLastSummary = null;
+
+  // ========== State ==========
+  const state = {
+    lat: null, lon: null, locationName: '',
+    species: [], conditions: [], habitatNeeds: [], specialNotes: ''
+  };
+
+  let map = null, marker = null;
+  const STORAGE_KEY = 'qi-coexistence-history-v1';
+
+  // ========== Map ==========
+  function initMap() {
+    try {
+      if (typeof L === 'undefined') throw new Error('Leaflet 未載入');
+      map = L.map('map', { worldCopyJump: true }).setView([23.97, 120.97], 7);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap',
+        maxZoom: 18,
+        noWrap: false,
+        crossOrigin: 'anonymous'
+      }).addTo(map);
+      // 點擊地圖：用 .wrap() 把經度標準化回 -180~+180，避免世界複本造成 480°、840° 之類的值
+      map.on('click', e => {
+        const p = e.latlng.wrap();
+        setLocation(p.lat, p.lng);
+      });
+    } catch (e) {
+      document.getElementById('map').style.display = 'none';
+      document.getElementById('mapFallback').style.display = 'block';
+      console.warn('Map init failed:', e);
+    }
+  }
+
+  // 驗證座標合理性：lat ∈ [-90, 90], lon ∈ [-180, 180]
+  // 對台灣使用者額外提醒：境內合理經度約 119–122，遠超出範圍很可能是輸入錯誤
+  // ========== 地名搜尋（Nominatim / OpenStreetMap，免金鑰）==========
+  const NOMINATIM_API = 'https://nominatim.openstreetmap.org/search';
+  let geocodeBusy = false;
+
+  function hideGeocodeResults() {
+    const box = document.getElementById('geocodeResults');
+    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+  }
+
+  function applyGeocodeResult(r) {
+    const lat = parseFloat(r.lat), lon = parseFloat(r.lon);
+    if (!isFinite(lat) || !isFinite(lon)) { toast('❌ 搜尋結果座標無效'); return; }
+    const check = validateCoords(lat, lon);
+    if (!check.ok) { toast('❌ ' + check.msg); return; }
+    hideGeocodeResults();
+    const shortName = String(r.display_name || '').split(',')[0].trim();
+    // 若表單已有內容，setLocation 會觸發「新基地自動清空」並顯示可復原的 toast，
+    // 這時就不要用自己的 toast 蓋掉那顆「↻ 復原」按鈕。
+    const hadContent = (state.species.length + state.conditions.length + state.habitatNeeds.length) > 0;
+    // 先移動位置（可能觸發自動清空），再回填名稱
+    setLocation(lat, lon);
+    const input = document.getElementById('locname');
+    if (input) {
+      input.value = shortName || input.value;
+      state.locationName = input.value;
+    }
+    updatePrompt();
+    if (!hadContent) toast('📍 已移到：' + (shortName || '搜尋結果'));
+  }
+
+  function renderGeocodeResults(list) {
+    const box = document.getElementById('geocodeResults');
+    if (!box) return;
+    box.innerHTML = '';
+    list.forEach(r => {
+      const full = String(r.display_name || '');
+      const primary = full.split(',')[0].trim();
+      const rest = full.split(',').slice(1).join(',').trim();
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'geocode-item';
+      const n = document.createElement('span'); n.className = 'g-name'; n.textContent = primary;
+      const a = document.createElement('span'); a.className = 'g-addr'; a.textContent = rest;
+      item.appendChild(n); item.appendChild(a);
+      item.onclick = () => applyGeocodeResult(r);
+      box.appendChild(item);
+    });
+    box.style.display = 'block';
+  }
+
+  async function geocodeSearch() {
+    const input = document.getElementById('locname');
+    if (!input) return;
+    const q = input.value.trim();
+    if (!q) { toast('請先輸入地名'); return; }
+    if (geocodeBusy) return;               // Nominatim 政策：避免高頻連打
+    geocodeBusy = true;
+    const btn = document.getElementById('geocodeBtn');
+    const origText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '搜尋中…'; }
+    hideGeocodeResults();
+    try {
+      const url = `${NOMINATIM_API}?format=jsonv2&q=${encodeURIComponent(q)}&limit=6&accept-language=zh-TW`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (!Array.isArray(data) || data.length === 0) {
+        toast(`找不到「${q}」，可改用地圖點選或輸入經緯度`);
+        return;
+      }
+      if (data.length === 1) applyGeocodeResult(data[0]);
+      else renderGeocodeResults(data);
+    } catch (e) {
+      console.warn('geocode failed:', e);
+      toast('❌ 地名搜尋失敗，可改用地圖點選或輸入經緯度');
+    } finally {
+      geocodeBusy = false;
+      if (btn) { btn.disabled = false; btn.textContent = origText; }
+    }
+  }
+
+  function validateCoords(lat, lon) {
+    if (!isFinite(lat) || !isFinite(lon)) {
+      return { ok: false, msg: '座標不是有效數字' };
+    }
+    if (lat < -90 || lat > 90) {
+      return { ok: false, msg: `緯度超出範圍：${lat}（合法值為 -90 ~ +90）` };
+    }
+    if (lon < -180 || lon > 180) {
+      return { ok: false, msg: `經度超出範圍：${lon}（合法值為 -180 ~ +180；台灣地區約為 119~122）` };
+    }
+    return { ok: true };
+  }
+
+  function setLocation(lat, lon, options = {}) {
+    const check = validateCoords(lat, lon);
+    if (!check.ok) {
+      toast('❌ ' + check.msg);
+      return;
+    }
+    const prevLat = state.lat;
+    const prevLon = state.lon;
+    const newLat = +lat.toFixed(4);
+    const newLon = +lon.toFixed(4);
+
+    // 偵測「移到新基地」：距離超過閾值時自動清空（除非明確 skipClear）
+    if (!options.skipClear && prevLat != null) {
+      const dist = haversineMeters(prevLat, prevLon, newLat, newLon);
+      if (dist > LOCATION_CHANGE_THRESHOLD_M) {
+        autoClearOnNewLocation();
+      }
+    }
+
+    state.lat = newLat;
+    state.lon = newLon;
+    document.getElementById('lat').value = state.lat;
+    document.getElementById('lon').value = state.lon;
+    if (map) {
+      if (marker) marker.setLatLng([lat, lon]);
+      else {
+        marker = L.marker([lat, lon], { draggable: true }).addTo(map);
+        marker.on('dragend', e => {
+          const p = e.target.getLatLng().wrap();
+          setLocation(p.lat, p.lng);
+        });
+      }
+      if (options.zoom !== false) {
+        map.setView([lat, lon], Math.max(map.getZoom(), 13));
+      }
+    }
+    updatePrompt();
+    debounceInat();
+    debounceOsm();
+  }
+
+  // ========== iNaturalist data ==========
+  async function loadInat(force = false) {
+    const status = document.getElementById('inatStatus');
+    const results = document.getElementById('inatResults');
+
+    if (state.lat == null) {
+      status.textContent = '📍 請先選擇基地位置，會自動載入鄰近觀察記錄';
+      status.classList.remove('error');
+      results.innerHTML = '';
+      return;
+    }
+
+    const radius = document.getElementById('inatRadius').value;
+    const quality = document.getElementById('inatQuality').value;
+    const taxon = document.getElementById('inatTaxon').value;
+    const cacheKey = `${state.lat}_${state.lon}_${radius}_${quality}_${taxon}`;
+
+    if (!force && inatCache[cacheKey]) {
+      renderInat(inatCache[cacheKey]);
+      return;
+    }
+
+    status.classList.remove('error');
+    status.textContent = '⏳ 正在從 iNaturalist 載入鄰近觀察記錄...';
+    results.innerHTML = '';
+
+    try {
+      // preferred_place_id=7887 是 Taiwan，用來優先回傳台灣在地俗名
+      let url = `${INAT_API}?lat=${state.lat}&lng=${state.lon}&radius=${radius}` +
+                `&per_page=100&locale=zh-TW&preferred_place_id=${TAIWAN_PLACE_ID}`;
+      if (quality === 'research') url += '&quality_grade=research';
+      if (taxon) url += `&iconic_taxa=${taxon}`;
+
+      const res = await fetch(url);
+      if (!res.ok) {
+        let errDetail = '';
+        try {
+          const errBody = await res.text();
+          errDetail = errBody.slice(0, 200);
+        } catch (_) {}
+        throw new Error(`HTTP ${res.status}${errDetail ? ' · ' + errDetail : ''}`);
+      }
+      const data = await res.json();
+      inatCache[cacheKey] = data;
+      renderInat(data);
+    } catch (e) {
+      status.classList.add('error');
+      const msg = e.message || String(e);
+      // 提供針對性建議
+      let hint = '';
+      if (msg.includes('422')) hint = '——參數錯誤，請告知開發者';
+      else if (msg.includes('429')) hint = '——查詢過於頻繁，請稍等';
+      else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) hint = '——網路連線問題';
+      status.textContent = `❌ 載入失敗：${msg}${hint}`;
+      console.error('iNat fetch error:', e, 'URL was:', `${INAT_API}?lat=${state.lat}&lng=${state.lon}&radius=${radius}`);
+    }
+  }
+
+  function renderInat(data) {
+    const status = document.getElementById('inatStatus');
+    const container = document.getElementById('inatResults');
+    status.classList.remove('error');
+
+    if (!data.results || !data.results.length) {
+      status.textContent = '🔍 此範圍內無觀察記錄。試試擴大半徑或切換到「全部」品質。';
+      container.innerHTML = '';
+      inatLastSummary = null;
+      return;
+    }
+
+    const radius = document.getElementById('inatRadius').value;
+    status.textContent = `✅ 找到 ${data.results.length} 種、共 ${data.total_results} 筆觀察記錄（半徑 ${radius} km）`;
+
+    // Build summary for prompt
+    inatLastSummary = {
+      total: data.total_results,
+      speciesCount: data.results.length,
+      radius: radius,
+      quality: document.getElementById('inatQuality').value,
+      taxon: document.getElementById('inatTaxon').value,
+      topSpecies: data.results.slice(0, 20).map(r => ({
+        name: r.taxon?.preferred_common_name || r.taxon?.name || 'Unknown',
+        sci: r.taxon?.name || '',
+        count: r.count,
+        iconic: r.taxon?.iconic_taxon_name || 'Animalia'
+      }))
+    };
+
+    // Group by iconic taxon
+    const groups = {};
+    data.results.forEach(r => {
+      if (!r.taxon) return;
+      const t = r.taxon.iconic_taxon_name || 'Animalia';
+      if (!groups[t]) groups[t] = [];
+      groups[t].push(r);
+    });
+
+    container.innerHTML = '';
+    Object.keys(groups)
+      .sort((a, b) => (INAT_TAXON_INFO[a]?.order || 99) - (INAT_TAXON_INFO[b]?.order || 99))
+      .forEach(tax => {
+        const info = INAT_TAXON_INFO[tax] || { label: `❓ ${tax}` };
+        const groupEl = document.createElement('div');
+
+        const head = document.createElement('div');
+        head.className = 'inat-group-head';
+        head.innerHTML = `<span>${info.label}</span><em>${groups[tax].length} 種</em>`;
+        groupEl.appendChild(head);
+
+        const items = document.createElement('div');
+        items.className = 'inat-items';
+
+        groups[tax].forEach(r => {
+          const t = r.taxon;
+          if (!t) return;
+
+          const photo = t.default_photo?.square_url || '';
+          const chName = t.preferred_common_name || '';
+          const sciName = t.name || '';
+          const displayName = chName || sciName;
+          const isAdded = state.species.includes(displayName);
+
+          const item = document.createElement('div');
+          item.className = 'inat-item' + (isAdded ? ' added' : '');
+
+          const photoHtml = photo
+            ? `<img class="inat-photo" src="${photo}" alt="${displayName}" loading="lazy">`
+            : `<div class="inat-photo-empty">📷</div>`;
+
+          item.innerHTML = `
+            ${photoHtml}
+            <div class="inat-info">
+              <div class="inat-name"></div>
+              <div class="inat-sci"></div>
+              <div class="inat-count">${r.count} 筆</div>
+            </div>
+            <button class="inat-add" title="加入焦點物種">＋</button>
+          `;
+          item.querySelector('.inat-name').textContent = displayName;
+          if (chName && sciName && chName !== sciName) {
+            item.querySelector('.inat-sci').textContent = sciName;
+          }
+          item.querySelector('.inat-add').dataset.name = displayName;
+
+          item.querySelector('.inat-add').addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (state.species.includes(displayName)) return;
+            state.species.push(displayName);
+            speciesChip.render();
+            updateQuickChips();
+            updateInatAddedState();
+            updatePrompt();
+            toast(`✅ 已加入「${displayName}」`);
+          });
+
+          const photoEl = item.querySelector('.inat-photo');
+          if (photoEl && t.id) {
+            photoEl.addEventListener('click', () => {
+              window.open(`https://www.inaturalist.org/taxa/${t.id}`, '_blank');
+            });
+          }
+
+          items.appendChild(item);
+        });
+
+        groupEl.appendChild(items);
+        container.appendChild(groupEl);
+      });
+  }
+
+  function updateInatAddedState() {
+    document.querySelectorAll('.inat-item').forEach(item => {
+      const btn = item.querySelector('.inat-add');
+      const name = btn?.dataset.name;
+      if (name && state.species.includes(name)) item.classList.add('added');
+      else item.classList.remove('added');
+    });
+  }
+
+  function debounceInat() {
+    clearTimeout(inatTimer);
+    inatTimer = setTimeout(() => loadInat(false), 1200);
+  }
+
+  // ========== OSM Overpass data ==========
+  function categorizeOsm(el) {
+    const t = el.tags || {};
+    if (t.boundary === 'protected_area' || t.leisure === 'nature_reserve' || t.boundary === 'national_park')
+      return { cat: 'protected', subtype: t.leisure || t.boundary };
+    if (t.landuse === 'forest' || t.natural === 'wood')
+      return { cat: 'forest', subtype: t.landuse || t.natural };
+    if (t.waterway)
+      return { cat: 'water', subtype: t.waterway };
+    if (t.natural === 'water' || t.natural === 'waterfall' || t.natural === 'spring')
+      return { cat: 'water', subtype: t.natural };
+    if (t.place)
+      return { cat: 'settlement', subtype: t.place };
+    if (t.highway)
+      return { cat: 'trail', subtype: t.highway };
+    if (t.natural === 'peak' || t.natural === 'cliff' || t.natural === 'valley' || t.natural === 'ridge')
+      return { cat: 'natural', subtype: t.natural };
+    return { cat: 'other', subtype: 'unknown' };
+  }
+
+  function extractName(tags) {
+    if (!tags) return '';
+    return tags['name:zh-Hant'] || tags['name:zh-TW'] || tags['name:zh'] ||
+           tags.name || tags['name:en'] || '';
+  }
+
+  async function loadOsm(force = false) {
+    const status = document.getElementById('osmStatus');
+    const results = document.getElementById('osmResults');
+
+    if (state.lat == null) {
+      status.textContent = '📍 請先選擇基地位置，會自動偵測周邊森林、水體、保護區、聚落、步道';
+      status.classList.remove('error');
+      results.innerHTML = '';
+      return;
+    }
+
+    const radius = parseInt(document.getElementById('osmRadius').value);
+    const cacheKey = `${state.lat}_${state.lon}_${radius}`;
+
+    if (!force && osmCache[cacheKey]) {
+      renderOsm(osmCache[cacheKey], radius);
+      return;
+    }
+
+    status.classList.remove('error');
+    status.textContent = '⏳ 正在查詢 OSM Overpass API...（複雜地區可能需要 5–15 秒）';
+    results.innerHTML = '';
+
+    const r = radius * 1000;
+    const lat = state.lat, lon = state.lon;
+    const query = `[out:json][timeout:25];
+(
+  way["leisure"="nature_reserve"](around:${r},${lat},${lon});
+  way["boundary"="protected_area"](around:${r},${lat},${lon});
+  way["boundary"="national_park"](around:${r},${lat},${lon});
+  relation["leisure"="nature_reserve"](around:${r},${lat},${lon});
+  relation["boundary"="protected_area"](around:${r},${lat},${lon});
+  way["landuse"="forest"](around:${r},${lat},${lon});
+  way["natural"="wood"](around:${r},${lat},${lon});
+  way["natural"="water"](around:${r},${lat},${lon});
+  way["waterway"~"river|stream|canal|drain"](around:${r},${lat},${lon});
+  node["natural"="waterfall"](around:${r},${lat},${lon});
+  node["natural"="spring"](around:${r},${lat},${lon});
+  node["place"~"village|hamlet|isolated_dwelling|farm"](around:${r},${lat},${lon});
+  way["highway"~"path|track|footway|bridleway"](around:${r},${lat},${lon});
+  node["natural"="peak"](around:${r},${lat},${lon});
+  way["natural"="cliff"](around:${r},${lat},${lon});
+);
+out tags center;`;
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const res = await fetch(OVERPASS_API, {
+        method: 'POST',
+        body: 'data=' + encodeURIComponent(query),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        let errDetail = '';
+        try { errDetail = (await res.text()).slice(0, 200); } catch (_) {}
+        throw new Error(`HTTP ${res.status}${errDetail ? ' · ' + errDetail : ''}`);
+      }
+
+      const data = await res.json();
+      osmCache[cacheKey] = data;
+      renderOsm(data, radius);
+    } catch (e) {
+      status.classList.add('error');
+      const msg = e.name === 'AbortError' ? '查詢逾時（30 秒）' : (e.message || String(e));
+      let hint = '';
+      if (msg.includes('429')) hint = '——查詢過於頻繁，請稍候再試';
+      else if (msg.includes('504') || msg.includes('逾時')) hint = '——伺服器繁忙或查詢過於複雜，可縮小半徑';
+      status.textContent = `❌ OSM 載入失敗：${msg}${hint}`;
+      console.error('OSM fetch error:', e);
+    }
+  }
+
+  function renderOsm(data, radius) {
+    const status = document.getElementById('osmStatus');
+    const container = document.getElementById('osmResults');
+    status.classList.remove('error');
+
+    if (!data || !data.elements || !data.elements.length) {
+      status.textContent = '🔍 此範圍內無 OSM 環境特徵記錄。試試擴大半徑。';
+      container.innerHTML = '';
+      osmLastSummary = null;
+      return;
+    }
+
+    // Categorize
+    const categorized = { protected: [], forest: [], water: [], settlement: [], trail: [], natural: [], other: [] };
+    data.elements.forEach(el => {
+      const c = categorizeOsm(el);
+      categorized[c.cat].push({
+        name: extractName(el.tags),
+        subtype: c.subtype,
+        tags: el.tags || {}
+      });
+    });
+
+    status.textContent = `✅ 偵測到 ${data.elements.length} 個 OSM 環境特徵（半徑 ${radius} km）`;
+
+    // Build summary for prompt
+    osmLastSummary = {
+      radius: radius,
+      total: data.elements.length,
+      protectedAreas: categorized.protected.filter(p => p.name).slice(0, 5),
+      protectedCount: categorized.protected.length,
+      water: categorized.water.filter(w => w.name).slice(0, 8),
+      waterCount: categorized.water.length,
+      forestCount: categorized.forest.length,
+      settlements: categorized.settlement.filter(s => s.name).slice(0, 5),
+      settlementCount: categorized.settlement.length,
+      trails: categorized.trail.filter(t => t.name).slice(0, 5),
+      trailCount: categorized.trail.length,
+      naturalFeatures: categorized.natural.filter(n => n.name).slice(0, 5),
+      naturalCount: categorized.natural.length,
+    };
+
+    container.innerHTML = '';
+
+    // Protected area warning (insert before groups)
+    if (categorized.protected.length > 0) {
+      const warning = document.createElement('div');
+      warning.className = 'osm-warning';
+      const names = categorized.protected.map(p => p.name).filter(Boolean);
+      const nameStr = names.length ? names.slice(0, 3).join('、') : '未命名保護區域';
+      warning.innerHTML = `⚠️ <strong>環境敏感區警示</strong>：半徑內偵測到 ${categorized.protected.length} 個保護區（${nameStr}），請確認設計是否涉及保護區範圍`;
+      container.appendChild(warning);
+    }
+
+    const renderOrder = ['protected', 'water', 'forest', 'settlement', 'trail', 'natural'];
+    renderOrder.forEach(catKey => {
+      const items = categorized[catKey];
+      if (!items.length) return;
+
+      const info = OSM_CATEGORIES[catKey];
+      const groupEl = document.createElement('div');
+      groupEl.className = 'osm-group' + (catKey === 'protected' ? ' osm-protected' : '');
+
+      const head = document.createElement('div');
+      head.className = 'osm-group-head';
+      head.innerHTML = `<span>${info.icon} ${info.name}</span><em>${items.length} 處</em>`;
+      groupEl.appendChild(head);
+
+      const itemsEl = document.createElement('div');
+      itemsEl.className = 'osm-items';
+
+      const named = items.filter(i => i.name);
+      const unnamed = items.length - named.length;
+
+      // Show up to 10 named
+      named.slice(0, 10).forEach(item => {
+        const span = document.createElement('span');
+        span.className = 'osm-item';
+        span.textContent = item.name;
+        span.title = item.subtype || '';
+        itemsEl.appendChild(span);
+      });
+
+      if (named.length > 10) {
+        const span = document.createElement('span');
+        span.className = 'osm-item osm-item-count';
+        span.textContent = `+${named.length - 10} 處更多`;
+        itemsEl.appendChild(span);
+      }
+      if (unnamed > 0) {
+        const span = document.createElement('span');
+        span.className = 'osm-item osm-item-count';
+        span.textContent = `${unnamed} 處未命名`;
+        itemsEl.appendChild(span);
+      }
+
+      groupEl.appendChild(itemsEl);
+      container.appendChild(groupEl);
+    });
+
+    // ===== Detected land-use types: togglable chips + auto-apply =====
+    const detected = getDetectedConditionsFromOsm(data);
+    if (detected.size > 0) {
+      // Auto-apply ONLY when state.conditions is empty (fresh location)
+      // This avoids overwriting user's manual edits on refresh / radius change
+      if (state.conditions.length === 0) {
+        detected.forEach(c => state.conditions.push(c));
+        conditionChip.render();
+        updateQuickChips();
+        updatePrompt();
+        toast(`✨ 自動帶入 ${detected.size} 項基地條件`);
+      }
+
+      // Render togglable chips panel
+      const panel = document.createElement('div');
+      panel.className = 'osm-detected-panel';
+
+      const head = document.createElement('div');
+      head.className = 'osm-detected-head';
+      head.innerHTML = `<span>🏷️ 偵測到的土地使用型態 <em>（點選加入/移除基地條件）</em></span>`;
+      const bulk = document.createElement('div');
+      bulk.className = 'osm-detected-bulk';
+      const addAllBtn = document.createElement('button');
+      addAllBtn.type = 'button';
+      addAllBtn.textContent = '全部加入';
+      addAllBtn.onclick = () => {
+        let added = 0;
+        detected.forEach(c => { if (!state.conditions.includes(c)) { state.conditions.push(c); added++; } });
+        if (added) {
+          conditionChip.render();
+          updateQuickChips();
+          updateOsmDetectedChipsState();
+          updatePrompt();
+          toast(`✅ 全部加入 ${added} 項`);
+        } else {
+          toast('🔄 全部已在條件中');
+        }
+      };
+      const removeAllBtn = document.createElement('button');
+      removeAllBtn.type = 'button';
+      removeAllBtn.textContent = '全部移除';
+      removeAllBtn.onclick = () => {
+        let removed = 0;
+        detected.forEach(c => {
+          const i = state.conditions.indexOf(c);
+          if (i >= 0) { state.conditions.splice(i, 1); removed++; }
+        });
+        if (removed) {
+          conditionChip.render();
+          updateQuickChips();
+          updateOsmDetectedChipsState();
+          updatePrompt();
+          toast(`🗑 移除 ${removed} 項`);
+        }
+      };
+      bulk.appendChild(addAllBtn);
+      bulk.appendChild(removeAllBtn);
+      head.appendChild(bulk);
+      panel.appendChild(head);
+
+      const chipsDiv = document.createElement('div');
+      chipsDiv.className = 'osm-detected-items';
+      Array.from(detected).sort().forEach(chipName => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.dataset.chip = chipName;
+        const isAdded = state.conditions.includes(chipName);
+        btn.className = 'osm-detected-chip' + (isAdded ? ' added' : '');
+        btn.textContent = (isAdded ? '✓ ' : '+ ') + chipName;
+        btn.addEventListener('click', () => {
+          const idx = state.conditions.indexOf(chipName);
+          if (idx >= 0) {
+            state.conditions.splice(idx, 1);
+          } else {
+            state.conditions.push(chipName);
+          }
+          conditionChip.render();
+          updateQuickChips();
+          updateOsmDetectedChipsState();
+          updatePrompt();
+        });
+        chipsDiv.appendChild(btn);
+      });
+      panel.appendChild(chipsDiv);
+      container.appendChild(panel);
+    }
+  }
+
+  // Helper: extract unique condition-chip names from OSM data
+  function getDetectedConditionsFromOsm(data) {
+    const detected = new Set();
+    if (!data || !data.elements) return detected;
+    data.elements.forEach(el => {
+      const t = el.tags || {};
+      Object.entries(OSM_TO_CHIP).forEach(([key, chipName]) => {
+        const [k, v] = key.split(':');
+        if (t[k] === v) detected.add(chipName);
+      });
+    });
+    return detected;
+  }
+
+  // Sync visual state of detected-chip buttons with current state.conditions
+  function updateOsmDetectedChipsState() {
+    document.querySelectorAll('.osm-detected-chip').forEach(btn => {
+      const chipName = btn.dataset.chip;
+      if (!chipName) return;
+      const isAdded = state.conditions.includes(chipName);
+      btn.className = 'osm-detected-chip' + (isAdded ? ' added' : '');
+      btn.textContent = (isAdded ? '✓ ' : '+ ') + chipName;
+    });
+  }
+
+  function debounceOsm() {
+    clearTimeout(osmTimer);
+    osmTimer = setTimeout(() => loadOsm(false), 1500);
+  }
+
+  // ========== Auto-clear on new location ==========
+  const LOCATION_CHANGE_THRESHOLD_M = 300; // 距離超過此值視為「新基地」，自動清空
+  let lastClearedSnapshot = null;
+
+  function haversineMeters(lat1, lon1, lat2, lon2) {
+    if (lat1 == null || lat2 == null) return Infinity;
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  function autoClearOnNewLocation() {
+    // 沒有可清的就直接 return
+    const hasData = state.species.length || state.conditions.length ||
+                    state.specialNotes || state.locationName;
+    if (!hasData) return;
+
+    // 保存快照供復原
+    lastClearedSnapshot = {
+      species: state.species.slice(),
+      conditions: state.conditions.slice(),
+      habitatNeeds: state.habitatNeeds.slice(),
+      specialNotes: state.specialNotes,
+      locationName: state.locationName
+    };
+
+    // 清空
+    state.species = [];
+    state.conditions = [];
+    state.habitatNeeds = [];
+    state.specialNotes = '';
+    state.locationName = '';
+    inatLastSummary = null;
+    osmLastSummary = null;
+
+    // 更新 UI
+    document.getElementById('locname').value = '';
+    document.getElementById('special').value = '';
+    if (speciesChip) speciesChip.render();
+    if (conditionChip) conditionChip.render();
+    if (habitatNeedsChip) habitatNeedsChip.render();
+    updateQuickChips();
+    updateInatAddedState();
+
+    // 顯示帶復原按鈕的 toast
+    showUndoToast('🔄 新位置，已清空舊基地的物種與條件');
+  }
+
+  function showUndoToast(msg) {
+    const el = document.getElementById('toast');
+    el.innerHTML = '';
+    const textSpan = document.createElement('span');
+    textSpan.textContent = msg;
+    el.appendChild(textSpan);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '↻ 復原';
+    btn.style.cssText = 'background: var(--clay); color: white; border: none; padding: 4px 12px; margin-left: 14px; border-radius: 3px; cursor: pointer; font-family: var(--serif); font-size: 12px; font-weight: 500;';
+    btn.onclick = () => {
+      if (!lastClearedSnapshot) return;
+      state.species = lastClearedSnapshot.species.slice();
+      state.conditions = lastClearedSnapshot.conditions.slice();
+      state.habitatNeeds = Array.isArray(lastClearedSnapshot.habitatNeeds) ? lastClearedSnapshot.habitatNeeds.slice() : [];
+      state.specialNotes = lastClearedSnapshot.specialNotes;
+      state.locationName = lastClearedSnapshot.locationName;
+      document.getElementById('locname').value = state.locationName;
+      document.getElementById('special').value = state.specialNotes;
+      speciesChip.render();
+      conditionChip.render();
+      habitatNeedsChip.render();
+      updateQuickChips();
+      updateInatAddedState();
+      updatePrompt();
+      el.classList.remove('show');
+      lastClearedSnapshot = null;
+      toast('✅ 已復原');
+    };
+    el.appendChild(btn);
+
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      el.classList.remove('show');
+      // toast 消失後即不可復原
+    }, 6000);
+  }
+
+  // ========== Chip input ==========
+  function setupChipInput(containerId, stateKey) {
+    const container = document.getElementById(containerId);
+    // 自訂輸入移到專屬 add-row：用 data-target 對應到 chip-container
+    const addRow = document.querySelector(`.chip-add-row[data-target="${containerId}"]`);
+    const input = addRow ? addRow.querySelector('.chip-add-input') : null;
+    const addBtn = addRow ? addRow.querySelector('.btn-chip-add') : null;
+
+    function render() {
+      const chipsDiv = container.querySelector('.chips');
+      chipsDiv.innerHTML = '';
+      if (state[stateKey].length === 0) {
+        const placeholder = document.createElement('span');
+        placeholder.className = 'chips-empty';
+        placeholder.textContent = '（尚未選擇——用下方輸入框、預設組合、或 iNat / OSM 自動偵測加入）';
+        chipsDiv.appendChild(placeholder);
+        return;
+      }
+      state[stateKey].forEach((item, i) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        const textNode = document.createTextNode(item);
+        chip.appendChild(textNode);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.innerHTML = '×';
+        btn.onclick = () => {
+          state[stateKey].splice(i, 1);
+          render();
+          updateQuickChips();
+          if (stateKey === 'species') updateInatAddedState();
+          if (stateKey === 'conditions') updateOsmDetectedChipsState();
+          updatePrompt();
+        };
+        chip.appendChild(btn);
+        chipsDiv.appendChild(chip);
+      });
+    }
+
+    function addItem(text) {
+      const cleaned = text.trim().replace(/[、,，]/g, ',');
+      let added = 0;
+      cleaned.split(',').map(s => s.trim()).filter(Boolean).forEach(s => {
+        if (!state[stateKey].includes(s)) { state[stateKey].push(s); added++; }
+      });
+      render();
+      updateQuickChips();
+      if (stateKey === 'species') updateInatAddedState();
+      if (stateKey === 'conditions') updateOsmDetectedChipsState();
+      updatePrompt();
+      return added;
+    }
+
+    function submitFromInput() {
+      if (!input || !input.value.trim()) return;
+      const added = addItem(input.value);
+      input.value = '';
+      if (added > 0) {
+        toast(`✅ 已加入 ${added} 項`);
+      } else {
+        toast('🔄 已存在，未重複加入');
+      }
+      input.focus();
+    }
+
+    if (input) {
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          submitFromInput();
+        } else if (e.key === 'Backspace' && !input.value && state[stateKey].length) {
+          state[stateKey].pop();
+          render();
+          updateQuickChips();
+          if (stateKey === 'species') updateInatAddedState();
+          if (stateKey === 'conditions') updateOsmDetectedChipsState();
+          updatePrompt();
+        }
+      });
+    }
+
+    if (addBtn) {
+      addBtn.addEventListener('click', submitFromInput);
+    }
+
+    // 點 chip 區的空白處 → focus 到自訂輸入
+    container.addEventListener('click', e => {
+      if (e.target === container || e.target.classList.contains('chips') || e.target.classList.contains('chips-empty')) {
+        if (input) input.focus();
+      }
+    });
+
+    return { render, addItem };
+  }
+
+  // ========== Quick chips ==========
+  function renderQuickChips() {
+    document.querySelectorAll('.quick-chips').forEach(container => {
+      const cat = container.dataset.cat;
+      const list = container.dataset.list;
+      const items = QUICK_CHIPS[cat][list] || [];
+      container.innerHTML = '';
+      items.forEach(item => {
+        const chip = document.createElement('span');
+        chip.className = 'quick-chip';
+        chip.textContent = item;
+        chip.dataset.cat = cat;
+        chip.dataset.item = item;
+        chip.onclick = () => {
+          const stateKey = cat;
+          if (state[stateKey].includes(item)) return;
+          state[stateKey].push(item);
+          chipByCat(cat).render();
+          updateQuickChips();
+          if (cat === 'species') updateInatAddedState();
+          if (cat === 'conditions') updateOsmDetectedChipsState();
+          updatePrompt();
+        };
+        container.appendChild(chip);
+      });
+    });
+  }
+
+  function updateQuickChips() {
+    document.querySelectorAll('.quick-chip').forEach(el => {
+      const cat = el.dataset.cat;
+      const item = el.dataset.item;
+      if (state[cat] && state[cat].includes(item)) el.classList.add('taken');
+      else el.classList.remove('taken');
+    });
+  }
+
+  // ========== Preset combos ==========
+  function renderCombos() {
+    const speciesEl = document.getElementById('speciesCombos');
+    SPECIES_COMBOS.forEach(combo => {
+      const btn = document.createElement('button');
+      btn.className = 'preset-btn';
+      btn.type = 'button';
+      btn.innerHTML = `${combo.name}<span class="desc">${combo.desc}</span>`;
+      btn.onclick = () => {
+        state.species = combo.items.slice();
+        speciesChip.render();
+        updateQuickChips();
+        updateInatAddedState();
+        updatePrompt();
+        toast(`已套用組合「${combo.name}」`);
+      };
+      speciesEl.appendChild(btn);
+    });
+
+    const condEl = document.getElementById('conditionCombos');
+    CONDITION_COMBOS.forEach(combo => {
+      const btn = document.createElement('button');
+      btn.className = 'preset-btn';
+      btn.type = 'button';
+      btn.innerHTML = `${combo.name}<span class="desc">${combo.desc}</span>`;
+      btn.onclick = () => {
+        state.conditions = combo.items.slice();
+        conditionChip.render();
+        updateQuickChips();
+        updateOsmDetectedChipsState();
+        updatePrompt();
+        toast(`已套用條件「${combo.name}」`);
+      };
+      condEl.appendChild(btn);
+    });
+  }
+
+  // ========== Prompt generation ==========
+  function buildPrompt() {
+    const hasCoord = state.lat != null && state.lon != null;
+    const loc = hasCoord
+      ? `${state.lat}°N, ${state.lon}°E`
+      : '（請於地圖選擇位置或輸入經緯度）';
+    const name = state.locationName ? `\n地點名稱: ${state.locationName}` : '';
+    const species = state.species.length ? state.species.join('、') : '（請選擇焦點物種）';
+    const conditions = state.conditions.length ? state.conditions.join('、') : '（請選擇基地條件）';
+    const habitatNeedsStr = state.habitatNeeds.length
+      ? `\n\n🪺 棲地需求（焦點物種對棲地資源的具體需求）\n${state.habitatNeeds.join('、')}`
+      : '';
+    const special = state.specialNotes
+      ? `\n\n⚠️ 特別考量\n${state.specialNotes}`
+      : '';
+
+    const inatContext = inatLastSummary && state.lat != null
+      ? `\n\n📡 iNaturalist 在地觀察脈絡（半徑 ${inatLastSummary.radius} km · ${inatLastSummary.quality === 'research' ? '研究級' : '全部'}）
+共 ${inatLastSummary.total} 筆觀察、${inatLastSummary.speciesCount} 種記錄
+代表性出現物種（依觀察筆數排序）:
+${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.sci && s.sci !== s.name ? ` (${s.sci})` : ''} — ${s.count} 筆`).join('\n')}`
+      : '';
+
+    let osmContext = '';
+    if (osmLastSummary && state.lat != null) {
+      const lines = [];
+      if (osmLastSummary.protectedCount > 0) {
+        const names = osmLastSummary.protectedAreas.map(p => p.name).filter(Boolean);
+        lines.push(`🛡️ 保護區 (${osmLastSummary.protectedCount} 處)${names.length ? ': ' + names.slice(0,3).join('、') : ''} ⚠️ 環境敏感區`);
+      }
+      if (osmLastSummary.waterCount > 0) {
+        const names = osmLastSummary.water.map(w => w.name).filter(Boolean);
+        lines.push(`💧 水體 (${osmLastSummary.waterCount} 處)${names.length ? ': ' + names.slice(0,5).join('、') : ''}`);
+      }
+      if (osmLastSummary.forestCount > 0) lines.push(`🌲 森林斑塊: ${osmLastSummary.forestCount} 處`);
+      if (osmLastSummary.settlementCount > 0) {
+        const names = osmLastSummary.settlements.map(s => s.name).filter(Boolean);
+        lines.push(`🏘️ 聚落 (${osmLastSummary.settlementCount} 處)${names.length ? ': ' + names.slice(0,3).join('、') : ''}`);
+      }
+      if (osmLastSummary.trailCount > 0) {
+        const names = osmLastSummary.trails.map(t => t.name).filter(Boolean);
+        lines.push(`🛤️ 步道/林道 (${osmLastSummary.trailCount} 條)${names.length ? ': ' + names.slice(0,3).join('、') : ''}`);
+      }
+      if (osmLastSummary.naturalCount > 0) {
+        const names = osmLastSummary.naturalFeatures.map(n => n.name).filter(Boolean);
+        lines.push(`⛰️ 自然地形 (${osmLastSummary.naturalCount} 處)${names.length ? ': ' + names.slice(0,3).join('、') : ''}`);
+      }
+      if (lines.length) {
+        osmContext = `\n\n🌍 OSM 環境脈絡（半徑 ${osmLastSummary.radius} km · 來源 OpenStreetMap）\n${lines.join('\n')}`;
+      }
+    }
+
+    return `請依「棲共生」工作流進行生態基地共存設計分析。
+
+📍 基地位置
+座標: ${loc}${name}
+
+🎯 焦點物種
+${species}
+
+🌳 基地條件
+${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
+
+📋 工作流要求：
+
+⓪ 報告開頭（在主標題之後、「基地判讀」之前）**必須加入一張基地位置地圖**：
+
+<figure style="margin: 24px auto 32px; text-align: center; max-width: 800px;">
+  <img src="https://staticmap.openstreetmap.de/staticmap.php?center={LAT},{LON}&zoom=15&size=800x500&maptype=mapnik"
+       alt="基地位置地圖"
+       style="max-width: 100%; height: auto; border: 1px solid #d4cdb8; border-radius: 4px; display: block; margin: 0 auto;" />
+  <figcaption style="font-family: 'Noto Serif TC', serif; font-size: 12px; color: #6b7d5f; font-style: italic; margin-top: 8px; line-height: 1.5;">
+    基地位置：{LAT}°, {LON}° · {地點名稱（若有）} · 底圖：OpenStreetMap © 貢獻者
+  </figcaption>
+</figure>
+
+將 {LAT} 與 {LON} 替換為基地實際座標。此區塊**僅作位置展示，禁止疊加任何分區色塊、SVG 圖形、文字標籤、或設計示意**——保持純淨的 OSM 地圖即可。
+
+1. 依座標自動查詢該位置的代表性物種、海拔、林相、保育公告狀態、流域、附近聚落
+2. 提供「基地判讀」摘要，含設計脈絡警示（如保育敏感區、原住民傳統領域、人為干擾風險）
+3. 每個焦點物種建立完整「食 / 住 / 育」生態檔，含 APA 7 行內引用
+4. 物種間衝突、競爭、合作互動分析（兩部分必須齊備）：
+   (a) **整體互動關係**：物種間食物網重疊、領域、繁殖期同步等一般性分析，含設計啟示。
+   (b) **資源利用矩陣（Resource Partitioning Matrix）**：用 HTML 表格針對「基地條件」中列出的**每一項環境資源**（請逐項列出，例如：「河川」「次生林」「岩壁」「林道」「人工設施」等使用者輸入的具體條件），分析各焦點物種對該資源的需求程度（**高 / 中 / 低 / 無**），並在最後一欄標註該資源下的物種互動類型（**強烈競爭 / 部分競爭 / 合作 / 迴避 / 無關**）。表格建議結構：
+       | 環境資源 | [物種 1] | [物種 2] | [物種 3] ... | 物種互動 | 設計啟示 |
+       每個物種欄填入需求度標記；「物種互動」欄具體寫明「A↔B 強烈競爭、A↔C 無關」這類配對；「設計啟示」欄寫具體做法（時空分離、垂直分層、緩衝設計、獨立棲息結構等）。
+   (c) 表格後用 1–2 段文字綜整：哪些資源是設計重點（高度競爭、需分區處理）、哪些可共享（合作或無關）、有哪些設計策略可緩解競爭。
+5. 空間資源分配（依物種需求分區）—— 用 HTML <table> 呈現分區資料；**禁止繪製任何 SVG / 平面示意圖 / 分區圖**；空間配置原則純文字敘述即可（例如：「以生態池為核心、向外輻射林相梯度，由水域→挺水帶→灌叢→喬木」）
+6. 5 個經查證的真實案例參考（含可開啟之 URL）
+7. 8–10 條生態設計原則
+8. 10 項施工材料建議
+9. 完整 APA 7 參考文獻表，分為政府機構 / 學術資料庫 / 書籍圖鑑 / 國際資料庫四類
+10. 雙重驗證聲明：研究時收集 + 定稿前重檢 URL 有效性與引用內容一致性，於報告末端記錄驗證日期
+
+══════ 配色規則（最高優先，違反任何一條即視為失敗）══════
+
+本報告是「印在米白色道林紙上的學術田野筆記」。整頁從頭到尾都是紙的顏色，只有「文字」和「細線」帶顏色。
+
+【唯一允許的背景色——白名單，沒有例外】
+任何元素（body / section / header / div / 卡片 / 標題列 / 表格 / 過場區 / hero 區 / footer）的背景，只能是下列四者之一：
+- #faf6ea（主 cream 紙色，預設）
+- #fffdf7（卡片用的近白）
+- #ffffff（純白，表格儲存格）
+- #ede4cc（淺米色，僅用於表格標題列 thead，這已是允許的「最深」背景）
+
+【文字色】
+- 內文：#2e2a22（深褐近黑——這個顏色只能給「文字」，永遠不可當背景）
+- 標題 h1–h4：#456238（moss 綠）
+- 行內強調字：#b8694a（clay）
+
+【線條／邊框】#d4cdb8（淺褐）或 #456238（moss），寬度 1–6px
+
+【絕對禁止——這些是上一版報告列印變醜的原因】
+✗ 任何 section、標題列、章節過場、hero 區、區塊使用「黑色 / 深灰 / 深褐 / 磚紅 / 深綠」當背景。深色背景一律不准，連章節之間的過場區也不行。
+✗ 反白文字（淺色字疊在深色底）——文字永遠「深字、淺底」，絕不可顛倒。
+✗ clay #b8694a 出現在任何面積大於 40×40px 的色塊。clay 只能是：① section 編號小圓圈（直徑 ≤ 36px）② 行內粗體強調字 ③ ≤ 6px 細邊框。除此之外 clay 不可出現。
+✗ 漸層背景、陰影色塊、深色 banner、深色 cover。
+✗ 任何 CSS 寫 background 為 #000、black、#1a1a1a、#222、rgb(深色) 等。
+
+【自我檢查（生成後必做）】
+完成 HTML 後，逐一檢視每個 background / background-color 宣告：若不是上述四個允許值之一，改成 #faf6ea。把整份報告想成印在同一張米白色紙上——任何一塊不是紙色的地方都是錯的。
+
+【字型】顯示字 Fraunces（標題、編號）；中文內文 Noto Serif TC；表格與 metadata Noto Sans TC。
+
+【列印友善】大面積深色 = 耗墨、視覺壓迫、雙面列印穿透。整頁淺色才是正確的學術報告樣貌。
+
+結構與細節可參照前期分析（如 eco_analysis_demo_3.html），但配色一律以上述白名單為準。
+══════════════════════════════════════════
+
+⚠️ 排版禁令（避免 PDF 列印錯位與視覺雜訊）：
+- 嚴禁使用 ASCII art / 文字框線繪圖（如 ||、─、┌┐└┘、═ 等字元堆疊成方框、流程圖、表格）。中文字為全形、Latin/數字為半形，混排時對齊必崩，列印 PDF 尤其慘烈。
+- **嚴禁繪製基地平面示意圖、分區示意圖、SVG 平面圖、概念配置圖**——這類抽象幾何疊圖（不論有無底圖）無地理意義，反而讓報告失焦。空間配置一律用「表格 + 文字敘述」呈現。
+- 「分區資料」用 <table> + <th> + <td>，加 CSS border 與 padding。
+- 「流程圖」「結構圖」如必要可用 CSS Grid（<div style="display:grid;grid-template-columns:...">）排列文字卡片，但不要畫幾何圖形。
+- 內嵌 <svg> 僅在以下情境可用：物種圖示符號（如鳥類剪影 icon）、頁尾植物紋飾、章節分隔線等純裝飾元素。
+
+來源優先序：政府/學術機構（林業署、TaiEOL、TBN）→ 學術期刊 → NGO/社區調查 → iNaturalist 在地觀察記錄 → OpenStreetMap 環境脈絡 → 媒體部落格（僅作灰文獻案例參考）。`;
+  }
+
+  function updatePrompt() {
+    document.getElementById('promptPreview').textContent = buildPrompt();
+  }
+
+  // ========== Clipboard ==========
+  async function copyPrompt() {
+    const text = buildPrompt();
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('✅ 提示詞已複製到剪貼簿');
+      saveToHistory();
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        toast('✅ 已複製');
+        saveToHistory();
+      } catch (err) {
+        toast('❌ 複製失敗，請手動框選提示詞框中文字');
+      }
+      document.body.removeChild(ta);
+    }
+  }
+
+  // ========== Open Claude ==========
+  function openClaude() {
+    const text = buildPrompt();
+    saveToHistory();
+    // 先嘗試 claude.ai 的 ?q= 帶入
+    const url = `https://claude.ai/new?q=${encodeURIComponent(text)}`;
+    // 同時先複製到剪貼簿做備援
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).catch(() => {});
+    }
+    window.open(url, '_blank');
+    toast('🔗 已開啟 Claude（提示詞已同步複製到剪貼簿備用）');
+  }
+
+  // ========== History ==========
+  function loadHistory() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) { return []; }
+  }
+
+  function saveHistoryArray(arr) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); }
+    catch (e) { console.warn('localStorage 不可用:', e); }
+  }
+
+  function saveToHistory() {
+    if (state.lat == null) return;
+    if (!state.species.length && !state.conditions.length) return;
+    const entry = {
+      ts: new Date().toISOString(),
+      lat: state.lat, lon: state.lon,
+      name: state.locationName,
+      species: state.species.slice(),
+      conditions: state.conditions.slice(),
+      habitatNeeds: state.habitatNeeds.slice(),
+      special: state.specialNotes
+    };
+    const arr = loadHistory();
+    arr.unshift(entry);
+    saveHistoryArray(arr.slice(0, 100));
+    renderHistory();
+  }
+
+  function renderHistory() {
+    const list = document.getElementById('historyList');
+    const arr = loadHistory();
+    if (!arr.length) {
+      list.innerHTML = '<div class="history-empty">尚無紀錄。複製或開啟 Claude 後會自動保存。</div>';
+      return;
+    }
+    list.innerHTML = '';
+    arr.forEach((e, idx) => {
+      const item = document.createElement('div');
+      item.className = 'history-item' + (e.htmlResult ? ' has-result' : '');
+      const date = new Date(e.ts);
+      const dateStr = `${date.getMonth()+1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;
+      const resultBadge = e.htmlResult ? '<span class="history-result-badge">📄 含結果</span>' : '';
+      item.innerHTML = `
+        <div class="history-head">
+          <span class="history-loc">${e.name || `(${e.lat}, ${e.lon})`}${resultBadge}</span>
+          <span class="history-date">${dateStr}</span>
+        </div>
+        <div class="history-sub">
+          🎯 ${e.species.join('、') || '—'}<br>
+          🌳 ${e.conditions.join('、') || '—'}${e.special ? '<br>⚠️ ' + e.special : ''}
+        </div>
+        <div class="history-actions">
+          <button data-idx="${idx}" class="load-btn">↻ 載入到表單</button>
+          ${e.htmlResult ? `<button data-idx="${idx}" class="show-result-btn">📄 顯示結果</button>` : ''}
+          <button data-idx="${idx}" class="del-btn danger">✕ 刪除</button>
+        </div>
+      `;
+      list.appendChild(item);
+    });
+    list.querySelectorAll('.load-btn').forEach(btn => {
+      btn.onclick = () => loadEntry(arr[+btn.dataset.idx]);
+    });
+    list.querySelectorAll('.show-result-btn').forEach(btn => {
+      btn.onclick = () => {
+        const entry = arr[+btn.dataset.idx];
+        if (entry.htmlResult) {
+          analysisMeta = null;
+          showResult(entry.htmlResult);
+          toast('📄 已載入歷史結果');
+        }
+      };
+    });
+    list.querySelectorAll('.del-btn').forEach(btn => {
+      btn.onclick = () => {
+        if (!confirm('確定刪除這筆紀錄？')) return;
+        const a = loadHistory();
+        a.splice(+btn.dataset.idx, 1);
+        saveHistoryArray(a);
+        renderHistory();
+      };
+    });
+  }
+
+  function loadEntry(e) {
+    state.locationName = e.name || '';
+    state.species = e.species.slice();
+    state.conditions = e.conditions.slice();
+    state.habitatNeeds = Array.isArray(e.habitatNeeds) ? e.habitatNeeds.slice() : [];
+    state.specialNotes = e.special || '';
+    document.getElementById('locname').value = state.locationName;
+    document.getElementById('special').value = state.specialNotes;
+    if (e.lat != null) setLocation(e.lat, e.lon, { skipClear: true });
+    speciesChip.render();
+    conditionChip.render();
+    habitatNeedsChip.render();
+    updateQuickChips();
+    updateInatAddedState();
+    updateOsmDetectedChipsState();
+    updatePrompt();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    toast('✅ 已載入到表單');
+  }
+
+  function exportJSON() {
+    const arr = loadHistory();
+    if (!arr.length) { toast('歷史為空，無可匯出'); return; }
+    const blob = new Blob([JSON.stringify(arr, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `qi-coexistence-history-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast(`✅ 已匯出 ${arr.length} 筆紀錄`);
+  }
+
+  function importJSON(file) {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!Array.isArray(data)) throw new Error('JSON 必須是陣列');
+        const arr = loadHistory();
+        const merged = [...data, ...arr];
+        const seen = new Set();
+        const unique = merged.filter(x => {
+          if (!x.ts || seen.has(x.ts)) return false;
+          seen.add(x.ts);
+          return true;
+        });
+        unique.sort((a,b) => b.ts.localeCompare(a.ts));
+        saveHistoryArray(unique.slice(0, 200));
+        renderHistory();
+        toast(`✅ 已匯入 ${data.length} 筆（合併後共 ${unique.length} 筆）`);
+      } catch (err) {
+        toast('❌ 匯入失敗：' + err.message);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function resetForm() {
+    if (!confirm('清空目前表單？（不會刪除歷史紀錄）')) return;
+    state.lat = null; state.lon = null;
+    state.locationName = '';
+    state.species = []; state.conditions = []; state.habitatNeeds = [];
+    state.specialNotes = '';
+    inatLastSummary = null;
+    osmLastSummary = null;
+    document.getElementById('lat').value = '';
+    document.getElementById('lon').value = '';
+    document.getElementById('locname').value = '';
+    document.getElementById('special').value = '';
+    document.getElementById('inatStatus').textContent = '📍 請先選擇基地位置，會自動載入鄰近觀察記錄';
+    document.getElementById('inatResults').innerHTML = '';
+    document.getElementById('osmStatus').textContent = '📍 請先選擇基地位置，會自動偵測周邊森林、水體、保護區、聚落、步道';
+    document.getElementById('osmResults').innerHTML = '';
+    // 清除分析結果預覽
+    analysisResult = null;
+    analysisMeta = null;
+    document.getElementById('resultDisplay').style.display = 'none';
+    document.getElementById('resultError').style.display = 'none';
+    if (marker && map) { map.removeLayer(marker); marker = null; }
+    speciesChip.render();
+    conditionChip.render();
+    habitatNeedsChip.render();
+    updateQuickChips();
+    updateInatAddedState();
+    updateOsmDetectedChipsState();
+    updatePrompt();
+    toast('🗑 表單已重設');
+  }
+
+  // ========== Claude API（經由本站 Edge Function 代理，金鑰在伺服器端）==========
+  const API_ENDPOINT = '/api/analyze';
+  const PASSCODE_STORAGE = 'qi-coexistence-passcode-v1';
+  // v2：換 key 讓舊的模型偏好失效，所有人重設為 Sonnet 4.6 預設
+  const MODEL_STORAGE = 'qi-coexistence-model-v2';
+  let analysisResult = null;
+  let analysisMeta = null;
+  let loadingTimerInterval = null;
+
+  function getPasscode() {
+    const el = document.getElementById('passcode');
+    const inputVal = el ? el.value.trim() : '';
+    if (inputVal) return inputVal;
+    try { return localStorage.getItem(PASSCODE_STORAGE) || ''; } catch (e) { return ''; }
+  }
+
+  function setupApiKeyUI() {
+    try {
+      const saved = localStorage.getItem(PASSCODE_STORAGE);
+      if (saved) {
+        document.getElementById('passcode').value = saved;
+        document.getElementById('savePasscode').checked = true;
+      }
+      const savedModel = localStorage.getItem(MODEL_STORAGE);
+      if (savedModel) document.getElementById('apiModel').value = savedModel;
+    } catch (e) {}
+
+    document.getElementById('passcode').addEventListener('input', e => {
+      if (document.getElementById('savePasscode').checked) {
+        try { localStorage.setItem(PASSCODE_STORAGE, e.target.value.trim()); } catch (_) {}
+      }
+    });
+
+    document.getElementById('savePasscode').addEventListener('change', e => {
+      try {
+        if (e.target.checked) {
+          localStorage.setItem(PASSCODE_STORAGE, document.getElementById('passcode').value.trim());
+        } else {
+          localStorage.removeItem(PASSCODE_STORAGE);
+        }
+      } catch (_) {}
+    });
+
+    document.getElementById('clearPasscode').addEventListener('click', () => {
+      document.getElementById('passcode').value = '';
+      document.getElementById('savePasscode').checked = false;
+      try { localStorage.removeItem(PASSCODE_STORAGE); } catch (_) {}
+      toast('🗑 已清除本機通行碼');
+    });
+
+    document.getElementById('apiModel').addEventListener('change', e => {
+      try { localStorage.setItem(MODEL_STORAGE, e.target.value); } catch (_) {}
+    });
+  }
+
+  // 從 Claude 回應中萃取 HTML（處理 code fence、純 HTML 等格式）
+  function extractHTML(text) {
+    // ```html ... ``` 區塊
+    const fenceMatch = text.match(/```(?:html|HTML)?\s*\n([\s\S]*?)```/);
+    if (fenceMatch && fenceMatch[1].includes('<')) return fenceMatch[1].trim();
+    // <!DOCTYPE html> ... </html>
+    const docMatch = text.match(/(<!DOCTYPE[\s\S]*?<\/html>)/i);
+    if (docMatch) return docMatch[1];
+    // <html> ... </html>
+    const htmlMatch = text.match(/(<html[\s\S]*?<\/html>)/i);
+    if (htmlMatch) return htmlMatch[1];
+    // 退而求其次：整段
+    return text.trim();
+  }
+
+  // 後處理：把任何深色背景強制改成 cream、淺色文字改成深色
+  // 這是確定性修正——不靠 Claude 自律。深色背景 + 淺色文字「成對」轉換，
+  // 確保結果一律「深字淺底」，不會出現淺字疊淺底而隱形。
+  function neutralizeDarkColors(html) {
+    const CREAM = '#faf6ea';
+    const DARKTEXT = '#2e2a22';
+    const BG_DARK_THRESHOLD = 0.42;   // 亮度低於此 → 視為深色背景
+    const TEXT_LIGHT_THRESHOLD = 0.70; // 亮度高於此 → 視為淺色文字
+    // moss #456238 亮度約 0.33、clay #b8694a 約 0.49——
+    // 門檻刻意避開，讓這兩個點綴色不論當背景或文字都不受影響。
+
+    function hexLum(hex) {
+      let h = hex.replace('#', '');
+      if (h.length === 4) h = h.slice(0, 3);
+      if (h.length === 3) h = h.split('').map(c => c + c).join('');
+      if (h.length === 8) h = h.slice(0, 6);
+      if (h.length !== 6) return null;
+      const r = parseInt(h.slice(0, 2), 16);
+      const g = parseInt(h.slice(2, 4), 16);
+      const b = parseInt(h.slice(4, 6), 16);
+      if ([r, g, b].some(isNaN)) return null;
+      return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    }
+    function rgbLum(r, g, b) {
+      return (0.299 * +r + 0.587 * +g + 0.114 * +b) / 255;
+    }
+
+    let out = html;
+
+    // ── 背景：深色 → cream ──
+    // hex
+    out = out.replace(/(background(?:-color)?\s*:\s*)(#[0-9a-fA-F]{3,8})/g,
+      (m, pre, hex) => {
+        const l = hexLum(hex);
+        return (l !== null && l < BG_DARK_THRESHOLD) ? pre + CREAM : m;
+      });
+    // rgb / rgba
+    out = out.replace(/(background(?:-color)?\s*:\s*)rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)[^)]*\)/gi,
+      (m, pre, r, g, b) => rgbLum(r, g, b) < BG_DARK_THRESHOLD ? pre + CREAM : m);
+    // 具名深色
+    out = out.replace(/(background(?:-color)?\s*:\s*)(black|#000\b)/gi,
+      (m, pre) => pre + CREAM);
+
+    // ── 文字：淺色 → 深褐 ──（用 lookbehind 排除 background-color / border-color）
+    // hex
+    out = out.replace(/(?<![-\w])(color\s*:\s*)(#[0-9a-fA-F]{3,8})/g,
+      (m, pre, hex) => {
+        const l = hexLum(hex);
+        return (l !== null && l > TEXT_LIGHT_THRESHOLD) ? pre + DARKTEXT : m;
+      });
+    // rgb / rgba
+    out = out.replace(/(?<![-\w])(color\s*:\s*)rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)[^)]*\)/gi,
+      (m, pre, r, g, b) => rgbLum(r, g, b) > TEXT_LIGHT_THRESHOLD ? pre + DARKTEXT : m);
+    // 具名淺色
+    out = out.replace(/(?<![-\w])(color\s*:\s*)(white|#fff\b)/gi,
+      (m, pre) => pre + DARKTEXT);
+
+    return out;
+  }
+
+  // 把 Leaflet 地圖截圖成 base64 JPEG（用 leaflet-image 函式庫）
+  // 用途：取代 Claude HTML 裡的 staticmap.openstreetmap.de URL，確保位置地圖永遠都在
+  async function captureMapDataURL() {
+    if (!map || typeof window.leafletImage !== 'function') return null;
+    return new Promise((resolve) => {
+      try {
+        window.leafletImage(map, (err, canvas) => {
+          if (err) { console.warn('leaflet-image error:', err); resolve(null); return; }
+          try {
+            resolve(canvas.toDataURL('image/jpeg', 0.85));
+          } catch (e) {
+            console.warn('canvas toDataURL failed (CORS taint?):', e);
+            resolve(null);
+          }
+        });
+      } catch (e) {
+        console.warn('leafletImage threw:', e);
+        resolve(null);
+      }
+    });
+  }
+
+  async function callClaudeAPI() {
+    const passcode = getPasscode();
+    if (!passcode) {
+      toast('❌ 請先輸入通行碼');
+      const el = document.getElementById('passcode');
+      if (el) el.focus();
+      return;
+    }
+    if (state.lat == null) {
+      toast('❌ 請先選擇基地位置');
+      return;
+    }
+    if (!state.species.length) {
+      toast('❌ 請至少選擇一個焦點物種');
+      return;
+    }
+
+    // 加上「請直接回 HTML」指令，方便解析
+    const basePrompt = buildPrompt();
+    const fullPrompt = basePrompt +
+      '\n\n⚠️ 回應格式：請直接輸出完整的 HTML 文件（從 <!DOCTYPE html> 開始至 </html> 結束），不要附加 markdown code fence、不要加入任何說明文字。';
+
+    const model = document.getElementById('apiModel').value;
+
+    document.getElementById('analyzeBtn').disabled = true;
+    document.getElementById('resultDisplay').style.display = 'none';
+    document.getElementById('resultError').style.display = 'none';
+    showLoading();
+
+    // 在本機截下當前 Leaflet 地圖（位置地圖用），失敗就用 staticmap URL 當後備
+    const capturedMapDataUrl = await captureMapDataURL().catch(() => null);
+    if (capturedMapDataUrl) {
+      console.info('Map captured for location-map injection.');
+    } else {
+      console.info('Map capture unavailable; report will use staticmap.openstreetmap.de URL as fallback.');
+    }
+
+    const startTime = Date.now();
+    try {
+      // 送到本站 Edge Function 代理（金鑰在伺服器端，前端看不到）
+      const response = await fetch(API_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode, model, prompt: fullPrompt })
+      });
+
+      if (!response.ok) {
+        let errText = '';
+        try { errText = await response.text(); } catch (_) {}
+        let serverMsg = '';
+        let serverCode = '';
+        try {
+          const errJson = JSON.parse(errText);
+          serverMsg = errJson.error || '';
+          serverCode = errJson.code || '';
+        } catch (_) { serverMsg = (errText || '').slice(0, 300); }
+
+        let errMsg = serverMsg || ('HTTP ' + response.status);
+        if (response.status === 401) {
+          errMsg = (serverCode === 'PASSCODE_REQUIRED')
+            ? '需要通行碼\n\n請在上方「🔑 通行碼」欄位輸入授課教師提供的通行碼。'
+            : '通行碼不正確\n\n請確認通行碼是否正確（注意大小寫與前後空白），或向授課教師確認。';
+        } else if (response.status === 529) {
+          errMsg = 'Anthropic 伺服器繁忙（HTTP 529 Overloaded）\n\n' +
+            '這不是您的設定問題，是 Anthropic 端整體負載過高。\n\n' +
+            '建議：\n' +
+            '• 1-2 分鐘後再按「🚀 開始分析」重試\n' +
+            '• 改用「Claude Sonnet 4.6」（較少擁塞、品質依然優秀）\n' +
+            '• 避開高峰時段（亞洲日間 + 美西夜間是高峰）';
+        } else if (response.status === 429) {
+          errMsg = '已達 API 速率上限（HTTP 429）\n\n' +
+            '同時使用的人較多或短時間內呼叫太多次，請等 1-5 分鐘後重試。';
+        } else if (response.status === 500 && /ANTHROPIC_API_KEY/.test(serverMsg)) {
+          errMsg = '伺服器尚未設定 API 金鑰\n\n請聯絡管理者在 Netlify 環境變數中設定 ANTHROPIC_API_KEY。';
+        }
+        throw new Error(errMsg);
+      }
+
+      // ── 讀取 SSE 串流，累積文字 ──
+      if (!response.body) throw new Error('瀏覽器不支援串流回應');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullText = '';
+      let searchCalls = 0;
+      let usage = {};
+      let streamError = null;
+
+      const subtextEl = document.getElementById('loadingProgress');
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          let ev;
+          try { ev = JSON.parse(payload); } catch (_) { continue; }
+
+          if (ev.type === 'content_block_delta' && ev.delta) {
+            if (typeof ev.delta.text === 'string') fullText += ev.delta.text;
+          } else if (ev.type === 'content_block_start' && ev.content_block) {
+            if (ev.content_block.type === 'server_tool_use') {
+              searchCalls++;
+              if (subtextEl) subtextEl.textContent = `🔍 已進行 ${searchCalls} 次網路搜尋…`;
+            }
+          } else if (ev.type === 'message_delta') {
+            if (ev.usage) usage = Object.assign(usage, ev.usage);
+          } else if (ev.type === 'error') {
+            streamError = (ev.error && ev.error.message) ? ev.error.message : '串流中發生錯誤';
+          }
+        }
+        if (fullText && subtextEl && searchCalls === 0) {
+          subtextEl.textContent = `✍️ 已產生 ${fullText.length.toLocaleString()} 字…`;
+        } else if (fullText && subtextEl) {
+          subtextEl.textContent = `🔍 ${searchCalls} 次搜尋 · ✍️ 已產生 ${fullText.length.toLocaleString()} 字…`;
+        }
+      }
+
+      if (streamError) throw new Error(streamError);
+      if (!fullText.trim()) throw new Error('API 回應為空');
+
+      let html = extractHTML(fullText);
+
+      // 後處理：把 Claude 寫的 staticmap.openstreetmap.de URL 換成我們本機截的地圖
+      // 確保位置地圖一定能顯示（不受 staticmap 服務當機影響）
+      if (capturedMapDataUrl) {
+        const beforeCount = (html.match(/staticmap\.openstreetmap\.de/g) || []).length;
+        html = html.replace(
+          /(<img[^>]*\ssrc\s*=\s*["'])https:\/\/staticmap\.openstreetmap\.de\/[^"']+(["'])/gi,
+          `$1${capturedMapDataUrl}$2`
+        );
+        const afterCount = (html.match(/staticmap\.openstreetmap\.de/g) || []).length;
+        if (beforeCount > afterCount) {
+          console.info(`Replaced ${beforeCount - afterCount} staticmap URL(s) with captured map.`);
+        }
+      }
+
+      // 後處理：強制把深色背景改 cream、淺色文字改深色（防 Claude 自加深色 section）
+      html = neutralizeDarkColors(html);
+
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+      analysisMeta = {
+        model: model,
+        elapsed: elapsed,
+        timestamp: new Date().toISOString(),
+        usage: usage || {},
+        searchCalls: searchCalls,
+      };
+
+      showResult(html);
+      saveToHistoryWithResult(html);
+      toast(`✅ 分析完成（${elapsed} 秒）`);
+    } catch (e) {
+      const msg = e.message || String(e);
+      let hint = '';
+      if (msg.includes('CORS') || msg.includes('Failed to fetch')) {
+        hint = '\n\n👉 網路連線問題，請確認網路正常後重試（分析服務由本站伺服器代理）';
+      }
+      showError(msg + hint);
+      console.error('Claude API error:', e);
+    } finally {
+      hideLoading();
+      document.getElementById('analyzeBtn').disabled = false;
+    }
+  }
+
+  function showLoading() {
+    document.getElementById('loadingState').style.display = 'flex';
+    const prog = document.getElementById('loadingProgress');
+    if (prog) prog.textContent = '連線中…';
+    const t0 = Date.now();
+    loadingTimerInterval = setInterval(() => {
+      const s = Math.round((Date.now() - t0) / 1000);
+      document.getElementById('loadingTimer').textContent = `經過時間：${s} 秒`;
+    }, 1000);
+  }
+
+  function hideLoading() {
+    document.getElementById('loadingState').style.display = 'none';
+    if (loadingTimerInterval) { clearInterval(loadingTimerInterval); loadingTimerInterval = null; }
+  }
+
+  function showError(msgText) {
+    const el = document.getElementById('resultError');
+    // 把純文字訊息 escape 後、再把 \n 轉成 <br>，避免 HTML injection 也保留換行
+    const escaped = String(msgText)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/\n/g, '<br>');
+    el.innerHTML = `<strong>❌ 分析失敗：</strong><br>${escaped}`;
+    el.style.display = 'block';
+  }
+
+  function showResult(html) {
+    analysisResult = html;
+    const frame = document.getElementById('resultFrame');
+    frame.srcdoc = html;
+    document.getElementById('resultDisplay').style.display = 'block';
+
+    const meta = document.getElementById('resultMeta');
+    if (analysisMeta) {
+      const u = analysisMeta.usage;
+      const tokenStr = u.input_tokens != null ? `輸入 ${u.input_tokens} / 輸出 ${u.output_tokens} tokens` : '';
+      meta.textContent = `${analysisMeta.model} · ${analysisMeta.elapsed} 秒 · ${analysisMeta.searchCalls} 次搜尋 · ${tokenStr}`;
+    } else {
+      meta.textContent = '手動載入';
+    }
+
+    setTimeout(() => {
+      document.getElementById('resultDisplay').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  }
+
+  function downloadResult() {
+    if (!analysisResult) return;
+    const blob = new Blob([analysisResult], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const date = new Date().toISOString().slice(0, 10);
+    const locName = state.locationName
+      ? state.locationName.replace(/[\/\\:*?"<>|]/g, '_').slice(0, 50)
+      : `${state.lat || 'site'}_${state.lon || ''}`;
+    a.download = `qi-coexistence-${locName}-${date}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('⬇ 已下載 HTML');
+  }
+
+  function buildFilenameBase() {
+    const date = new Date().toISOString().slice(0, 10);
+    const locName = state.locationName
+      ? state.locationName.replace(/[\/\\:*?"<>|]/g, '_').slice(0, 50)
+      : `${state.lat || 'site'}_${state.lon || ''}`;
+    return `qi-coexistence-${locName}-${date}`;
+  }
+
+  async function downloadPDF() {
+    if (!analysisResult) { toast('⚠️ 尚無分析結果可下載'); return; }
+
+    // 注入「列印專用 CSS + 字型載入後自動觸發列印」到結果 HTML 的副本
+    const printAddon = `<style>
+@media print {
+  @page { size: A4 portrait; margin: 12mm 10mm; }
+  html, body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  section, article, .card, header, footer,
+  figure, table, .reference, .citation {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  h1, h2, h3 {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  a { color: inherit; text-decoration: none; }
+  /* 隱藏列印不需要的互動元素（若報告中有）*/
+  .no-print, button, nav { display: none !important; }
+}
+</style>
+<scr` + `ipt>
+  window.addEventListener('load', function() {
+    var doPrint = function() {
+      try { window.focus(); window.print(); } catch (e) { console.error(e); }
+    };
+    // 等中文字型載入完成再列印（避免回退到系統字）
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(function() { setTimeout(doPrint, 350); });
+    } else {
+      setTimeout(doPrint, 800);
+    }
+  });
+</scr` + `ipt>`;
+
+    let modifiedHtml = analysisResult;
+    if (modifiedHtml.match(/<\/head>/i)) {
+      modifiedHtml = modifiedHtml.replace(/<\/head>/i, printAddon + '</head>');
+    } else if (modifiedHtml.match(/<body[^>]*>/i)) {
+      modifiedHtml = modifiedHtml.replace(/<body[^>]*>/i, m => m + printAddon);
+    } else {
+      modifiedHtml = printAddon + modifiedHtml;
+    }
+
+    const blob = new Blob([modifiedHtml], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+
+    // window.open 必須直接在 click handler 同步呼叫，否則彈窗會被擋
+    const printWindow = window.open(url, '_blank');
+
+    if (!printWindow) {
+      URL.revokeObjectURL(url);
+      toast('❌ 視窗被擋——請允許本站彈窗，或先按「↗ 新分頁開啟」、再用瀏覽器列印');
+      return;
+    }
+
+    // 2 分鐘後釋放 blob URL
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+
+    toast('🖨 已開啟列印視窗，請選「儲存為 PDF」');
+  }
+
+  function openResultInTab() {
+    if (!analysisResult) return;
+    const blob = new Blob([analysisResult], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+  }
+
+  async function copyResultSource() {
+    if (!analysisResult) return;
+    try {
+      await navigator.clipboard.writeText(analysisResult);
+      toast('📋 已複製 HTML 原始碼');
+    } catch (e) {
+      toast('❌ 複製失敗：' + e.message);
+    }
+  }
+
+  function closeResultPreview() {
+    document.getElementById('resultDisplay').style.display = 'none';
+  }
+
+  function openPasteModal() {
+    const modal = document.createElement('div');
+    modal.className = 'paste-modal';
+    modal.innerHTML = `
+      <div class="paste-modal-content">
+        <h3>📋 貼上 Claude 結果</h3>
+        <p>從 Claude 對話複製整個 HTML 報告原始碼（含 <code>&lt;!DOCTYPE html&gt;</code>）貼入此處。送出後會顯示在表單下方並可下載。</p>
+        <textarea id="pasteTextarea" placeholder="<!DOCTYPE html>&#10;<html>&#10;..."></textarea>
+        <div class="paste-modal-actions">
+          <button class="btn btn-ghost" id="pasteCancelBtn">取消</button>
+          <button class="btn btn-primary" id="pasteSubmitBtn">送出</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    const close = () => modal.remove();
+    modal.querySelector('#pasteCancelBtn').onclick = close;
+    modal.querySelector('#pasteSubmitBtn').onclick = () => {
+      const raw = modal.querySelector('#pasteTextarea').value.trim();
+      if (!raw) { toast('⚠️ 請貼入 HTML 內容'); return; }
+      const html = neutralizeDarkColors(extractHTML(raw));
+      analysisMeta = null;
+      showResult(html);
+      saveToHistoryWithResult(html);
+      close();
+      toast('✅ 已載入手動結果');
+    };
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+    setTimeout(() => modal.querySelector('#pasteTextarea').focus(), 100);
+  }
+
+  function saveToHistoryWithResult(html) {
+    if (state.lat == null) return;
+    const arr = loadHistory();
+    const now = new Date().toISOString();
+    const recent = arr[0];
+    // 1 分鐘內、同位置 → 更新；否則新增
+    if (recent &&
+        Date.now() - new Date(recent.ts).getTime() < 60000 &&
+        recent.lat === state.lat && recent.lon === state.lon) {
+      recent.htmlResult = html;
+      recent.htmlSavedAt = now;
+      saveHistoryArray(arr);
+    } else {
+      const entry = {
+        ts: now,
+        lat: state.lat, lon: state.lon,
+        name: state.locationName,
+        species: state.species.slice(),
+        conditions: state.conditions.slice(),
+        habitatNeeds: state.habitatNeeds.slice(),
+        special: state.specialNotes,
+        htmlResult: html,
+        htmlSavedAt: now,
+      };
+      arr.unshift(entry);
+      saveHistoryArray(arr.slice(0, 100));
+    }
+    renderHistory();
+  }
+
+  // ========== About & Feedback ==========
+  // 將此處 email 改成您自己的（接收回饋用）
+  const FEEDBACK_EMAIL = 'cycland@ntu.edu.tw';
+  const APP_VERSION = 'v1.9';
+
+  function openAboutModal() {
+    const modal = document.createElement('div');
+    modal.className = 'paste-modal';
+    modal.innerHTML = `
+      <div class="paste-modal-content">
+        <h3>📖 關於 · 版權與授權</h3>
+
+        <div class="modal-section">
+          <p><strong>棲共生 Qi-Coexistence ${APP_VERSION}</strong><br>
+          景觀生態設計工作流工具——整合 OpenStreetMap、iNaturalist 與 Claude API
+          的基地生態共存分析輔助。</p>
+        </div>
+
+        <div class="modal-section">
+          <h4>作者與單位</h4>
+          <p>張俊彥（Chang Chun-Yen）<br>
+          國立臺灣大學 生物資源暨農學院 園藝暨景觀學系<br>
+          特聘教授</p>
+          <p style="font-size: 12px; color: var(--moss-light); font-style: italic;">
+          開發協作：Claude（Anthropic）</p>
+        </div>
+
+        <div class="modal-section">
+          <h4>授權 License</h4>
+          <p><a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="noopener">CC BY-NC-SA 4.0</a>
+          （姓名標示—非商業—相同方式分享）<br>
+          您可以自由分享、改作，但須註明來源、非商業用途、衍生作品採相同授權。</p>
+        </div>
+
+        <div class="modal-section">
+          <h4>引用方式 Citation</h4>
+          <p style="font-family: var(--serif); font-size: 12.5px; padding: 8px 10px; background: rgba(255,255,255,0.5); border-left: 3px solid var(--moss); border-radius: 2px;">
+          張俊彥（2026）。棲共生 Qi-Coexistence ${APP_VERSION}：景觀生態共存設計工作流工具 [Web App]。
+          國立臺灣大學園藝暨景觀學系。
+          </p>
+        </div>
+
+        <div class="modal-section">
+          <h4>資料來源與授權</h4>
+          <ul>
+            <li><strong>OpenStreetMap</strong> © 貢獻者 · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">ODbL</a>（圖磚 + Overpass API 環境特徵）</li>
+            <li><strong>iNaturalist</strong> · <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">CC BY-NC</a>（在地物種觀察記錄）</li>
+            <li><strong>Anthropic Claude API</strong>（經由本站伺服器代理呼叫；金鑰存於伺服器端環境變數，不隨網頁傳送）</li>
+          </ul>
+        </div>
+
+        <div class="modal-section">
+          <h4>使用之函式庫</h4>
+          <ul>
+            <li><strong>Leaflet 1.9.4</strong> · <a href="https://github.com/Leaflet/Leaflet/blob/main/LICENSE" target="_blank" rel="noopener">BSD-2-Clause</a></li>
+            <li><strong>Noto Serif TC / Fraunces</strong> · <a href="https://scripts.sil.org/OFL" target="_blank" rel="noopener">SIL OFL</a></li>
+          </ul>
+        </div>
+
+        <div class="modal-section">
+          <h4>免責聲明</h4>
+          <p style="font-size: 12px; color: var(--ink-soft); line-height: 1.65;">
+          本工具供研究、教學、設計參考使用。AI 生成之分析結果需經人工查證、專業判斷與在地田野驗證。
+          不保證資料絕對準確或適用於特定情境，使用者應自負審閱與決策責任。
+          資料來源（OSM、iNaturalist）內容由社群貢獻，可能有缺漏或時效落差。</p>
+        </div>
+
+        <div class="modal-meta">
+          National Taiwan University · 園藝暨景觀學系 · 2026
+        </div>
+
+        <div class="paste-modal-actions">
+          <button type="button" class="btn btn-primary" id="aboutCloseBtn">關閉</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    const close = () => modal.remove();
+    modal.querySelector('#aboutCloseBtn').onclick = close;
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+  }
+
+  function buildFeedbackContext() {
+    const lines = [];
+    lines.push(`Tool: 棲共生 Qi-Coexistence ${APP_VERSION}`);
+    lines.push(`Date: ${new Date().toISOString()}`);
+    lines.push(`User-Agent: ${navigator.userAgent.slice(0, 120)}`);
+    lines.push('');
+    if (state.lat != null) {
+      lines.push(`座標: ${state.lat}, ${state.lon}`);
+      if (state.locationName) lines.push(`地點: ${state.locationName}`);
+    }
+    if (state.species.length) lines.push(`焦點物種: ${state.species.join('、')}`);
+    if (state.conditions.length) lines.push(`基地條件: ${state.conditions.join('、')}`);
+    if (state.specialNotes) lines.push(`特別考量: ${state.specialNotes}`);
+    const model = document.getElementById('apiModel')?.value;
+    if (model) lines.push(`模型: ${model}`);
+    if (inatLastSummary) lines.push(`iNat: ${inatLastSummary.total} 筆、${inatLastSummary.speciesCount} 種`);
+    if (osmLastSummary) lines.push(`OSM: ${osmLastSummary.total} 個環境特徵`);
+    return lines.join('\n');
+  }
+
+  function openFeedbackModal() {
+    const contextPreview = buildFeedbackContext();
+    const modal = document.createElement('div');
+    modal.className = 'paste-modal';
+    modal.innerHTML = `
+      <div class="paste-modal-content">
+        <h3>💬 提供回饋</h3>
+        <p>您的意見能讓這個工具更好。送出後會開啟您的郵件 App，內容已預先填好。</p>
+
+        <div class="feedback-form">
+          <label>
+            <span>類別 CATEGORY</span>
+            <select id="feedbackCategory">
+              <option value="bug">🐛 問題回報（Bug Report）</option>
+              <option value="feature">✨ 功能建議（Feature Request）</option>
+              <option value="general" selected>💭 一般意見（General Feedback）</option>
+              <option value="collab">🤝 學術合作 / 引用詢問</option>
+              <option value="data">📊 資料來源建議</option>
+            </select>
+          </label>
+
+          <label>
+            <span>訊息 MESSAGE</span>
+            <textarea id="feedbackMessage" placeholder="請描述問題、建議、或想法..."></textarea>
+          </label>
+
+          <label class="feedback-checkbox">
+            <input type="checkbox" id="feedbackIncludeContext" checked />
+            <span>隨信附上目前表單狀態（位置、物種、條件、模型）方便除錯與回應</span>
+          </label>
+
+          <details>
+            <summary style="font-family: var(--serif); font-size: 12px; color: var(--moss); cursor: pointer; padding: 4px 0;">📋 檢視將附上的內容</summary>
+            <pre class="feedback-context-preview" id="feedbackContextPreview"></pre>
+          </details>
+        </div>
+
+        <div class="paste-modal-actions">
+          <button type="button" class="btn btn-ghost" id="feedbackCancelBtn">取消</button>
+          <button type="button" class="btn btn-primary" id="feedbackSubmitBtn">📧 透過 Email 寄出</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    modal.querySelector('#feedbackContextPreview').textContent = contextPreview;
+
+    const close = () => modal.remove();
+    modal.querySelector('#feedbackCancelBtn').onclick = close;
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+
+    modal.querySelector('#feedbackSubmitBtn').onclick = () => {
+      const cat = modal.querySelector('#feedbackCategory').value;
+      const msg = modal.querySelector('#feedbackMessage').value.trim();
+      const includeCtx = modal.querySelector('#feedbackIncludeContext').checked;
+
+      if (!msg) {
+        toast('⚠️ 請填入訊息內容');
+        return;
+      }
+
+      const catLabel = {
+        bug: '[Bug] 問題回報',
+        feature: '[Feature] 功能建議',
+        general: '[General] 一般意見',
+        collab: '[Collab] 學術合作',
+        data: '[Data] 資料建議',
+      }[cat] || '[General] 回饋';
+
+      const subject = `棲共生 ${APP_VERSION} 回饋 ${catLabel}`;
+      let body = msg + '\n\n';
+      if (includeCtx) {
+        body += '\n--- 表單狀態 / Form State ---\n' + contextPreview + '\n';
+      }
+      body += `\n--- 來自 棲共生 ${APP_VERSION} ---`;
+
+      const mailto = `mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      window.location.href = mailto;
+      close();
+      toast('📧 已開啟郵件 App，請按寄送');
+    };
+
+    setTimeout(() => modal.querySelector('#feedbackMessage').focus(), 100);
+  }
+
+  // ========== Toast ==========
+  let toastTimer;
+  function toast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+  }
+
+  // ========== Init ==========
+  let speciesChip, conditionChip, habitatNeedsChip;
+  // 依類別取得對應的 chip 實例（供 quick-chips 點擊後重繪）
+  function chipByCat(cat){
+    if (cat === 'species') return speciesChip;
+    if (cat === 'habitatNeeds') return habitatNeedsChip;
+    return conditionChip;
+  }
+
+  // ============================================================
+  // HEALS 上游 Map 整合（外加模組）—— 三狀態：standalone / pending / applied
+  // 純增量；獨立使用優先（載入不自動套用，只邀請）；任何失敗靜默退回獨立、不丟例外。
+  // 座標約定：payload boundary/center 為 [lat,lng]；GeoJSON 需換成 [lng,lat]。
+  // ============================================================
+  let HEALS_DETECTED = null;   // 偵測到的 raw payload（未決定）
+  let HEALS_SITE     = null;   // 使用者確認後才填入；獨立模式為 null
+  let healsBoundaryLayer = null;
+
+  // 合約：完全照搬，勿改名勿改邏輯
+  function readHealsSite(){
+    var enc=null, hm=(location.hash||'').match(/(?:^#|&)site=([^&]*)/);
+    if(hm) enc=hm[1];
+    if(!enc){ var ck=('; '+document.cookie).split('; heals_site=')[1]; if(ck) enc=ck.split(';')[0]; }
+    if(!enc) return null;
+    try{ var o=JSON.parse(decodeURIComponent(enc));
+         if(!o||!Array.isArray(o.boundary)||o.boundary.length<3) return null; return o; }
+    catch(e){ return null; }
+  }
+
+  // ---- 套用基地時的效果輔助（座標換位、半徑挑選等）----
+  function healsValidBoundary(b){
+    if(!Array.isArray(b) || b.length < 3) return false;
+    for(var i=0;i<b.length;i++){
+      var p=b[i]; if(!Array.isArray(p)||p.length<2) return false;
+      var lat=+p[0], lng=+p[1];
+      if(!isFinite(lat)||!isFinite(lng)) return false;
+      if(lat<-90||lat>90||lng<-180||lng>180) return false;
+    }
+    return true;
+  }
+  function healsCentroid(b){
+    var sLat=0,sLng=0; for(var i=0;i<b.length;i++){ sLat+=+b[i][0]; sLng+=+b[i][1]; }
+    return [sLat/b.length, sLng/b.length];
+  }
+  function healsPickRadius(cLat,cLng,b,opts){
+    var maxM=0; for(var i=0;i<b.length;i++){ var d=haversineMeters(cLat,cLng,+b[i][0],+b[i][1]); if(d>maxM)maxM=d; }
+    var km=maxM/1000; for(var j=0;j<opts.length;j++){ if(opts[j]>=km) return opts[j]; } return opts[opts.length-1];
+  }
+  function healsToGeoJSON(b){
+    var ring=b.map(function(p){return [p[1],p[0]];});            // [lat,lng]→[lng,lat]
+    var f=ring[0], l=ring[ring.length-1]; if(f[0]!==l[0]||f[1]!==l[1]) ring.push(f); // 封閉環
+    return { type:'Polygon', coordinates:[ring] };
+  }
+
+  // 三狀態互斥切換
+  function setHealsMode(mode){
+    try{
+      const ids = { standalone:'modeStandalone', pending:'healsPending', applied:'healsApplied' };
+      for(const k in ids){
+        const el = document.getElementById(ids[k]);
+        if(!el) continue;
+        if(k===mode) el.classList.add('active'); else el.classList.remove('active');
+      }
+    }catch(_){}
+  }
+
+  function healsBuildMeta(s, withBoundary){
+    const meta=[];
+    if(typeof s.area==='number' && s.area>0) meta.push(`${s.area} 公頃`);
+    if(Array.isArray(s.center) && s.center.length===2)
+      meta.push(`${(+s.center[0]).toFixed(3)}, ${(+s.center[1]).toFixed(3)}`);
+    if(withBoundary && Array.isArray(s.boundary)) meta.push(`${s.boundary.length} 頂點邊界`);
+    return meta.length ? '· ' + meta.join(' · ') : '';
+  }
+
+  // 載入時靜默偵測（不自動套用）
+  function detectHealsSite(){
+    try{
+      let dismissed=false;
+      try{ dismissed = sessionStorage.getItem('heals_dismissed')==='1'; }catch(_){}
+      if(dismissed) return;
+      const s = readHealsSite();
+      if(!s || typeof s!=='object') return;
+      HEALS_DETECTED = s;
+      const nm = document.getElementById('healsPendingName');
+      const mt = document.getElementById('healsPendingMeta');
+      if(nm) nm.textContent = s.locationName || '未命名基地 · (unnamed)';
+      if(mt) mt.textContent = healsBuildMeta(s, false);
+      setHealsMode('pending');
+    }catch(e){ console.warn('[heals] detect failed; standalone', e); }
+  }
+
+  // 套用基地的實際效果（畫範圍、設查詢點與半徑、載入 iNat/OSM、預填空欄位）
+  function healsApplyEffects(s){
+    if(!healsValidBoundary(s.boundary)) return;
+    var center;
+    if(Array.isArray(s.center) && isFinite(+s.center[0]) && isFinite(+s.center[1])
+       && +s.center[0]>=-90 && +s.center[0]<=90 && +s.center[1]>=-180 && +s.center[1]<=180){
+      center=[+s.center[0], +s.center[1]];
+    } else { center=healsCentroid(s.boundary); }
+
+    if(map && typeof L!=='undefined'){
+      try{
+        if(healsBoundaryLayer){ try{ map.removeLayer(healsBoundaryLayer); }catch(_){} }
+        healsBoundaryLayer = L.polygon(s.boundary, {
+          color:'#3f6b34', weight:2, fillColor:'#7a9b5e', fillOpacity:0.18, dashArray:'4 4'
+        }).addTo(map);
+        map.fitBounds(healsBoundaryLayer.getBounds(), { padding:[20,20] });
+      }catch(e){ console.warn('[heals] polygon draw failed', e); }
+    }
+    try{
+      var inatSel=document.getElementById('inatRadius');
+      var osmSel=document.getElementById('osmRadius');
+      if(inatSel) inatSel.value=String(healsPickRadius(center[0],center[1],s.boundary,[1,2,5,10,20]));
+      if(osmSel)  osmSel.value =String(healsPickRadius(center[0],center[1],s.boundary,[1,2,5]));
+    }catch(e){ console.warn('[heals] radius pick failed', e); }
+    try{ state.healsSiteGeo = healsToGeoJSON(s.boundary); }catch(_){ state.healsSiteGeo=null; }
+    // 預填地點名稱（不覆蓋使用者已輸入內容）
+    try{
+      var nameEl=document.getElementById('locname');
+      if(s.locationName && nameEl && !nameEl.value.trim()){
+        nameEl.value = s.locationName; state.locationName = s.locationName;
+      }
+    }catch(_){}
+    // 以 center 餵進既有單點查詢引擎（自動載入 iNat + OSM）
+    try{ setLocation(center[0], center[1], { skipClear:true }); }catch(e){ console.warn('[heals] setLocation failed', e); }
+  }
+
+  // 使用者按「套用基地」→ Map 模式
+  function confirmHealsSite(){
+    try{
+      if(!HEALS_DETECTED) return;
+      HEALS_SITE = HEALS_DETECTED;
+      const s = HEALS_SITE;
+
+      // 本站特定填入：把 site 套用到地圖與查詢（不覆蓋使用者已輸入內容）
+      healsApplyEffects(s);
+
+      const nm = document.getElementById('healsName');
+      const mt = document.getElementById('healsMeta');
+      if(nm) nm.textContent = s.locationName || '未命名基地 · (unnamed)';
+      if(mt) mt.textContent = healsBuildMeta(s, true);
+      setHealsMode('applied');
+
+      // 清掉 URL 的 #site=（cookie 仍是權威）
+      try{
+        if((location.hash||'').match(/(?:^#|&)site=/)){
+          let h = location.hash.replace(/(?:^#|&)site=[^&]*/g,'');
+          if(h==='' || h==='#') h='';
+          else if(h.charAt(0)!=='#') h='#'+h;
+          h = h.replace(/^#&/,'#');
+          history.replaceState(null,'', location.pathname + location.search + h);
+        }
+      }catch(_){}
+    }catch(e){ console.warn('[heals] confirm failed', e); }
+  }
+
+  // 使用者按「獨立使用」（pending → standalone）
+  function rejectPendingHeals(){
+    try{
+      HEALS_DETECTED = null;
+      setHealsMode('standalone');
+      try{ sessionStorage.setItem('heals_dismissed','1'); }catch(_){}
+    }catch(_){}
+  }
+
+  // 使用者按「改用手動」（applied → standalone，非破壞性）
+  function dismissHealsSite(){
+    try{
+      HEALS_SITE = null;
+      try{ if(healsBoundaryLayer && map){ map.removeLayer(healsBoundaryLayer); } }catch(_){}
+      healsBoundaryLayer=null;
+      setHealsMode('standalone');
+      try{ sessionStorage.setItem('heals_dismissed','1'); }catch(_){}
+    }catch(_){}
+  }
+
+  // ---- 匯出 JSON（給總控台「完成打卡」；ecology 站欄位）----
+  function buildHealsExport(){
+    var projEl=document.getElementById('healsProject');
+    return {
+      v: 1,
+      tool: 'eco4design.healsdesign.org',
+      generatedAt: new Date().toISOString(),
+      project: (projEl && projEl.value) ? projEl.value : '',
+      site: HEALS_SITE ? {
+        locationName: HEALS_SITE.locationName||'',
+        area: typeof HEALS_SITE.area==='number' ? HEALS_SITE.area : null,
+        center: Array.isArray(HEALS_SITE.center) ? HEALS_SITE.center : null
+      } : null,
+      // ecology 站核心輸出
+      habitats: Array.isArray(state.conditions) ? state.conditions.slice() : [],
+      species: Array.isArray(state.species) ? state.species.slice() : [],
+      habitatNeeds: Array.isArray(state.habitatNeeds) ? state.habitatNeeds.slice() : [],
+      ecosystemServices: [],
+      threats: [],
+      recommendations: [],
+      indicators: [],
+      // 額外（開放 schema）：保留既有輸入與產出
+      focalSpecies: Array.isArray(state.species) ? state.species.slice() : [],
+      siteConditions: Array.isArray(state.conditions) ? state.conditions.slice() : [],
+      specialNotes: state.specialNotes || '',
+      boundary: (HEALS_SITE && Array.isArray(HEALS_SITE.boundary)) ? HEALS_SITE.boundary : null,
+      geojson: state.healsSiteGeo || null,
+      analysisHtml: (typeof analysisResult!=='undefined' && analysisResult) ? analysisResult : null
+    };
+  }
+
+  function downloadJSON(){
+    try{
+      var out=buildHealsExport();
+      var json=JSON.stringify(out,null,2);
+      var blob=new Blob([json], {type:'application/json'});
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');
+      a.href=url;
+      var slug=((out.site&&out.site.locationName)||state.locationName||'site').replace(/[\/\\:*?"<>|]/g,'_').slice(0,40);
+      a.download='eco4design-'+slug+'-'+new Date().toISOString().slice(0,10)+'.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      toast('✅ 已匯出生態結果 JSON');
+    }catch(e){ console.warn('[heals] download failed', e); toast('❌ 匯出失敗'); }
+  }
+
+  function copyHealsJSON(){
+    try{
+      var json=JSON.stringify(buildHealsExport(),null,2);
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(json).then(
+          function(){ toast('📋 已複製 JSON 到剪貼簿'); },
+          function(){ toast('❌ 複製失敗，請改用匯出'); }
+        );
+      } else { toast('❌ 此瀏覽器不支援複製，請改用匯出'); }
+    }catch(e){ console.warn('[heals] copy failed', e); toast('❌ 複製失敗'); }
+  }
+
+  function wireHealsBanner(){
+    try{
+      const ac=document.getElementById('healsAccept');   if(ac) ac.onclick=confirmHealsSite;
+      const rj=document.getElementById('healsReject');   if(rj) rj.onclick=rejectPendingHeals;
+      const dm=document.getElementById('healsDismiss');  if(dm) dm.onclick=dismissHealsSite;
+      const sb=document.getElementById('healsSendBack'); if(sb) sb.onclick=function(){ try{ downloadJSON(); }catch(_){} };
+    }catch(_){}
+  }
+
+  function init() {
+    initMap();
+    speciesChip = setupChipInput('speciesChips', 'species');
+    conditionChip = setupChipInput('conditionChips', 'conditions');
+    habitatNeedsChip = setupChipInput('habitatNeedsChips', 'habitatNeeds');
+    renderCombos();
+    renderQuickChips();
+    speciesChip.render();
+    conditionChip.render();
+    habitatNeedsChip.render();
+
+    // Input listeners
+    document.getElementById('lat').addEventListener('input', updateFromInputs);
+    document.getElementById('lon').addEventListener('input', updateFromInputs);
+    document.getElementById('locname').addEventListener('input', e => {
+      state.locationName = e.target.value;
+      updatePrompt();
+    });
+    // 在地點名稱欄按 Enter → 搜尋地名
+    document.getElementById('locname').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); geocodeSearch(); }
+    });
+    document.getElementById('geocodeBtn').addEventListener('click', geocodeSearch);
+    document.getElementById('special').addEventListener('input', e => {
+      state.specialNotes = e.target.value;
+      updatePrompt();
+    });
+    document.getElementById('goCoord').addEventListener('click', () => {
+      const latRaw = document.getElementById('lat').value.trim();
+      const lonRaw = document.getElementById('lon').value.trim();
+      const lat = parseFloat(latRaw);
+      const lon = parseFloat(lonRaw);
+      if (latRaw === '' || lonRaw === '' || isNaN(lat) || isNaN(lon)) {
+        toast('❌ 經緯度欄是空的（灰字只是範例）— 可改用下方「🔍 搜尋地名」或直接點地圖');
+        return;
+      }
+      const check = validateCoords(lat, lon);
+      if (!check.ok) {
+        toast('❌ ' + check.msg);
+        return;
+      }
+      setLocation(lat, lon);
+    });
+
+    // Action buttons
+    document.getElementById('copyBtn').addEventListener('click', copyPrompt);
+    document.getElementById('openClaudeBtn').addEventListener('click', openClaude);
+    document.getElementById('resetBtn').addEventListener('click', resetForm);
+    document.getElementById('exportBtn').addEventListener('click', exportJSON);
+    document.getElementById('importBtn').addEventListener('click', () => {
+      document.getElementById('importFile').click();
+    });
+    document.getElementById('importFile').addEventListener('change', e => {
+      if (e.target.files[0]) importJSON(e.target.files[0]);
+      e.target.value = '';
+    });
+    document.getElementById('clearHistoryBtn').addEventListener('click', () => {
+      if (!confirm('確定清除所有歷史紀錄？此動作無法復原。')) return;
+      saveHistoryArray([]);
+      renderHistory();
+      toast('🗑 歷史已清空');
+    });
+
+    // iNaturalist controls
+    document.getElementById('inatRefresh').addEventListener('click', () => loadInat(true));
+    ['inatRadius', 'inatQuality', 'inatTaxon'].forEach(id => {
+      document.getElementById(id).addEventListener('change', () => loadInat(false));
+    });
+
+    // OSM Overpass controls
+    document.getElementById('osmRefresh').addEventListener('click', () => loadOsm(true));
+    document.getElementById('osmRadius').addEventListener('change', () => loadOsm(false));
+
+    // Claude API analysis (Step 6)
+    setupApiKeyUI();
+    document.getElementById('analyzeBtn').addEventListener('click', callClaudeAPI);
+    document.getElementById('pasteHtmlBtn').addEventListener('click', openPasteModal);
+    document.getElementById('downloadResultBtn').addEventListener('click', downloadResult);
+    document.getElementById('downloadPdfBtn').addEventListener('click', downloadPDF);
+    document.getElementById('openResultBtn').addEventListener('click', openResultInTab);
+    document.getElementById('copyResultBtn').addEventListener('click', copyResultSource);
+    document.getElementById('closeResultBtn').addEventListener('click', closeResultPreview);
+
+    // Footer: About + Feedback
+    document.getElementById('aboutBtn').addEventListener('click', openAboutModal);
+    document.getElementById('feedbackBtn').addEventListener('click', openFeedbackModal);
+
+    renderHistory();
+    updatePrompt();
+
+    // 外加：HEALS 匯出 / 複製 JSON 按鈕（與既有歷史匯出並存）
+    try{
+      var exBtn=document.getElementById('healsExportBtn'); if(exBtn) exBtn.addEventListener('click', downloadJSON);
+      var cpBtn=document.getElementById('healsCopyBtn');   if(cpBtn) cpBtn.addEventListener('click', copyHealsJSON);
+    }catch(e){ console.warn('[heals] export wiring skipped', e); }
+
+    // 外加：三狀態 banner 接線 + 靜默偵測上游基地（不自動套用；任何失敗靜默退回獨立）
+    try{ wireHealsBanner(); detectHealsSite(); }
+    catch(e){ console.warn('[heals] init skipped', e); }
+  }
+
+  function updateFromInputs() {
+    const lat = parseFloat(document.getElementById('lat').value);
+    const lon = parseFloat(document.getElementById('lon').value);
+    if (isNaN(lat) || isNaN(lon)) return;
+    const check = validateCoords(lat, lon);
+    if (!check.ok) {
+      // 不送 API、不更新 state；等使用者修正後 input 事件會再觸發
+      return;
+    }
+    state.lat = lat;
+    state.lon = lon;
+    updatePrompt();
+    debounceInat();
+    debounceOsm();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

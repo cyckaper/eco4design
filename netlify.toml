@@ -1,0 +1,30 @@
+# Netlify configuration for Qi-Coexistence
+
+[build]
+  publish = "."
+
+# Cache headers
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(self)"
+
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# Pretty URLs
+[[redirects]]
+  from = "/app"
+  to = "/"
+  status = 200
+
+# Claude API 代理（金鑰存於環境變數，瀏覽器看不到）
+# 需在 Netlify Dashboard 設定環境變數：ANTHROPIC_API_KEY、QI_PASSCODE
+[[edge_functions]]
+  path = "/api/analyze"
+  function = "analyze"
