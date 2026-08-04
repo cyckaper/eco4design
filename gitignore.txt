@@ -1,0 +1,25 @@
+# ⚠️ 絕對不可提交的檔案（含金鑰）
+.env
+.env.*
+!.env.example
+*.key
+secrets.json
+
+# Netlify 本機開發產物
+.netlify/
+netlify/functions-serve/
+
+# 相依套件與快取
+node_modules/
+.cache/
+dist/
+
+# 系統檔
+.DS_Store
+Thumbs.db
+*.swp
+._*
+
+# 編輯器
+.vscode/
+.idea/
