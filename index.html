@@ -31,7 +31,12 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: radial-gradient(ellipse at top, var(--paper) 0%, var(--bg) 45%, var(--bg-alt) 100%); font-family: var(--body); color: var(--ink); line-height: 1.6; min-height: 100vh; }
   .container { max-width: 920px; margin: 0 auto; padding: 2rem 1rem 5rem; }
-  header.app-header { text-align: center; margin-bottom: 2rem; }
+  header.app-header { text-align: center; margin-bottom: 2rem; position: relative; }
+  .lang-switch { position: absolute; top: 0; right: 0; display: flex; gap: 0; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; background: var(--paper); }
+  .lang-btn { background: none; border: none; padding: 5px 14px; font-family: var(--serif); font-size: 12px; color: var(--moss-light); cursor: pointer; transition: all .15s; }
+  .lang-btn:hover { color: var(--clay); }
+  .lang-btn.active { background: var(--moss); color: #fff; }
+  @media (max-width: 600px) { .lang-switch { position: static; justify-content: center; display: inline-flex; margin-bottom: 12px; } }
   .tag { display: inline-flex; align-items: center; gap: 8px; padding: 5px 14px; border: 1px solid var(--border); border-radius: 999px; font-size: 10.5px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--moss-light); background: rgba(250, 246, 234, 0.6); margin-bottom: 16px; }
   h1.title { font-family: var(--display); font-weight: 400; font-size: clamp(2rem, 5vw, 3rem); margin: 0 0 6px; letter-spacing: -0.01em; line-height: 1.1; }
   h1.title .dot { color: var(--clay); font-style: italic; }
@@ -419,7 +424,11 @@
 <div class="container">
 
   <header class="app-header">
-    <div class="tag">🌿 Qi-Coexistence Workflow · v1.28</div>
+    <div class="lang-switch">
+      <button type="button" id="langZh" class="lang-btn active">中文</button>
+      <button type="button" id="langEn" class="lang-btn">EN</button>
+    </div>
+    <div class="tag">🌿 Qi-Coexistence Workflow · v1.30</div>
     <h1 class="title">棲<span class="dot">·</span>共生</h1>
     <p class="subtitle">
       生態基地分析工作流工具——選擇位置、設定焦點物種與基地條件，自動生成結構化提示詞送入 Claude 進行完整的生態共存設計分析。
@@ -682,6 +691,7 @@
       <div class="loading-subtext" id="loadingTimer">經過時間：0 秒</div>
       <div class="loading-subtext" id="loadingProgress">連線中…</div>
       <div class="loading-subtext">含網路搜尋與引用驗證通常需要數分鐘</div>
+      <div class="loading-subtext" style="color:#b86b4a;font-weight:600;margin-top:4px;">⚠️ 請保持本頁在前景，勿切換 App 或讓螢幕鎖定，否則連線會中斷</div>
     </div>
 
     <div id="resultError" class="result-error" style="display:none;"></div>
@@ -746,24 +756,24 @@
 
   // ========== 預設資料 ==========
   const SPECIES_COMBOS = [
-    { name: '北部低海拔經典', desc: '次生闊葉林', items: ['藍腹鷴', '山羌', '白鼻心', '翡翠樹蛙'] },
-    { name: '溪流—森林立體', desc: '水域+樹冠', items: ['鉛色水鶇', '小剪尾', '翡翠樹蛙', '台灣獼猴'] },
-    { name: '平原都市公園', desc: '中海拔以下', items: ['台灣藍鵲', '五色鳥', '貢德式赤蛙', '紅嘴黑鵯'] },
-    { name: '低海拔山溝敏感', desc: '需嚴格保育', items: ['八色鳥', '領角鴞', '白鼻心'] },
-    { name: '中海拔混合林', desc: '海拔 1500-2500', items: ['帝雉', '藍腹鷴', '台灣獼猴', '山羌'] },
-    { name: '河川中下游', desc: '河岸與灘地', items: ['翠鳥', '夜鷺', '貢德氏赤蛙', '台灣石鮒'] },
-    { name: '海岸林組合', desc: '濱海風衝林', items: ['黑鳶', '玄燕鷗', '台灣狗母魚', '招潮蟹'] },
-    { name: '濕地候鳥', desc: '冬季棲息', items: ['黑面琵鷺', '小鸊鷉', '反嘴鴴', '東方環頸鴴'] }
+    { name: '北部低海拔經典', en: 'N. Taiwan lowland', desc: '次生闊葉林', descEn: 'secondary broadleaf', items: ['藍腹鷴', '山羌', '白鼻心', '翡翠樹蛙'] },
+    { name: '溪流—森林立體', en: 'Stream–forest strata', desc: '水域+樹冠', descEn: 'water + canopy', items: ['鉛色水鶇', '小剪尾', '翡翠樹蛙', '台灣獼猴'] },
+    { name: '平原都市公園', en: 'Urban park', desc: '中海拔以下', descEn: 'below mid-elevation', items: ['台灣藍鵲', '五色鳥', '貢德式赤蛙', '紅嘴黑鵯'] },
+    { name: '低海拔山溝敏感', en: 'Sensitive ravine', desc: '需嚴格保育', descEn: 'strict conservation', items: ['八色鳥', '領角鴞', '白鼻心'] },
+    { name: '中海拔混合林', en: 'Mid-elevation mixed', desc: '海拔 1500-2500', descEn: 'elev. 1500–2500 m', items: ['帝雉', '藍腹鷴', '台灣獼猴', '山羌'] },
+    { name: '河川中下游', en: 'Mid–lower river', desc: '河岸與灘地', descEn: 'banks & flats', items: ['翠鳥', '夜鷺', '貢德氏赤蛙', '台灣石鮒'] },
+    { name: '海岸林組合', en: 'Coastal forest', desc: '濱海風衝林', descEn: 'wind-swept littoral', items: ['黑鳶', '玄燕鷗', '台灣狗母魚', '招潮蟹'] },
+    { name: '濕地候鳥', en: 'Wetland migrants', desc: '冬季棲息', descEn: 'winter roosting', items: ['黑面琵鷺', '小鸊鷉', '反嘴鴴', '東方環頸鴴'] }
   ];
 
   const CONDITION_COMBOS = [
-    { name: '低海拔淺山', desc: '次生林+山溝', items: ['次生林', '山溝', '林道', '岩壁'] },
-    { name: '都市公園', desc: '人工水體+草地', items: ['公園草地', '人工水池', '喬木林', '步道'] },
-    { name: '部落周邊', desc: '農作與部落', items: ['部落', '果園', '廢耕地', '產業道路', '溪流'] },
-    { name: '溪流上游', desc: '清淨水域', items: ['原始闊葉林', '溪流', '瀑布', '岩壁', '苔蘚'] },
-    { name: '河岸帶', desc: '中下游', items: ['河岸帶', '灘地', '濕地', '堤防', '河口'] },
-    { name: '海岸帶', desc: '濱海地景', items: ['海岸林', '沙灘', '潮間帶', '岩岸', '木麻黃林'] },
-    { name: '校園生態池', desc: '教學基地', items: ['校園', '生態池', '蜜源植物帶', '喬木列植'] }
+    { name: '低海拔淺山', en: 'Lowland foothills', desc: '次生林+山溝', descEn: 'secondary forest + ravine', items: ['次生林', '山溝', '林道', '岩壁'] },
+    { name: '都市公園', en: 'Urban park', desc: '人工水體+草地', descEn: 'built water + lawn', items: ['公園草地', '人工水池', '喬木林', '步道'] },
+    { name: '部落周邊', en: 'Village surrounds', desc: '農作與部落', descEn: 'farmland & settlement', items: ['部落', '果園', '廢耕地', '產業道路', '溪流'] },
+    { name: '溪流上游', en: 'Headwater stream', desc: '清淨水域', descEn: 'clean water', items: ['原始闊葉林', '溪流', '瀑布', '岩壁', '苔蘚'] },
+    { name: '河岸帶', en: 'Riparian zone', desc: '中下游', descEn: 'mid–lower reach', items: ['河岸帶', '灘地', '濕地', '堤防', '河口'] },
+    { name: '海岸帶', en: 'Coastal zone', desc: '濱海地景', descEn: 'littoral landscape', items: ['海岸林', '沙灘', '潮間帶', '岩岸', '木麻黃林'] },
+    { name: '校園生態池', en: 'Campus eco-pond', desc: '教學基地', descEn: 'teaching site', items: ['校園', '生態池', '蜜源植物帶', '喬木列植'] }
   ];
 
   const QUICK_CHIPS = {
@@ -793,19 +803,19 @@
   // ========== iNaturalist ==========
   const INAT_API = 'https://api.inaturalist.org/v1/observations/species_counts';
   const INAT_TAXON_INFO = {
-    'Aves':           { label: '🐦 鳥類 Aves',           order: 1 },
-    'Mammalia':       { label: '🦌 哺乳類 Mammalia',     order: 2 },
-    'Reptilia':       { label: '🦎 爬蟲類 Reptilia',     order: 3 },
-    'Amphibia':       { label: '🐸 兩棲類 Amphibia',     order: 4 },
-    'Actinopterygii': { label: '🐟 魚類 Actinopterygii', order: 5 },
-    'Insecta':        { label: '🦋 昆蟲 Insecta',        order: 6 },
-    'Arachnida':      { label: '🕷 蛛形類 Arachnida',    order: 7 },
-    'Mollusca':       { label: '🐚 軟體動物 Mollusca',   order: 8 },
-    'Plantae':        { label: '🌿 植物 Plantae',        order: 9 },
-    'Fungi':          { label: '🍄 真菌 Fungi',          order: 10 },
-    'Protozoa':       { label: '🦠 原生生物 Protozoa',   order: 11 },
-    'Chromista':      { label: '🦠 色藻界 Chromista',    order: 12 },
-    'Animalia':       { label: '🐛 其他動物 Animalia',   order: 13 },
+    'Aves':           { label: '🐦 鳥類 Aves',           en: '🐦 Birds · Aves',            order: 1 },
+    'Mammalia':       { label: '🦌 哺乳類 Mammalia',     en: '🦌 Mammals · Mammalia',      order: 2 },
+    'Reptilia':       { label: '🦎 爬蟲類 Reptilia',     en: '🦎 Reptiles · Reptilia',     order: 3 },
+    'Amphibia':       { label: '🐸 兩棲類 Amphibia',     en: '🐸 Amphibians · Amphibia',   order: 4 },
+    'Actinopterygii': { label: '🐟 魚類 Actinopterygii', en: '🐟 Fish · Actinopterygii',   order: 5 },
+    'Insecta':        { label: '🦋 昆蟲 Insecta',        en: '🦋 Insects · Insecta',       order: 6 },
+    'Arachnida':      { label: '🕷 蛛形類 Arachnida',    en: '🕷 Arachnids · Arachnida',   order: 7 },
+    'Mollusca':       { label: '🐚 軟體動物 Mollusca',   en: '🐚 Molluscs · Mollusca',     order: 8 },
+    'Plantae':        { label: '🌿 植物 Plantae',        en: '🌿 Plants · Plantae',        order: 9 },
+    'Fungi':          { label: '🍄 真菌 Fungi',          en: '🍄 Fungi',                   order: 10 },
+    'Protozoa':       { label: '🦠 原生生物 Protozoa',   en: '🦠 Protozoa',                order: 11 },
+    'Chromista':      { label: '🦠 色藻界 Chromista',    en: '🦠 Chromista',               order: 12 },
+    'Animalia':       { label: '🐛 其他動物 Animalia',   en: '🐛 Other animals · Animalia', order: 13 },
   };
   const TAIWAN_PLACE_ID = 7887; // 正確的 iNaturalist Taiwan place_id（用於優先取得台灣俗名）
   let inatCache = {};
@@ -815,13 +825,13 @@
   // ========== OSM Overpass ==========
   const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
   const OSM_CATEGORIES = {
-    protected:  { icon: '🛡️', name: '保護區' },
-    water:      { icon: '💧', name: '水體' },
-    forest:     { icon: '🌲', name: '森林與植被' },
-    settlement: { icon: '🏘️', name: '聚落' },
-    trail:      { icon: '🛤️', name: '步道／林道' },
-    natural:    { icon: '⛰️', name: '自然地形' },
-    other:      { icon: '📍', name: '其他' },
+    protected:  { icon: '🛡️', name: '保護區', en: 'Protected areas' },
+    water:      { icon: '💧', name: '水體', en: 'Water bodies' },
+    forest:     { icon: '🌲', name: '森林與植被', en: 'Forest & vegetation' },
+    settlement: { icon: '🏘️', name: '聚落', en: 'Settlements' },
+    trail:      { icon: '🛤️', name: '步道／林道', en: 'Trails & forest roads' },
+    natural:    { icon: '⛰️', name: '自然地形', en: 'Natural terrain' },
+    other:      { icon: '📍', name: '其他', en: 'Other' },
   };
   // OSM tag → 基地條件 chip 對應表
   const OSM_TO_CHIP = {
@@ -852,6 +862,421 @@
   let osmCache = {};
   let osmTimer = null;
   let osmLastSummary = null;
+
+  // ============================================================
+  // i18n · 雙語支援（中文 / English）
+  // 設計：以中文原文為鍵。切換時走訪 DOM 文字節點與 placeholder/title 替換，
+  // 首次切換前把原文快取在 dataset，切回中文時還原。
+  // JS 動態字串一律經 t() 取得。
+  // ============================================================
+  let LANG = 'zh';
+  const LANG_STORAGE = 'qi-coexistence-lang-v1';
+
+  const EN = {
+    // ── Header ──
+    '棲': 'Qi', '共生': 'Coexistence',
+    '生態基地分析工作流工具——選擇位置、設定焦點物種與基地條件，自動生成結構化提示詞送入 Claude 進行完整的生態共存設計分析。':
+      'An ecological site analysis workflow — set a location, focal species and site conditions, and the tool assembles a structured prompt for Claude to produce a full coexistence design analysis.',
+
+    // ── HEALS banner ──
+    '獨立模式 · Standalone': 'Standalone Mode',
+    '未連接上游 Map 工具；以下操作為您獨立進行的分析。': 'No upstream Map tool connected; this is an independent session.',
+    '上游基地可用 · Site Data Available': 'Site Data Available',
+    '偵測到從 Map 工具帶來的基地：': 'A site boundary from the Map tool was detected:',
+    '✓ 套用基地 · Use Map Site': '✓ Use Map Site',
+    '獨立使用 · Standalone': 'Standalone',
+    '接續 Map 模式 · Map Mode': 'Map Mode',
+    '✓ 送回總控台 · Send to Control': '✓ Send to Control',
+    '改用手動 · Switch to Manual': 'Switch to Manual',
+    '未命名基地 · (unnamed)': '(unnamed site)',
+    '已切換為手動模式': 'Switched to manual mode',
+    '公頃': 'ha',
+    '頂點邊界': '-vertex boundary',
+
+    // ── Step 1 ──
+    '選擇基地位置': 'Select Site Location',
+    'Site Location · 點地圖、拖曳標記、或直接輸入經緯度': 'Site Location · Click the map, drag the marker, or enter coordinates',
+    '緯度 LAT (°N)': 'Latitude (°N)',
+    '經度 LON (°E)': 'Longitude (°E)',
+    '移到此點': 'Go to point',
+    '地點名稱（輸入地名可直接搜尋定位，也會寫進提示詞）': 'Place name (search to locate; also included in the prompt)',
+    '例如「大安森林公園」— 按 Enter 或右側按鈕搜尋': 'e.g. "Daan Forest Park" — press Enter or use the button',
+    '🔍 搜尋地名': '🔍 Search',
+    '搜尋結果由 OpenStreetMap Nominatim 提供；也可直接在地圖上點選、或在上方輸入經緯度。':
+      'Search powered by OpenStreetMap Nominatim. You can also click the map or enter coordinates above.',
+    '⚠️ 地圖未能載入（可能離線或防火牆阻擋）——可直接輸入經緯度繼續使用。':
+      '⚠️ Map failed to load (offline or blocked) — you can still enter coordinates manually.',
+
+    // ── Step 2 ──
+    '焦點物種': 'Focal Species',
+    'Focal Species · iNaturalist 在地觀察 · 預設組合 · 自訂輸入': 'Focal Species · iNaturalist observations · Presets · Custom input',
+    '📡 iNaturalist 在地物種觀察': '📡 iNaturalist Nearby Observations',
+    '研究級': 'Research grade',
+    '全部等級': 'All grades',
+    '全部類群': 'All taxa',
+    '鳥類': 'Birds', '哺乳類': 'Mammals', '兩棲類': 'Amphibians',
+    '爬蟲類': 'Reptiles', '昆蟲': 'Insects', '植物': 'Plants',
+    '🔄 查詢': '🔄 Query',
+    '📍 請先選擇基地位置，會自動載入鄰近觀察記錄': '📍 Select a site location first — nearby observations load automatically',
+    '資料來源 © iNaturalist 貢獻者 · CC BY-NC · 點選圖片可開啟該物種頁面':
+      'Data © iNaturalist contributors · CC BY-NC · Click a photo to open the species page',
+    '📦 預設組合（點選套用）': '📦 Preset sets (click to apply)',
+    '🏷️ 已選物種': '🏷️ Selected species',
+    '自訂物種：輸入中文或學名後按 + 或 Enter': 'Custom species: type a name and press + or Enter',
+    '資料庫沒收錄的、或想額外指定的物種，可在此手動加入。支援多個輸入用頓號（、）或逗號分隔':
+      'Add species not found in the databases, or any you want to specify. Separate multiple entries with commas.',
+    '＋ 加入': '＋ Add',
+
+    // ── Step 3 ──
+    '基地條件': 'Site Conditions',
+    'Site Conditions · OSM 自動偵測 · 林相、水體、地形、人為設施': 'Site Conditions · Auto-detected via OSM · vegetation, water, terrain, built features',
+    '🌍 OSM 環境脈絡（Overpass API）': '🌍 OSM Environmental Context (Overpass API)',
+    '📦 預設條件組合（點選套用）': '📦 Preset condition sets (click to apply)',
+    '🏷️ 已選條件': '🏷️ Selected conditions',
+    '自訂條件：輸入後按 + 或 Enter（如「東向陡坡」「夏季缺水」）': 'Custom condition: press + or Enter (e.g. "east-facing slope", "summer water scarcity")',
+    'OSM 沒標到、或時效落差的環境特徵，可在此手動補充。支援多個輸入用頓號（、）或逗號分隔':
+      'Add environmental features OSM has not mapped or that have changed. Separate multiple entries with commas.',
+    '🏷️ 偵測到的土地使用型態': '🏷️ Detected land-use types',
+    '（點選加入/移除基地條件）': '(click to add or remove)',
+    '全部加入': 'Add all', '全部移除': 'Remove all',
+    '資料來源 © OpenStreetMap 貢獻者 · Overpass API · ODbL': 'Data © OpenStreetMap contributors · Overpass API · ODbL',
+    '🪺 棲地需求 · Habitat Needs': '🪺 Habitat Needs',
+    '焦點物種對棲地資源的具體需求 — 獨立於基地條件，供下游分區設計逐項讀取':
+      'Specific habitat resources the focal species require — kept separate from site conditions for downstream zoning',
+    '🏷️ 已選棲地需求': '🏷️ Selected habitat needs',
+    '自訂棲地需求：輸入後按 + 或 Enter（如「近水源覓食」「需枯立木營巢」）':
+      'Custom habitat need: press + or Enter (e.g. "forages near water", "needs snags for nesting")',
+    '描述物種存續所需的棲地資源（食、住、繁殖、空間）。與「基地條件」分開填，匯出時成為獨立的 habitatNeeds 欄位。':
+      'Describe resources required for persistence (food, shelter, breeding, space). Exported separately as habitatNeeds.',
+
+    // ── Step 4 ──
+    '特別考量': 'Special Considerations',
+    'Special Notes · 保育敏感、傳統領域、人為干擾等': 'Special Notes · conservation sensitivity, indigenous territories, human disturbance',
+    '可選填 · 例如：注意有焦點保護地（如墳地、路旁邊坡、廢耕地）；或：部落文化優先；或：賞鳥人為干擾敏感':
+      'Optional · e.g. sensitive protected areas nearby; indigenous cultural priorities; disturbance from birdwatchers',
+
+    // ── Step 5 ──
+    '執行分析與結果': 'Run Analysis',
+    'Run Analysis · 輸入通行碼即可分析（無需自備金鑰）· 結果自動回到表單可下載':
+      'Run Analysis · Enter the passcode (no API key needed) · Results return to this page',
+    '🔑 通行碼 PASSCODE': '🔑 PASSCODE',
+    '請輸入課程通行碼': 'Enter the course passcode',
+    '記住通行碼（儲存於本機瀏覽器）': 'Remember passcode (stored in this browser)',
+    '🗑 清除': '🗑 Clear',
+    '分析模型 MODEL': 'MODEL',
+    '📝 檢視即將送出的提示詞（可選）': '📝 Review the prompt to be sent (optional)',
+    '🚀 開始分析': '🚀 Start Analysis',
+    '其他選項：': 'Other options:',
+    '📋 複製提示詞': '📋 Copy prompt',
+    '🔗 改在 Claude.ai 手動分析': '🔗 Run manually in Claude.ai',
+    '📋 貼上手動結果': '📋 Paste manual result',
+    '↺ 重設表單': '↺ Reset form',
+    '⏳ Claude 正在分析中⋯': '⏳ Claude is analysing…',
+    '連線中…': 'Connecting…',
+    '含網路搜尋與引用驗證通常需要數分鐘': 'Includes web search and citation checking — usually a few minutes',
+    '⚠️ 請保持本頁在前景，勿切換 App 或讓螢幕鎖定，否則連線會中斷':
+      '⚠️ Keep this page in the foreground — switching apps or letting the screen lock will break the connection',
+    '⬇ 下載 HTML': '⬇ Download HTML',
+    '🖨 列印 PDF': '🖨 Print PDF',
+    '↗ 新分頁開啟': '↗ Open in new tab',
+    '📋 複製原始碼': '📋 Copy source',
+    '✕ 收起預覽': '✕ Hide preview',
+
+    // ── History ──
+    '歷史紀錄': 'History',
+    'History · 過去的分析記錄（儲存在瀏覽器本機）': 'History · Past analyses (stored in this browser)',
+    '⬇ 匯出 JSON': '⬇ Export history',
+    '⬆ 匯入 JSON': '⬆ Import history',
+    '🗑 清除全部': '🗑 Clear all',
+    '專案名稱（選填）· Project name': 'Project name (optional)',
+    '{ } 匯出 JSON · Export': '{ } Export result JSON',
+    '📋 複製 JSON · Copy': '📋 Copy result JSON',
+    '尚無紀錄': 'No records yet',
+    '含結果': 'with report',
+
+    // ── Footer / About ──
+    '📖 關於與版權': '📖 About & License',
+    '💬 提供回饋': '💬 Feedback',
+    '棲共生 Qi-Coexistence · 景觀生態設計工作流 · 歷史紀錄儲存於瀏覽器本機 localStorage，可匯出 JSON 備份':
+      'Qi-Coexistence · Landscape ecology design workflow · History is stored locally in your browser and can be exported as JSON',
+
+    // ── Toasts / messages ──
+    '請先輸入地名': 'Enter a place name first',
+    '❌ 請先輸入有效的經緯度數字': '❌ Enter valid numeric coordinates',
+    '❌ 經緯度欄是空的（灰字只是範例）— 可改用下方「🔍 搜尋地名」或直接點地圖':
+      '❌ The coordinate fields are empty (grey text is only a placeholder) — use "🔍 Search" below or click the map',
+    '❌ 搜尋結果座標無效': '❌ Invalid coordinates in the search result',
+    '❌ 地名搜尋失敗，可改用地圖點選或輸入經緯度': '❌ Place search failed — click the map or enter coordinates instead',
+    '❌ 請先輸入通行碼': '❌ Enter the passcode first',
+    '❌ 請先選擇基地位置': '❌ Select a site location first',
+    '❌ 請至少選擇一個焦點物種': '❌ Select at least one focal species',
+    '🗑 已清除本機通行碼': '🗑 Passcode cleared from this browser',
+    '🗑 表單已重設': '🗑 Form reset',
+    '✅ 已載入到表單': '✅ Loaded into the form',
+    '📋 已複製提示詞': '📋 Prompt copied',
+    '❌ 複製失敗': '❌ Copy failed',
+    '⬇ 已下載 HTML': '⬇ HTML downloaded',
+    '⚠️ 尚無分析結果可下載': '⚠️ No analysis result to download yet',
+    '🖨 已開啟列印視窗，請選「儲存為 PDF」': '🖨 Print dialog opened — choose "Save as PDF"',
+    '❌ 視窗被擋——請允許本站彈窗，或先按「↗ 新分頁開啟」、再用瀏覽器列印':
+      '❌ Popup blocked — allow popups for this site, or use "↗ Open in new tab" and print from there',
+    '✅ 已載入手動結果': '✅ Manual result loaded',
+    '⚠️ 請貼入 HTML 內容': '⚠️ Paste the HTML content first',
+    '✅ 已匯出生態結果 JSON': '✅ Result JSON exported',
+    '📋 已複製 JSON 到剪貼簿': '📋 JSON copied to clipboard',
+    '❌ 匯出失敗': '❌ Export failed',
+    '❌ 複製失敗，請改用匯出': '❌ Copy failed — use export instead',
+    '❌ 此瀏覽器不支援複製，請改用匯出': '❌ This browser cannot copy — use export instead',
+    '歷史為空，無可匯出': 'History is empty — nothing to export',
+    '⚠️ 尚無 OSM 偵測結果可套用': '⚠️ No OSM detection results to apply',
+    '🔄 已存在，未重複加入': '🔄 Already present — not added again',
+    '⚠️ 請填入訊息內容': '⚠️ Please enter your message',
+    '📧 已開啟郵件 App，請按寄送': '📧 Mail app opened — press send',
+    '❌ PDF 函式庫尚未載入完成，請等幾秒重試': '❌ PDF library still loading — try again shortly',
+    '📍 已移到：': '📍 Moved to: ',
+    '✅ 已加入 ': '✅ Added ',
+    ' 項': '',
+    '✅ 全部加入 ': '✅ Added all ',
+    '🗑 移除 ': '🗑 Removed ',
+    '🔄 全部已在條件中': '🔄 All already in conditions',
+    '✨ 自動帶入 ': '✨ Auto-filled ',
+    ' 項基地條件': ' site conditions',
+    '✅ 分析完成（': '✅ Analysis complete (',
+    ' 秒）': 's)',
+    '經過時間：': 'Elapsed: ',
+    ' 秒': 's',
+    '🔍 已進行 ': '🔍 ', ' 次網路搜尋…': ' web searches so far…',
+    '✍️ 已產生 ': '✍️ ', ' 字…': ' characters generated…',
+    ' 次搜尋 · ✍️ 已產生 ': ' searches · ✍️ ',
+    '❌ 分析失敗：': '❌ Analysis failed:',
+    '找不到「': 'No results for "',
+    '」，可改用地圖點選或輸入經緯度': '" — click the map or enter coordinates instead',
+    '清空目前表單？（不會刪除歷史紀錄）': 'Clear the current form? (History will not be deleted)',
+    '確定清除全部歷史紀錄？': 'Delete all history records?',
+    'Claude Haiku 4.5（最快、便宜，深度較低）': 'Claude Haiku 4.5 (fastest, cheapest, less depth)',
+    'Claude Opus 4.7（最高品質，較慢、約 5× 費用）': 'Claude Opus 4.7 (highest quality, slower, ~5× cost)',
+    'Claude Sonnet 4.6（建議：快速、品質佳、性價比高）': 'Claude Sonnet 4.6 (recommended: fast, high quality, best value)',
+    'Special Considerations · 例如「注意有無裸露地」「部落共管」': 'Special Notes · e.g. bare ground, co-management with local communities',
+    '— 人為設施 · Human Features —': '— Human Features —',
+    '— 兩棲爬蟲 · Herpetofauna —': '— Herpetofauna —',
+    '— 哺乳類 · Mammals —': '— Mammals —',
+    '— 地形與開放地 · Terrain —': '— Terrain & Open Land —',
+    '— 林相 · Forest —': '— Forest —',
+    '— 棲身 · Shelter —': '— Shelter —',
+    '— 水體 · Water —': '— Water —',
+    '— 空間配置 · Spatial —': '— Spatial —',
+    '— 繁殖 · Breeding —': '— Breeding —',
+    '— 食物 · Food —': '— Food —',
+    '— 鳥類 · Birds —': '— Birds —',
+    '不需要自備 API 金鑰': 'no API key of your own is required',
+    '中文': '\u4e2d\u6587',
+    '全部': 'All',
+    '兩棲類': 'Amphibians',
+    '哺乳類': 'Mammals',
+    '昆蟲': 'Insects',
+    '本工具已內建分析服務，您': 'This tool has a built-in analysis service — ',
+    '植物': 'Plants',
+    '經過時間：0 秒': 'Elapsed: 0s',
+    '資料來源 ©': 'Data ©',
+    '魚類': 'Fish',
+    '，只需輸入授課教師提供的通行碼。\n          通行碼僅儲存於您本機瀏覽器；分析請求經由本站伺服器轉送，金鑰不會出現在瀏覽器端。': ', just enter the passcode provided by your instructor. The passcode is stored only in your browser; requests are relayed by this site\u2019s server and the API key never reaches the browser.',
+    '📍 請先選擇基地位置，會自動偵測周邊森林、水體、保護區、聚落、步道': '📍 Select a site location first — nearby forests, water, protected areas, settlements and trails are detected automatically',
+    '棲共生 Qi-Coexistence · 景觀生態設計工作流 ·\n      歷史紀錄儲存於瀏覽器本機 localStorage，可匯出 JSON 備份': 'Qi-Coexistence · Landscape ecology design workflow · History is stored in your browser and can be exported as JSON',
+  };
+
+  function t(zh) {
+    if (LANG === 'zh') return zh;
+    return Object.prototype.hasOwnProperty.call(EN, zh) ? EN[zh] : zh;
+  }
+
+  // 走訪 DOM，替換文字節點與屬性
+  function translateDom(toEn) {
+    const root = document.body;
+    // 1) 文字節點
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const p = node.parentNode;
+        if (!p) return NodeFilter.FILTER_REJECT;
+        const tag = p.nodeName;
+        if (tag === 'SCRIPT' || tag === 'STYLE') return NodeFilter.FILTER_REJECT;
+        if (p.closest && p.closest('#resultFrame')) return NodeFilter.FILTER_REJECT;
+        return node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+    const nodes = [];
+    let n;
+    while ((n = walker.nextNode())) nodes.push(n);
+
+    nodes.forEach(node => {
+      const original = node.__zhOriginal !== undefined ? node.__zhOriginal : node.nodeValue;
+      if (toEn) {
+        const key = original.trim();
+        if (EN[key] !== undefined) {
+          if (node.__zhOriginal === undefined) node.__zhOriginal = node.nodeValue;
+          node.nodeValue = node.nodeValue.replace(key, EN[key]);
+        }
+      } else if (node.__zhOriginal !== undefined) {
+        node.nodeValue = node.__zhOriginal;
+      }
+    });
+
+    // 2) placeholder / title / aria-label
+    ['placeholder', 'title', 'aria-label'].forEach(attr => {
+      root.querySelectorAll('[' + attr + ']').forEach(el => {
+        const cacheKey = 'zh' + attr.replace(/-/g, '');
+        const original = el.dataset[cacheKey] !== undefined ? el.dataset[cacheKey] : el.getAttribute(attr);
+        if (toEn) {
+          const key = (original || '').trim();
+          if (EN[key] !== undefined) {
+            if (el.dataset[cacheKey] === undefined) el.dataset[cacheKey] = original;
+            el.setAttribute(attr, EN[key]);
+          }
+        } else if (el.dataset[cacheKey] !== undefined) {
+          el.setAttribute(attr, el.dataset[cacheKey]);
+        }
+      });
+    });
+
+    // 3) <option> 文字（select 內容不被 TreeWalker 的 closest 過濾影響，但單獨處理較穩）
+    root.querySelectorAll('option').forEach(op => {
+      const original = op.dataset.zhText !== undefined ? op.dataset.zhText : op.textContent;
+      if (toEn) {
+        const key = (original || '').trim();
+        if (EN[key] !== undefined) {
+          if (op.dataset.zhText === undefined) op.dataset.zhText = original;
+          op.textContent = EN[key];
+        }
+      } else if (op.dataset.zhText !== undefined) {
+        op.textContent = op.dataset.zhText;
+      }
+    });
+  }
+
+  function setLang(lang, opts) {
+    LANG = (lang === 'en') ? 'en' : 'zh';
+    try { localStorage.setItem(LANG_STORAGE, LANG); } catch (_) {}
+    document.documentElement.lang = (LANG === 'en') ? 'en' : 'zh-Hant';
+
+    const zhBtn = document.getElementById('langZh');
+    const enBtn = document.getElementById('langEn');
+    if (zhBtn && enBtn) {
+      zhBtn.classList.toggle('active', LANG === 'zh');
+      enBtn.classList.toggle('active', LANG === 'en');
+    }
+
+    translateDom(LANG === 'en');
+    try { if (typeof mapStateTerms === 'function' && typeof state === 'object') mapStateTerms(LANG === 'en'); } catch (_) {}
+
+    // 重繪由 JS 產生的區塊
+    try {
+      if (typeof renderCombos === 'function') renderCombos();
+      if (typeof renderQuickChips === 'function') renderQuickChips();
+      if (speciesChip) speciesChip.render();
+      if (conditionChip) conditionChip.render();
+      if (habitatNeedsChip) habitatNeedsChip.render();
+      if (typeof renderHistory === 'function') renderHistory();
+      if (typeof updatePrompt === 'function') updatePrompt();
+      if (typeof inatLastData !== 'undefined' && inatLastData && typeof renderInat === 'function') renderInat(inatLastData);
+      if (typeof osmLastData !== 'undefined' && osmLastData && typeof renderOsm === 'function') renderOsm(osmLastData, osmLastRadius);
+    } catch (e) { console.warn('[i18n] re-render partial:', e); }
+  }
+
+  function initLang() {
+    let saved = null;
+    try { saved = localStorage.getItem(LANG_STORAGE); } catch (_) {}
+    // 未設定過時，依瀏覽器語言判斷：非中文一律預設英文（面向國際使用者）
+    if (!saved) {
+      const nav = (navigator.language || 'en').toLowerCase();
+      saved = nav.startsWith('zh') ? 'zh' : 'en';
+    }
+    const zhBtn = document.getElementById('langZh');
+    const enBtn = document.getElementById('langEn');
+    if (zhBtn) zhBtn.addEventListener('click', () => setLang('zh'));
+    if (enBtn) enBtn.addEventListener('click', () => setLang('en'));
+    setLang(saved);
+  }
+
+  // ── 術語對照（膠囊項目）：內部狀態可為任一語言，切換時雙向映射 ──
+  const TERMS = {
+    // 鳥類 Birds
+    '台灣藍鵲': 'Taiwan Blue Magpie', '五色鳥': 'Taiwan Barbet', '紅嘴黑鵯': 'Black Bulbul',
+    '白頭翁': 'Light-vented Bulbul', '八色鳥': 'Fairy Pitta', '領角鴞': 'Collared Scops Owl',
+    '藍腹鷴': "Swinhoe's Pheasant", '帝雉': 'Mikado Pheasant', '繡眼畫眉': 'Morrison\u2019s Fulvetta',
+    '台灣紫嘯鶇': 'Taiwan Whistling Thrush', '紅尾水鴝': 'Plumbeous Water Redstart',
+    '翠鳥': 'Common Kingfisher', '夜鷺': 'Black-crowned Night Heron',
+    '黑面琵鷺': 'Black-faced Spoonbill', '黃鸝': 'Black-naped Oriole',
+    '鉛色水鶇': 'Plumbeous Redstart', '小剪尾': 'Little Forktail',
+    '紫嘯鶇': 'Whistling Thrush', '黑鳶': 'Black Kite', '冠羽畫眉': 'Taiwan Yuhina',
+    '玄燕鷗': 'Brown Noddy', '小鸊鷉': 'Little Grebe', '反嘴鴴': 'Pied Avocet',
+    '東方環頸鴴': 'Kentish Plover',
+    // 哺乳 Mammals
+    '山羌': 'Reeves\u2019s Muntjac', '台灣獼猴': 'Formosan Rock Macaque', '白鼻心': 'Masked Palm Civet',
+    '穿山甲': 'Chinese Pangolin', '食蟹獴': 'Crab-eating Mongoose', '台灣黑熊': 'Formosan Black Bear',
+    '石虎': 'Leopard Cat', '台灣野山羊': 'Formosan Serow', '水鹿': 'Sambar Deer',
+    '長吻松鼠': 'Red-bellied Tree Squirrel', '台灣鼴鼠': 'Taiwan Mole',
+    '台灣大蹄鼻蝠': 'Formosan Woolly Horseshoe Bat',
+    // 兩爬 Herpetofauna
+    '翡翠樹蛙': 'Emerald Tree Frog', '台北樹蛙': 'Taipei Tree Frog', '莫氏樹蛙': 'Moltrecht\u2019s Tree Frog',
+    '面天樹蛙': 'Mientien Tree Frog', '艾氏樹蛙': 'Eiffinger\u2019s Tree Frog', '橙腹樹蛙': 'Orange-belly Tree Frog',
+    '貢德氏赤蛙': 'Gunther\u2019s Frog', '貢德式赤蛙': 'Gunther\u2019s Frog', '褐樹蛙': 'Brown Tree Frog',
+    '台灣山椒魚': 'Taiwan Salamander', '攀木蜥蜴': 'Swinhoe\u2019s Tree Lizard', '蛇蜥': 'Glass Lizard',
+    '雨傘節': 'Many-banded Krait', '龜殼花': 'Taiwan Habu',
+    '台灣石鮒': 'Taiwan Bitterling', '台灣狗母魚': 'Lizardfish', '招潮蟹': 'Fiddler Crab',
+    '中華珈蟌': 'Chinese Damselfly', '斑龜': 'Chinese Stripe-necked Turtle',
+    // 林相 Forest
+    '次生林': 'Secondary forest', '原始闊葉林': 'Primary broadleaf forest', '針葉林': 'Coniferous forest',
+    '混合林': 'Mixed forest', '竹林': 'Bamboo grove', '人工林': 'Plantation forest',
+    '相思樹林': 'Acacia woodland', '樟科殼斗科林': 'Lauro-Fagaceae forest',
+    '喬木林': 'Tree stand', '海岸林': 'Coastal forest', '木麻黃林': 'Casuarina windbreak',
+    // 水體 Water
+    '溪流': 'Stream', '山溝': 'Ravine', '湖泊': 'Lake', '人工水池': 'Constructed pond',
+    '水圳': 'Irrigation channel', '瀑布': 'Waterfall', '河岸': 'Riverbank', '濕地': 'Wetland',
+    '生態池': 'Ecological pond', '河川': 'River', '河岸帶': 'Riparian corridor',
+    '灘地': 'Floodplain flat', '河口': 'Estuary', '潮間帶': 'Intertidal zone',
+    '沙灘': 'Sandy beach', '岩岸': 'Rocky shore', '湧泉': 'Spring',
+    // 地形 Terrain
+    '草原': 'Grassland', '灌叢': 'Shrubland', '廢耕地': 'Abandoned farmland', '果園': 'Orchard',
+    '梯田': 'Terraced field', '岩壁': 'Rock face', '崩塌地': 'Landslide scar',
+    '岩塊裸露': 'Exposed boulders', '稜線': 'Ridgeline', '公園草地': 'Park lawn',
+    '苔蘚': 'Moss cover', '農地': 'Farmland',
+    // 人為 Built
+    '部落': 'Indigenous village', '校園': 'Campus', '公園': 'Park', '廟宇': 'Temple',
+    '步道': 'Footpath', '林道': 'Forest road', '產業道路': 'Service road', '橋梁': 'Bridge',
+    '堤防': 'Levee', '隧道': 'Tunnel', '聚落': 'Settlement', '自然保留區': 'Nature reserve',
+    '保護區': 'Protected area', '國家公園': 'National park', '蜜源植物帶': 'Nectar plant belt',
+    '喬木列植': 'Tree row planting',
+    // 棲地需求 · 食物 Food
+    '蜜源植物': 'Nectar plants', '果實/漿果': 'Fruit / berries', '種子/穀物': 'Seeds / grain',
+    '昆蟲獵物': 'Insect prey', '小型脊椎獵物': 'Small vertebrate prey',
+    '腐植質/落葉層': 'Humus / leaf litter', '水生無脊椎': 'Aquatic invertebrates',
+    '花蜜/花粉': 'Nectar / pollen',
+    // 棲身 Shelter
+    '樹洞/枯立木': 'Tree cavities / snags', '密灌叢遮蔽': 'Dense shrub cover',
+    '岩縫/石堆': 'Rock crevices / cairns', '連續林冠': 'Continuous canopy',
+    '挺水植物帶': 'Emergent plant belt', '裸露沙地': 'Bare sand', '倒木/枝堆': 'Deadwood / brush piles',
+    '洞穴/岩壁': 'Caves / cliff faces',
+    // 繁殖 Breeding
+    '靜水繁殖域': 'Still-water breeding area', '產卵沙洲': 'Spawning sandbar',
+    '築巢高枝': 'High nesting branches', '穩定水位': 'Stable water level',
+    '低干擾核心區': 'Low-disturbance core', '求偶開闊地': 'Open display ground',
+    // 空間 Spatial
+    '水源可及': 'Water accessibility', '廊道連結': 'Corridor connectivity',
+    '覓食開闊地': 'Open foraging ground', '日照岩面': 'Sun-exposed rock',
+    '緩衝隔離帶': 'Buffer strip', '垂直分層結構': 'Vertical stratification',
+  };
+  const TERMS_REV = (() => { const r = {}; for (const k in TERMS) r[TERMS[k]] = k; return r; })();
+
+  function termLabel(x) {
+    if (LANG === 'en') return TERMS[x] || x;
+    return TERMS_REV[x] || x;
+  }
+  // 語言切換時把已選項目一併映射，避免中英混雜
+  function mapStateTerms(toEn) {
+    ['species', 'conditions', 'habitatNeeds'].forEach(k => {
+      if (!Array.isArray(state[k])) return;
+      state[k] = state[k].map(v => toEn ? (TERMS[v] || v) : (TERMS_REV[v] || v));
+    });
+  }
 
   // ========== State ==========
   const state = {
@@ -898,7 +1323,7 @@
 
   function applyGeocodeResult(r) {
     const lat = parseFloat(r.lat), lon = parseFloat(r.lon);
-    if (!isFinite(lat) || !isFinite(lon)) { toast('❌ 搜尋結果座標無效'); return; }
+    if (!isFinite(lat) || !isFinite(lon)) { toast(t('❌ 搜尋結果座標無效')); return; }
     const check = validateCoords(lat, lon);
     if (!check.ok) { toast('❌ ' + check.msg); return; }
     hideGeocodeResults();
@@ -941,12 +1366,12 @@
     const input = document.getElementById('locname');
     if (!input) return;
     const q = input.value.trim();
-    if (!q) { toast('請先輸入地名'); return; }
+    if (!q) { toast(t('請先輸入地名')); return; }
     if (geocodeBusy) return;               // Nominatim 政策：避免高頻連打
     geocodeBusy = true;
     const btn = document.getElementById('geocodeBtn');
     const origText = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = '搜尋中…'; }
+    if (btn) { btn.disabled = true; btn.textContent = LANG==='en' ? 'Searching…' : '搜尋中…'; }
     hideGeocodeResults();
     try {
       const url = `${NOMINATIM_API}?format=jsonv2&q=${encodeURIComponent(q)}&limit=6&accept-language=zh-TW`;
@@ -954,14 +1379,14 @@
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if (!Array.isArray(data) || data.length === 0) {
-        toast(`找不到「${q}」，可改用地圖點選或輸入經緯度`);
+        toast(LANG==='en' ? `No results for "${q}" — click the map or enter coordinates instead` : `找不到「${q}」，可改用地圖點選或輸入經緯度`);
         return;
       }
       if (data.length === 1) applyGeocodeResult(data[0]);
       else renderGeocodeResults(data);
     } catch (e) {
       console.warn('geocode failed:', e);
-      toast('❌ 地名搜尋失敗，可改用地圖點選或輸入經緯度');
+      toast(t('❌ 地名搜尋失敗，可改用地圖點選或輸入經緯度'));
     } finally {
       geocodeBusy = false;
       if (btn) { btn.disabled = false; btn.textContent = origText; }
@@ -1028,7 +1453,7 @@
     const results = document.getElementById('inatResults');
 
     if (state.lat == null) {
-      status.textContent = '📍 請先選擇基地位置，會自動載入鄰近觀察記錄';
+      status.textContent = LANG==='en' ? '📍 Select a site location first — nearby observations load automatically' : '📍 請先選擇基地位置，會自動載入鄰近觀察記錄';
       status.classList.remove('error');
       results.innerHTML = '';
       return;
@@ -1045,7 +1470,7 @@
     }
 
     status.classList.remove('error');
-    status.textContent = '⏳ 正在從 iNaturalist 載入鄰近觀察記錄...';
+    status.textContent = LANG==='en' ? '⏳ Loading nearby observations from iNaturalist…' : '⏳ 正在從 iNaturalist 載入鄰近觀察記錄...';
     results.innerHTML = '';
 
     try {
@@ -1075,25 +1500,27 @@
       if (msg.includes('422')) hint = '——參數錯誤，請告知開發者';
       else if (msg.includes('429')) hint = '——查詢過於頻繁，請稍等';
       else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) hint = '——網路連線問題';
-      status.textContent = `❌ 載入失敗：${msg}${hint}`;
+      status.textContent = LANG==='en' ? `❌ Load failed: ${msg}${hint}` : `❌ 載入失敗：${msg}${hint}`;
       console.error('iNat fetch error:', e, 'URL was:', `${INAT_API}?lat=${state.lat}&lng=${state.lon}&radius=${radius}`);
     }
   }
 
+  let inatLastData = null;
   function renderInat(data) {
+    inatLastData = data;
     const status = document.getElementById('inatStatus');
     const container = document.getElementById('inatResults');
     status.classList.remove('error');
 
     if (!data.results || !data.results.length) {
-      status.textContent = '🔍 此範圍內無觀察記錄。試試擴大半徑或切換到「全部」品質。';
+      status.textContent = LANG==='en' ? '🔍 No observations in this radius. Try a larger radius or switch to all grades.' : '🔍 此範圍內無觀察記錄。試試擴大半徑或切換到「全部」品質。';
       container.innerHTML = '';
       inatLastSummary = null;
       return;
     }
 
     const radius = document.getElementById('inatRadius').value;
-    status.textContent = `✅ 找到 ${data.results.length} 種、共 ${data.total_results} 筆觀察記錄（半徑 ${radius} km）`;
+    status.textContent = LANG==='en' ? `✅ Found ${data.results.length} species across ${data.total_results} observations (radius ${radius} km)` : `✅ 找到 ${data.results.length} 種、共 ${data.total_results} 筆觀察記錄（半徑 ${radius} km）`;
 
     // Build summary for prompt
     inatLastSummary = {
@@ -1128,7 +1555,7 @@
 
         const head = document.createElement('div');
         head.className = 'inat-group-head';
-        head.innerHTML = `<span>${info.label}</span><em>${groups[tax].length} 種</em>`;
+        head.innerHTML = `<span>${LANG==='en'&&info.en?info.en:info.label}</span><em>${groups[tax].length}${LANG==='en'?' spp.':' 種'}</em>`;
         groupEl.appendChild(head);
 
         const items = document.createElement('div');
@@ -1174,7 +1601,7 @@
             updateQuickChips();
             updateInatAddedState();
             updatePrompt();
-            toast(`✅ 已加入「${displayName}」`);
+            toast(LANG==='en' ? `✅ Added "${displayName}"` : `✅ 已加入「${displayName}」`);
           });
 
           const photoEl = item.querySelector('.inat-photo');
@@ -1237,7 +1664,7 @@
     const results = document.getElementById('osmResults');
 
     if (state.lat == null) {
-      status.textContent = '📍 請先選擇基地位置，會自動偵測周邊森林、水體、保護區、聚落、步道';
+      status.textContent = LANG==='en' ? '📍 Select a site location first — forests, water, protected areas, settlements and trails are detected automatically' : '📍 請先選擇基地位置，會自動偵測周邊森林、水體、保護區、聚落、步道';
       status.classList.remove('error');
       results.innerHTML = '';
       return;
@@ -1252,7 +1679,7 @@
     }
 
     status.classList.remove('error');
-    status.textContent = '⏳ 正在查詢 OSM Overpass API...（複雜地區可能需要 5–15 秒）';
+    status.textContent = LANG==='en' ? '⏳ Querying OSM Overpass API… (complex areas may take 5–15s)' : '⏳ 正在查詢 OSM Overpass API...（複雜地區可能需要 5–15 秒）';
     results.innerHTML = '';
 
     const r = radius * 1000;
@@ -1304,18 +1731,20 @@ out tags center;`;
       let hint = '';
       if (msg.includes('429')) hint = '——查詢過於頻繁，請稍候再試';
       else if (msg.includes('504') || msg.includes('逾時')) hint = '——伺服器繁忙或查詢過於複雜，可縮小半徑';
-      status.textContent = `❌ OSM 載入失敗：${msg}${hint}`;
+      status.textContent = LANG==='en' ? `❌ OSM load failed: ${msg}${hint}` : `❌ OSM 載入失敗：${msg}${hint}`;
       console.error('OSM fetch error:', e);
     }
   }
 
+  let osmLastData = null, osmLastRadius = null;
   function renderOsm(data, radius) {
+    osmLastData = data; if (radius !== undefined) osmLastRadius = radius;
     const status = document.getElementById('osmStatus');
     const container = document.getElementById('osmResults');
     status.classList.remove('error');
 
     if (!data || !data.elements || !data.elements.length) {
-      status.textContent = '🔍 此範圍內無 OSM 環境特徵記錄。試試擴大半徑。';
+      status.textContent = LANG==='en' ? '🔍 No OSM environmental features in this radius. Try a larger radius.' : '🔍 此範圍內無 OSM 環境特徵記錄。試試擴大半徑。';
       container.innerHTML = '';
       osmLastSummary = null;
       return;
@@ -1332,7 +1761,7 @@ out tags center;`;
       });
     });
 
-    status.textContent = `✅ 偵測到 ${data.elements.length} 個 OSM 環境特徵（半徑 ${radius} km）`;
+    status.textContent = LANG==='en' ? `✅ Detected ${data.elements.length} OSM features (radius ${radius} km)` : `✅ 偵測到 ${data.elements.length} 個 OSM 環境特徵（半徑 ${radius} km）`;
 
     // Build summary for prompt
     osmLastSummary = {
@@ -1374,7 +1803,7 @@ out tags center;`;
 
       const head = document.createElement('div');
       head.className = 'osm-group-head';
-      head.innerHTML = `<span>${info.icon} ${info.name}</span><em>${items.length} 處</em>`;
+      head.innerHTML = `<span>${info.icon} ${LANG==='en'&&info.en?info.en:info.name}</span><em>${items.length}${LANG==='en'?'':' 處'}</em>`;
       groupEl.appendChild(head);
 
       const itemsEl = document.createElement('div');
@@ -1395,7 +1824,7 @@ out tags center;`;
       if (named.length > 10) {
         const span = document.createElement('span');
         span.className = 'osm-item osm-item-count';
-        span.textContent = `+${named.length - 10} 處更多`;
+        span.textContent = LANG==='en' ? `+${named.length - 10} more` : `+${named.length - 10} 處更多`;
         itemsEl.appendChild(span);
       }
       if (unnamed > 0) {
@@ -1419,7 +1848,7 @@ out tags center;`;
         conditionChip.render();
         updateQuickChips();
         updatePrompt();
-        toast(`✨ 自動帶入 ${detected.size} 項基地條件`);
+        toast(LANG==='en' ? `✨ Auto-filled ${detected.size} site conditions` : `✨ 自動帶入 ${detected.size} 項基地條件`);
       }
 
       // Render togglable chips panel
@@ -1442,9 +1871,9 @@ out tags center;`;
           updateQuickChips();
           updateOsmDetectedChipsState();
           updatePrompt();
-          toast(`✅ 全部加入 ${added} 項`);
+          toast(LANG==='en' ? `✅ Added all ${added}` : `✅ 全部加入 ${added} 項`);
         } else {
-          toast('🔄 全部已在條件中');
+          toast(t('🔄 全部已在條件中'));
         }
       };
       const removeAllBtn = document.createElement('button');
@@ -1461,7 +1890,7 @@ out tags center;`;
           updateQuickChips();
           updateOsmDetectedChipsState();
           updatePrompt();
-          toast(`🗑 移除 ${removed} 項`);
+          toast(LANG==='en' ? `🗑 Removed ${removed}` : `🗑 移除 ${removed} 項`);
         }
       };
       bulk.appendChild(addAllBtn);
@@ -1607,7 +2036,7 @@ out tags center;`;
       updatePrompt();
       el.classList.remove('show');
       lastClearedSnapshot = null;
-      toast('✅ 已復原');
+      toast(t('✅ 已復原'));
     };
     el.appendChild(btn);
 
@@ -1677,9 +2106,9 @@ out tags center;`;
       const added = addItem(input.value);
       input.value = '';
       if (added > 0) {
-        toast(`✅ 已加入 ${added} 項`);
+        toast(LANG==='en' ? `✅ Added ${added}` : `✅ 已加入 ${added} 項`);
       } else {
-        toast('🔄 已存在，未重複加入');
+        toast(t('🔄 已存在，未重複加入'));
       }
       input.focus();
     }
@@ -1724,13 +2153,14 @@ out tags center;`;
       items.forEach(item => {
         const chip = document.createElement('span');
         chip.className = 'quick-chip';
-        chip.textContent = item;
+        chip.textContent = termLabel(item);
         chip.dataset.cat = cat;
         chip.dataset.item = item;
         chip.onclick = () => {
           const stateKey = cat;
-          if (state[stateKey].includes(item)) return;
-          state[stateKey].push(item);
+          const val = termLabel(item);
+          if (state[stateKey].includes(val)) return;
+          state[stateKey].push(val);
           chipByCat(cat).render();
           updateQuickChips();
           if (cat === 'species') updateInatAddedState();
@@ -1745,44 +2175,49 @@ out tags center;`;
   function updateQuickChips() {
     document.querySelectorAll('.quick-chip').forEach(el => {
       const cat = el.dataset.cat;
-      const item = el.dataset.item;
+      const item = termLabel(el.dataset.item);
       if (state[cat] && state[cat].includes(item)) el.classList.add('taken');
       else el.classList.remove('taken');
     });
   }
 
   // ========== Preset combos ==========
+  function comboLabel(c) { return (LANG === 'en' && c.en) ? c.en : c.name; }
+  function comboDesc(c) { return (LANG === 'en' && c.descEn) ? c.descEn : c.desc; }
+
   function renderCombos() {
     const speciesEl = document.getElementById('speciesCombos');
+    speciesEl.innerHTML = '';
     SPECIES_COMBOS.forEach(combo => {
       const btn = document.createElement('button');
       btn.className = 'preset-btn';
       btn.type = 'button';
-      btn.innerHTML = `${combo.name}<span class="desc">${combo.desc}</span>`;
+      btn.innerHTML = `${comboLabel(combo)}<span class="desc">${comboDesc(combo)}</span>`;
       btn.onclick = () => {
-        state.species = combo.items.slice();
+        state.species = combo.items.map(termLabel);
         speciesChip.render();
         updateQuickChips();
         updateInatAddedState();
         updatePrompt();
-        toast(`已套用組合「${combo.name}」`);
+        toast(LANG==='en' ? `Applied preset "${comboLabel(combo)}"` : `已套用組合「${combo.name}」`);
       };
       speciesEl.appendChild(btn);
     });
 
     const condEl = document.getElementById('conditionCombos');
+    condEl.innerHTML = '';
     CONDITION_COMBOS.forEach(combo => {
       const btn = document.createElement('button');
       btn.className = 'preset-btn';
       btn.type = 'button';
-      btn.innerHTML = `${combo.name}<span class="desc">${combo.desc}</span>`;
+      btn.innerHTML = `${comboLabel(combo)}<span class="desc">${comboDesc(combo)}</span>`;
       btn.onclick = () => {
-        state.conditions = combo.items.slice();
+        state.conditions = combo.items.map(termLabel);
         conditionChip.render();
         updateQuickChips();
         updateOsmDetectedChipsState();
         updatePrompt();
-        toast(`已套用條件「${combo.name}」`);
+        toast(LANG==='en' ? `Applied condition set "${comboLabel(combo)}"` : `已套用條件「${combo.name}」`);
       };
       condEl.appendChild(btn);
     });
@@ -1793,15 +2228,15 @@ out tags center;`;
     const hasCoord = state.lat != null && state.lon != null;
     const loc = hasCoord
       ? `${state.lat}°N, ${state.lon}°E`
-      : '（請於地圖選擇位置或輸入經緯度）';
-    const name = state.locationName ? `\n地點名稱: ${state.locationName}` : '';
-    const species = state.species.length ? state.species.join('、') : '（請選擇焦點物種）';
-    const conditions = state.conditions.length ? state.conditions.join('、') : '（請選擇基地條件）';
+      : (LANG==='en' ? '(select a location on the map or enter coordinates)' : '（請於地圖選擇位置或輸入經緯度）');
+    const name = state.locationName ? (LANG==='en' ? `\nPlace name: ${state.locationName}` : `\n地點名稱: ${state.locationName}`) : '';
+    const species = state.species.length ? state.species.join(LANG==='en'?', ':'、') : (LANG==='en'?'(select focal species)':'（請選擇焦點物種）');
+    const conditions = state.conditions.length ? state.conditions.join(LANG==='en'?', ':'、') : (LANG==='en'?'(select site conditions)':'（請選擇基地條件）');
     const habitatNeedsStr = state.habitatNeeds.length
-      ? `\n\n🪺 棲地需求（焦點物種對棲地資源的具體需求）\n${state.habitatNeeds.join('、')}`
+      ? (LANG==='en' ? `\n\n🪺 HABITAT NEEDS (specific resources required by the focal species)\n${state.habitatNeeds.join(', ')}` : `\n\n🪺 棲地需求（焦點物種對棲地資源的具體需求）\n${state.habitatNeeds.join('、')}`)
       : '';
     const special = state.specialNotes
-      ? `\n\n⚠️ 特別考量\n${state.specialNotes}`
+      ? (LANG==='en' ? `\n\n⚠️ SPECIAL CONSIDERATIONS\n${state.specialNotes}` : `\n\n⚠️ 特別考量\n${state.specialNotes}`)
       : '';
 
     const inatContext = inatLastSummary && state.lat != null
@@ -1839,6 +2274,86 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
         osmContext = `\n\n🌍 OSM 環境脈絡（半徑 ${osmLastSummary.radius} km · 來源 OpenStreetMap）\n${lines.join('\n')}`;
       }
     }
+
+    if (LANG === 'en') {
+      return `Conduct an ecological site coexistence design analysis following the "Qi-Coexistence" workflow.
+
+📍 SITE LOCATION
+Coordinates: ${loc}${name}
+
+🎯 FOCAL SPECIES
+${species}
+
+🌳 SITE CONDITIONS
+${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
+
+📋 REQUIRED OUTPUT
+
+⓪ At the very beginning of the report (after the main title, before the site interpretation), include a site location map:
+
+<figure style="margin: 24px auto 32px; text-align: center; max-width: 800px;">
+  <img src="https://staticmap.openstreetmap.de/staticmap.php?center={LAT},{LON}&zoom=15&size=800x500&maptype=mapnik"
+       alt="Site location map"
+       style="max-width: 100%; height: auto; border: 1px solid #d4cdb8; border-radius: 4px; display: block; margin: 0 auto;" />
+  <figcaption style="font-family: 'Noto Serif TC', serif; font-size: 12px; color: #6b7d5f; font-style: italic; margin-top: 8px; line-height: 1.5;">
+    Site location: {LAT}°, {LON}° · {place name if available} · Base map: OpenStreetMap © contributors
+  </figcaption>
+</figure>
+
+Replace {LAT} and {LON} with the actual coordinates. This block is for location reference only — do NOT overlay zones, SVG shapes, labels or design diagrams on it.
+
+1. Look up the representative species, elevation, forest type, conservation designations, watershed and nearby settlements for these coordinates.
+2. Provide a "Site Interpretation" summary including design-context warnings (conservation-sensitive areas, indigenous traditional territories, human disturbance risks).
+3. Build a complete "food / shelter / breeding" ecological profile for each focal species, with APA 7 in-text citations.
+4. Interspecific conflict, competition and cooperation analysis — both parts required:
+   (a) **Overall interaction relationships**: food-web overlap, territoriality, breeding-season synchrony, with design implications.
+   (b) **Resource Partitioning Matrix**: an HTML table covering EVERY environmental resource listed in "Site Conditions" (list them individually). For each resource, rate each focal species' requirement level (**High / Medium / Low / None**), and in the final columns state the interaction type under that resource (**strong competition / partial competition / cooperation / avoidance / unrelated**) and the design implication. Suggested structure:
+       | Resource | [Species 1] | [Species 2] | [Species 3] … | Interaction | Design implication |
+       Name specific pairings in the interaction column (e.g. "A↔B strong competition; A↔C unrelated"). Design implications should be concrete (temporal/spatial separation, vertical stratification, buffer design, independent habitat structures).
+   (c) Follow the table with 1–2 paragraphs synthesising which resources are design priorities (high competition, need zoning) and which can be shared.
+5. Spatial resource allocation (zoning by species requirements) — present zone data in an HTML <table>. **Do NOT draw any SVG, site plan, or zoning diagram.** Describe spatial configuration principles in prose (e.g. "an ecological spine along the ravine–stream axis, radiating outward through vegetation strata").
+6. Five verified real-world case references with working URLs.
+7. Eight to ten ecological design principles.
+8. Ten construction material recommendations.
+9. A complete APA 7 reference list, grouped into government agencies / academic databases / field guides & books / international databases.
+10. A dual-verification statement: sources gathered during research and re-checked before finalisation for URL validity and citation accuracy; record the verification date at the end of the report.
+
+FORMAT AND COLOUR (strict — violating any rule below makes the printed PDF unusable):
+
+This report is an academic field notebook printed on off-white paper. The entire page is paper-coloured; only TEXT and THIN LINES carry colour.
+
+[Permitted background colours — whitelist, no exceptions]
+The background of any element (body / section / header / div / card / heading row / table / hero / footer) may only be one of:
+- #faf6ea (primary cream paper, default)
+- #fffdf7 (near-white for cards)
+- #ffffff (pure white, table cells)
+- #ede4cc (light beige, table header rows only — this is the darkest permitted background)
+
+[Text colours]
+- Body: #2e2a22 (deep brown-black — this colour is for TEXT ONLY, never a background)
+- Headings h1–h4: #456238 (moss green)
+- Inline emphasis: #b8694a (clay)
+
+[Lines / borders] #d4cdb8 (light tan) or #456238 (moss), 1–6px
+
+[Strictly forbidden]
+✗ Any section, heading row, chapter divider, hero or block using black / dark grey / dark brown / brick red / dark green as a BACKGROUND. Dark backgrounds are never permitted.
+✗ Reversed text (light text on dark background) — always dark text on light background.
+✗ ASCII art or text-drawn boxes (||, ─, ┌┐└┘, ═). CJK characters are full-width while Latin is half-width, so such alignment always breaks.
+✗ Site plans, zoning diagrams, SVG plan drawings, conceptual layout graphics.
+✗ clay #b8694a in any block larger than 40×40px. clay is limited to: section number circles (≤36px diameter), inline bold emphasis, and ≤6px borders.
+✗ Gradient backgrounds, dark banners, dark covers.
+✗ Any CSS writing background as #000, black, #1a1a1a, #222 or similar.
+
+[Self-check before finishing] Review every background / background-color declaration; if it is not one of the four permitted values, change it to #faf6ea. Inline <svg> is permitted only for decorative elements (species silhouette icons, footer botanical ornaments, section dividers).
+
+[Typography] Display: Fraunces; body: Noto Serif TC or a serif fallback; tables and metadata: Noto Sans TC or a sans fallback.
+
+Write the entire report in English. Output a complete standalone HTML document.
+
+SOURCE PRIORITY: government and academic institutions (national forestry/wildlife agencies, GBIF, IUCN Red List) → peer-reviewed journals → NGO and community surveys → iNaturalist observation records → OpenStreetMap environmental context → media and blogs (grey literature, for case examples only).`;
+    }
+
 
     return `請依「棲共生」工作流進行生態基地共存設計分析。
 
@@ -1936,7 +2451,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     const text = buildPrompt();
     try {
       await navigator.clipboard.writeText(text);
-      toast('✅ 提示詞已複製到剪貼簿');
+      toast(t('✅ 提示詞已複製到剪貼簿'));
       saveToHistory();
     } catch (e) {
       const ta = document.createElement('textarea');
@@ -1947,10 +2462,10 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       ta.select();
       try {
         document.execCommand('copy');
-        toast('✅ 已複製');
+        toast(t('✅ 已複製'));
         saveToHistory();
       } catch (err) {
-        toast('❌ 複製失敗，請手動框選提示詞框中文字');
+        toast(t('❌ 複製失敗，請手動框選提示詞框中文字'));
       }
       document.body.removeChild(ta);
     }
@@ -1967,7 +2482,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       navigator.clipboard.writeText(text).catch(() => {});
     }
     window.open(url, '_blank');
-    toast('🔗 已開啟 Claude（提示詞已同步複製到剪貼簿備用）');
+    toast(t('🔗 已開啟 Claude（提示詞已同步複製到剪貼簿備用）'));
   }
 
   // ========== History ==========
@@ -2041,13 +2556,13 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
         if (entry.htmlResult) {
           analysisMeta = null;
           showResult(entry.htmlResult);
-          toast('📄 已載入歷史結果');
+          toast(t('📄 已載入歷史結果'));
         }
       };
     });
     list.querySelectorAll('.del-btn').forEach(btn => {
       btn.onclick = () => {
-        if (!confirm('確定刪除這筆紀錄？')) return;
+        if (!confirm(t('確定刪除這筆紀錄？'))) return;
         const a = loadHistory();
         a.splice(+btn.dataset.idx, 1);
         saveHistoryArray(a);
@@ -2073,12 +2588,12 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     updateOsmDetectedChipsState();
     updatePrompt();
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    toast('✅ 已載入到表單');
+    toast(t('✅ 已載入到表單'));
   }
 
   function exportJSON() {
     const arr = loadHistory();
-    if (!arr.length) { toast('歷史為空，無可匯出'); return; }
+    if (!arr.length) { toast(t('歷史為空，無可匯出')); return; }
     const blob = new Blob([JSON.stringify(arr, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2086,7 +2601,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     a.download = `qi-coexistence-history-${new Date().toISOString().slice(0,10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    toast(`✅ 已匯出 ${arr.length} 筆紀錄`);
+    toast(LANG==='en' ? `✅ Exported ${arr.length} records` : `✅ 已匯出 ${arr.length} 筆紀錄`);
   }
 
   function importJSON(file) {
@@ -2106,7 +2621,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
         unique.sort((a,b) => b.ts.localeCompare(a.ts));
         saveHistoryArray(unique.slice(0, 200));
         renderHistory();
-        toast(`✅ 已匯入 ${data.length} 筆（合併後共 ${unique.length} 筆）`);
+        toast(LANG==='en' ? `✅ Imported ${data.length} (merged total ${unique.length})` : `✅ 已匯入 ${data.length} 筆（合併後共 ${unique.length} 筆）`);
       } catch (err) {
         toast('❌ 匯入失敗：' + err.message);
       }
@@ -2115,7 +2630,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
   }
 
   function resetForm() {
-    if (!confirm('清空目前表單？（不會刪除歷史紀錄）')) return;
+    if (!confirm(t('清空目前表單？（不會刪除歷史紀錄）'))) return;
     state.lat = null; state.lon = null;
     state.locationName = '';
     state.species = []; state.conditions = []; state.habitatNeeds = [];
@@ -2143,7 +2658,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     updateInatAddedState();
     updateOsmDetectedChipsState();
     updatePrompt();
-    toast('🗑 表單已重設');
+    toast(t('🗑 表單已重設'));
   }
 
   // ========== Claude API（經由本站 Edge Function 代理，金鑰在伺服器端）==========
@@ -2193,7 +2708,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       document.getElementById('passcode').value = '';
       document.getElementById('savePasscode').checked = false;
       try { localStorage.removeItem(PASSCODE_STORAGE); } catch (_) {}
-      toast('🗑 已清除本機通行碼');
+      toast(t('🗑 已清除本機通行碼'));
     });
 
     document.getElementById('apiModel').addEventListener('change', e => {
@@ -2301,24 +2816,26 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
   async function callClaudeAPI() {
     const passcode = getPasscode();
     if (!passcode) {
-      toast('❌ 請先輸入通行碼');
+      toast(t('❌ 請先輸入通行碼'));
       const el = document.getElementById('passcode');
       if (el) el.focus();
       return;
     }
     if (state.lat == null) {
-      toast('❌ 請先選擇基地位置');
+      toast(t('❌ 請先選擇基地位置'));
       return;
     }
     if (!state.species.length) {
-      toast('❌ 請至少選擇一個焦點物種');
+      toast(t('❌ 請至少選擇一個焦點物種'));
       return;
     }
 
     // 加上「請直接回 HTML」指令，方便解析
     const basePrompt = buildPrompt();
     const fullPrompt = basePrompt +
-      '\n\n⚠️ 回應格式：請直接輸出完整的 HTML 文件（從 <!DOCTYPE html> 開始至 </html> 結束），不要附加 markdown code fence、不要加入任何說明文字。';
+      (LANG==='en'
+        ? '\n\n⚠️ RESPONSE FORMAT: output the complete HTML document directly (from <!DOCTYPE html> to </html>). Do not wrap it in a markdown code fence and do not add any explanatory text.'
+        : '\n\n⚠️ 回應格式：請直接輸出完整的 HTML 文件（從 <!DOCTYPE html> 開始至 </html> 結束），不要附加 markdown code fence、不要加入任何說明文字。');
 
     const model = document.getElementById('apiModel').value;
 
@@ -2336,6 +2853,10 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     }
 
     const startTime = Date.now();
+    // 供 catch 使用：紀錄中斷時已完成多少，才能給出具體的失敗說明
+    let progressChars = 0;
+    let progressSearches = 0;
+    let streamStarted = false;
     try {
       // 送到本站 Edge Function 代理（金鑰在伺服器端，前端看不到）
       const response = await fetch(API_ENDPOINT, {
@@ -2357,21 +2878,27 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
 
         let errMsg = serverMsg || ('HTTP ' + response.status);
         if (response.status === 401) {
-          errMsg = (serverCode === 'PASSCODE_REQUIRED')
-            ? '需要通行碼\n\n請在上方「🔑 通行碼」欄位輸入授課教師提供的通行碼。'
-            : '通行碼不正確\n\n請確認通行碼是否正確（注意大小寫與前後空白），或向授課教師確認。';
+          if (LANG === 'en') {
+            errMsg = (serverCode === 'PASSCODE_REQUIRED')
+              ? 'Passcode required\n\nEnter the passcode provided by your instructor in the "🔑 PASSCODE" field above.'
+              : 'Incorrect passcode\n\nCheck the passcode (including capitalisation and stray spaces), or confirm it with your instructor.';
+          } else {
+            errMsg = (serverCode === 'PASSCODE_REQUIRED')
+              ? '需要通行碼\n\n請在上方「🔑 通行碼」欄位輸入授課教師提供的通行碼。'
+              : '通行碼不正確\n\n請確認通行碼是否正確（注意大小寫與前後空白），或向授課教師確認。';
+          }
         } else if (response.status === 529) {
-          errMsg = 'Anthropic 伺服器繁忙（HTTP 529 Overloaded）\n\n' +
-            '這不是您的設定問題，是 Anthropic 端整體負載過高。\n\n' +
-            '建議：\n' +
-            '• 1-2 分鐘後再按「🚀 開始分析」重試\n' +
-            '• 改用「Claude Sonnet 4.6」（較少擁塞、品質依然優秀）\n' +
-            '• 避開高峰時段（亞洲日間 + 美西夜間是高峰）';
+          errMsg = LANG === 'en'
+            ? 'Anthropic servers are busy (HTTP 529 Overloaded)\n\nThis is not a problem with your settings — overall load on Anthropic\u2019s side is too high.\n\nSuggestions:\n• Wait 1–2 minutes and press "🚀 Start Analysis" again\n• Switch to "Claude Sonnet 4.6" (less congested, still excellent quality)\n• Avoid peak hours'
+            : 'Anthropic 伺服器繁忙（HTTP 529 Overloaded）\n\n這不是您的設定問題，是 Anthropic 端整體負載過高。\n\n建議：\n• 1-2 分鐘後再按「🚀 開始分析」重試\n• 改用「Claude Sonnet 4.6」（較少擁塞、品質依然優秀）\n• 避開高峰時段（亞洲日間 + 美西夜間是高峰）';
         } else if (response.status === 429) {
-          errMsg = '已達 API 速率上限（HTTP 429）\n\n' +
-            '同時使用的人較多或短時間內呼叫太多次，請等 1-5 分鐘後重試。';
+          errMsg = LANG === 'en'
+            ? 'API rate limit reached (HTTP 429)\n\nToo many concurrent users or requests in a short period. Please wait 1–5 minutes and try again.'
+            : '已達 API 速率上限（HTTP 429）\n\n同時使用的人較多或短時間內呼叫太多次，請等 1-5 分鐘後重試。';
         } else if (response.status === 500 && /ANTHROPIC_API_KEY/.test(serverMsg)) {
-          errMsg = '伺服器尚未設定 API 金鑰\n\n請聯絡管理者在 Netlify 環境變數中設定 ANTHROPIC_API_KEY。';
+          errMsg = LANG === 'en'
+            ? 'The server has no API key configured\n\nAsk the administrator to set ANTHROPIC_API_KEY in the Netlify environment variables.'
+            : '伺服器尚未設定 API 金鑰\n\n請聯絡管理者在 Netlify 環境變數中設定 ANTHROPIC_API_KEY。';
         }
         throw new Error(errMsg);
       }
@@ -2391,6 +2918,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        streamStarted = true;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -2420,6 +2948,8 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
         } else if (fullText && subtextEl) {
           subtextEl.textContent = `🔍 ${searchCalls} 次搜尋 · ✍️ 已產生 ${fullText.length.toLocaleString()} 字…`;
         }
+        progressChars = fullText.length;
+        progressSearches = searchCalls;
       }
 
       if (streamError) throw new Error(streamError);
@@ -2456,25 +2986,122 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
 
       showResult(html);
       saveToHistoryWithResult(html);
-      toast(`✅ 分析完成（${elapsed} 秒）`);
+      toast(LANG==='en' ? `✅ Analysis complete (${elapsed}s)` : `✅ 分析完成（${elapsed} 秒）`);
     } catch (e) {
-      const msg = e.message || String(e);
-      let hint = '';
-      if (msg.includes('CORS') || msg.includes('Failed to fetch')) {
-        hint = '\n\n👉 網路連線問題，請確認網路正常後重試（分析服務由本站伺服器代理）';
+      const rawMsg = e.message || String(e);
+      const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+
+      // Safari 的 "Load failed" 與 Chrome 的 "Failed to fetch" 都是連線中斷的通用訊息，
+      // 本身不說明原因。這裡依「跑了多久、串流是否已開始、分頁是否曾被切到背景」
+      // 推斷最可能的原因並給出具體處理方式。
+      const isNetworkDrop = /Load failed|Failed to fetch|NetworkError|network connection was lost|The Internet connection appears to be offline|terminated|aborted/i.test(rawMsg);
+
+      let finalMsg;
+      if (isNetworkDrop) {
+        const mins = Math.floor(elapsedSec / 60);
+        const secs = elapsedSec % 60;
+
+        if (LANG === 'en') {
+          const timeStr = mins > 0 ? `${mins} min ${secs} s` : `${secs} s`;
+          finalMsg = `The connection was interrupted during analysis (after ${timeStr})\n\n`;
+          if (streamStarted && progressChars > 0) {
+            finalMsg += `The analysis was running normally: ${progressSearches} web searches completed and about ${progressChars.toLocaleString()} characters generated, but the connection was cut before the full report arrived.\n\n`;
+          } else if (streamStarted) {
+            finalMsg += `The analysis service was reached, but the connection dropped before any content was generated.\n\n`;
+          } else {
+            finalMsg += `Could not reach the analysis service — the network may be unstable or temporarily unavailable.\n\n`;
+          }
+          finalMsg += `Most likely causes:\n`;
+          finalMsg += wentBackground
+            ? `• This tab was sent to the background during the analysis (app switch or screen lock) — the most common cause on mobile devices, as the browser suspends the page and drops the connection\n`
+            : `• Screen lock or switching to another app, which suspends the page and drops the connection\n`;
+          finalMsg += `• Unstable mobile data (4G/5G), or switching between Wi-Fi and mobile data\n` +
+                      `• A network timeout limit on long-lived connections\n\n`;
+          finalMsg += `What to do:\n` +
+                      `• Analysis takes 3–6 minutes — keep this page in the foreground and do not switch apps\n` +
+                      `• Prefer a stable Wi-Fi connection and avoid running it while moving\n` +
+                      `• If waiting is impractical, use "Copy prompt" → "Run manually in Claude.ai" → "Paste manual result"\n\n` +
+                      `Press "🚀 Start Analysis" again to retry (your form entries are preserved).`;
+        } else {
+          const timeStr = mins > 0 ? `${mins} 分 ${secs} 秒` : `${secs} 秒`;
+          finalMsg = `連線在分析途中中斷（已進行 ${timeStr}）\n\n`;
+          if (streamStarted && progressChars > 0) {
+            finalMsg += `分析原本正常進行中：已完成 ${progressSearches} 次搜尋、產生約 ${progressChars.toLocaleString()} 字，` +
+                        `但連線在完成前被切斷，未收到完整報告。\n\n`;
+          } else if (streamStarted) {
+            finalMsg += `已成功連上分析服務，但在開始產生內容前連線就中斷了。\n\n`;
+          } else {
+            finalMsg += `無法連上分析服務，可能是網路不穩或暫時無法連線。\n\n`;
+          }
+          finalMsg += `最可能的原因：\n`;
+          finalMsg += wentBackground
+            ? `• 分析期間這個分頁曾被切到背景（切換 App 或螢幕鎖定）——這是行動裝置上最常見的原因，瀏覽器會暫停頁面並切斷連線\n`
+            : `• 螢幕鎖定或切換到其他 App，瀏覽器暫停頁面而切斷連線\n`;
+          finalMsg += `• 行動網路（4G／5G）訊號不穩，或在 Wi-Fi 與行動網路之間切換\n` +
+                      `• 網路環境對長時間連線有逾時限制\n\n`;
+          finalMsg += `建議做法：\n` +
+                      `• 分析需 3–6 分鐘，過程中請讓本頁保持在前景、不要切換 App\n` +
+                      `• 盡量使用穩定的 Wi-Fi，避免在移動中執行\n` +
+                      `• 若不便久候，可改用下方「複製提示詞」→「改在 Claude.ai 手動分析」→「貼上手動結果」\n\n` +
+                      `重新按「🚀 開始分析」即可重試（先前的表單內容都還在）。`;
+        }
+      } else if (/CORS/i.test(rawMsg)) {
+        finalMsg = LANG === 'en'
+          ? `The request was blocked by browser security (CORS)\n\nOpen this page from eco4design.healsdesign.org rather than a local file or another domain.`
+          : `瀏覽器安全限制導致請求被擋（CORS）\n\n請確認是從 eco4design.healsdesign.org 開啟本頁，而非本機檔案或其他網域。`;
+      } else {
+        finalMsg = rawMsg;
       }
-      showError(msg + hint);
-      console.error('Claude API error:', e);
+
+      showError(finalMsg);
+      console.error('Claude API error:', e, {
+        elapsedSec, streamStarted, progressChars, progressSearches, wentBackground,
+      });
     } finally {
       hideLoading();
       document.getElementById('analyzeBtn').disabled = false;
     }
   }
 
+  // 分析期間的連線保護：
+  // 手機上螢幕鎖定或切換 App 會讓瀏覽器暫停頁面、切斷串流連線，
+  // 這是長時間分析在行動網路上最常見的失敗原因。
+  let wakeLockRef = null;
+  let wentBackground = false;
+
+  function onVisibilityChangeDuringRun() {
+    if (document.hidden) {
+      wentBackground = true;
+    } else if (wakeLockRef === null) {
+      // 回到前景時嘗試重新取得 wake lock（iOS 切回來會自動釋放）
+      requestWakeLock();
+    }
+  }
+
+  async function requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator && navigator.wakeLock.request) {
+        wakeLockRef = await navigator.wakeLock.request('screen');
+        wakeLockRef.addEventListener('release', () => { wakeLockRef = null; });
+      }
+    } catch (e) {
+      // 不支援或被拒絕都無妨，僅是少一層保護
+      wakeLockRef = null;
+    }
+  }
+
+  function releaseWakeLock() {
+    try { if (wakeLockRef) wakeLockRef.release(); } catch (_) {}
+    wakeLockRef = null;
+  }
+
   function showLoading() {
     document.getElementById('loadingState').style.display = 'flex';
     const prog = document.getElementById('loadingProgress');
     if (prog) prog.textContent = '連線中…';
+    wentBackground = false;
+    requestWakeLock();
+    document.addEventListener('visibilitychange', onVisibilityChangeDuringRun);
     const t0 = Date.now();
     loadingTimerInterval = setInterval(() => {
       const s = Math.round((Date.now() - t0) / 1000);
@@ -2485,6 +3112,8 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
   function hideLoading() {
     document.getElementById('loadingState').style.display = 'none';
     if (loadingTimerInterval) { clearInterval(loadingTimerInterval); loadingTimerInterval = null; }
+    document.removeEventListener('visibilitychange', onVisibilityChangeDuringRun);
+    releaseWakeLock();
   }
 
   function showError(msgText) {
@@ -2496,7 +3125,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/\n/g, '<br>');
-    el.innerHTML = `<strong>❌ 分析失敗：</strong><br>${escaped}`;
+    el.innerHTML = `<strong>${t('❌ 分析失敗：')}</strong><br>${escaped}`;
     el.style.display = 'block';
   }
 
@@ -2533,7 +3162,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     a.download = `qi-coexistence-${locName}-${date}.html`;
     a.click();
     URL.revokeObjectURL(url);
-    toast('⬇ 已下載 HTML');
+    toast(t('⬇ 已下載 HTML'));
   }
 
   function buildFilenameBase() {
@@ -2545,7 +3174,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
   }
 
   async function downloadPDF() {
-    if (!analysisResult) { toast('⚠️ 尚無分析結果可下載'); return; }
+    if (!analysisResult) { toast(t('⚠️ 尚無分析結果可下載')); return; }
 
     // 注入「列印專用 CSS + 字型載入後自動觸發列印」到結果 HTML 的副本
     const printAddon = `<style>
@@ -2604,14 +3233,14 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
 
     if (!printWindow) {
       URL.revokeObjectURL(url);
-      toast('❌ 視窗被擋——請允許本站彈窗，或先按「↗ 新分頁開啟」、再用瀏覽器列印');
+      toast(t('❌ 視窗被擋——請允許本站彈窗，或先按「↗ 新分頁開啟」、再用瀏覽器列印'));
       return;
     }
 
     // 2 分鐘後釋放 blob URL
     setTimeout(() => URL.revokeObjectURL(url), 120000);
 
-    toast('🖨 已開啟列印視窗，請選「儲存為 PDF」');
+    toast(t('🖨 已開啟列印視窗，請選「儲存為 PDF」'));
   }
 
   function openResultInTab() {
@@ -2625,7 +3254,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     if (!analysisResult) return;
     try {
       await navigator.clipboard.writeText(analysisResult);
-      toast('📋 已複製 HTML 原始碼');
+      toast(t('📋 已複製 HTML 原始碼'));
     } catch (e) {
       toast('❌ 複製失敗：' + e.message);
     }
@@ -2655,13 +3284,13 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     modal.querySelector('#pasteCancelBtn').onclick = close;
     modal.querySelector('#pasteSubmitBtn').onclick = () => {
       const raw = modal.querySelector('#pasteTextarea').value.trim();
-      if (!raw) { toast('⚠️ 請貼入 HTML 內容'); return; }
+      if (!raw) { toast(t('⚠️ 請貼入 HTML 內容')); return; }
       const html = neutralizeDarkColors(extractHTML(raw));
       analysisMeta = null;
       showResult(html);
       saveToHistoryWithResult(html);
       close();
-      toast('✅ 已載入手動結果');
+      toast(t('✅ 已載入手動結果'));
     };
     modal.addEventListener('click', e => { if (e.target === modal) close(); });
     setTimeout(() => modal.querySelector('#pasteTextarea').focus(), 100);
@@ -2855,7 +3484,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       const includeCtx = modal.querySelector('#feedbackIncludeContext').checked;
 
       if (!msg) {
-        toast('⚠️ 請填入訊息內容');
+        toast(t('⚠️ 請填入訊息內容'));
         return;
       }
 
@@ -2877,7 +3506,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       const mailto = `mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
       window.location.href = mailto;
       close();
-      toast('📧 已開啟郵件 App，請按寄送');
+      toast(t('📧 已開啟郵件 App，請按寄送'));
     };
 
     setTimeout(() => modal.querySelector('#feedbackMessage').focus(), 100);
@@ -3113,8 +3742,8 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       a.download='eco4design-'+slug+'-'+new Date().toISOString().slice(0,10)+'.json';
       a.click();
       URL.revokeObjectURL(url);
-      toast('✅ 已匯出生態結果 JSON');
-    }catch(e){ console.warn('[heals] download failed', e); toast('❌ 匯出失敗'); }
+      toast(t('✅ 已匯出生態結果 JSON'));
+    }catch(e){ console.warn('[heals] download failed', e); toast(t('❌ 匯出失敗')); }
   }
 
   function copyHealsJSON(){
@@ -3122,11 +3751,11 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       var json=JSON.stringify(buildHealsExport(),null,2);
       if(navigator.clipboard && navigator.clipboard.writeText){
         navigator.clipboard.writeText(json).then(
-          function(){ toast('📋 已複製 JSON 到剪貼簿'); },
-          function(){ toast('❌ 複製失敗，請改用匯出'); }
+          function(){ toast(t('📋 已複製 JSON 到剪貼簿')); },
+          function(){ toast(t('❌ 複製失敗，請改用匯出')); }
         );
-      } else { toast('❌ 此瀏覽器不支援複製，請改用匯出'); }
-    }catch(e){ console.warn('[heals] copy failed', e); toast('❌ 複製失敗'); }
+      } else { toast(t('❌ 此瀏覽器不支援複製，請改用匯出')); }
+    }catch(e){ console.warn('[heals] copy failed', e); toast(t('❌ 複製失敗')); }
   }
 
   function wireHealsBanner(){
@@ -3171,7 +3800,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       const lat = parseFloat(latRaw);
       const lon = parseFloat(lonRaw);
       if (latRaw === '' || lonRaw === '' || isNaN(lat) || isNaN(lon)) {
-        toast('❌ 經緯度欄是空的（灰字只是範例）— 可改用下方「🔍 搜尋地名」或直接點地圖');
+        toast(t('❌ 經緯度欄是空的（灰字只是範例）— 可改用下方「🔍 搜尋地名」或直接點地圖'));
         return;
       }
       const check = validateCoords(lat, lon);
@@ -3195,10 +3824,10 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       e.target.value = '';
     });
     document.getElementById('clearHistoryBtn').addEventListener('click', () => {
-      if (!confirm('確定清除所有歷史紀錄？此動作無法復原。')) return;
+      if (!confirm(t('確定清除所有歷史紀錄？此動作無法復原。'))) return;
       saveHistoryArray([]);
       renderHistory();
-      toast('🗑 歷史已清空');
+      toast(t('🗑 歷史已清空'));
     });
 
     // iNaturalist controls
@@ -3237,6 +3866,10 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     // 外加：三狀態 banner 接線 + 靜默偵測上游基地（不自動套用；任何失敗靜默退回獨立）
     try{ wireHealsBanner(); detectHealsSite(); }
     catch(e){ console.warn('[heals] init skipped', e); }
+
+    // 外加：語言初始化（放最後，確保所有 render 函式已定義、DOM 已就緒）
+    try{ initLang(); }
+    catch(e){ console.warn('[i18n] init skipped', e); }
   }
 
   function updateFromInputs() {
