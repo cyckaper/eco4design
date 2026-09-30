@@ -2341,6 +2341,7 @@ The background of any element (body / section / header / div / card / heading ro
 ✗ Reversed text (light text on dark background) — always dark text on light background.
 ✗ ASCII art or text-drawn boxes (||, ─, ┌┐└┘, ═). CJK characters are full-width while Latin is half-width, so such alignment always breaks.
 ✗ Site plans, zoning diagrams, SVG plan drawings, conceptual layout graphics.
+✗ Laying out numbered items (design principles, materials) with display:grid or display:flex that puts the number, bold title and description in side-by-side columns — the text gets squeezed into a one-character-wide column. Use plain block layout: one <div> or <li> per item, the number circle as display:inline-block before the title, description flowing below.
 ✗ clay #b8694a in any block larger than 40×40px. clay is limited to: section number circles (≤36px diameter), inline bold emphasis, and ≤6px borders.
 ✗ Gradient backgrounds, dark banners, dark covers.
 ✗ Any CSS writing background as #000, black, #1a1a1a, #222 or similar.
@@ -2437,6 +2438,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
 - **嚴禁繪製基地平面示意圖、分區示意圖、SVG 平面圖、概念配置圖**——這類抽象幾何疊圖（不論有無底圖）無地理意義，反而讓報告失焦。空間配置一律用「表格 + 文字敘述」呈現。
 - 「分區資料」用 <table> + <th> + <td>，加 CSS border 與 padding。
 - 「流程圖」「結構圖」如必要可用 CSS Grid（<div style="display:grid;grid-template-columns:...">）排列文字卡片，但不要畫幾何圖形。
+- **編號條列（設計原則、施工材料等）一律用一般區塊排版**：每條用一個 <div> 或 <li>，編號圓圈設為 display:inline-block 放在標題文字前面，說明文字直接接在後面換行即可。**不要**用 display:grid / display:flex 把「編號」「粗體標題」「說明文字」拆成並排欄位——窄螢幕或欄寬計算錯誤時文字會被擠成一字一行。
 - 內嵌 <svg> 僅在以下情境可用：物種圖示符號（如鳥類剪影 icon）、頁尾植物紋飾、章節分隔線等純裝飾元素。
 
 來源優先序：政府/學術機構（林業署、TaiEOL、TBN）→ 學術期刊 → NGO/社區調查 → iNaturalist 在地觀察記錄 → OpenStreetMap 環境脈絡 → 媒體部落格（僅作灰文獻案例參考）。`;
@@ -3129,7 +3131,55 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     el.style.display = 'block';
   }
 
+  // 版面防護：AI 生成的報告偶爾把「編號圓圈 + 文字」放進 grid / flex，
+  // 文字被擠進極窄的欄位，變成一字一行（直排）。載入後偵測這種情況，
+  // 把出問題的容器改回一般區塊排版。注入到報告本身，下載 / 列印 / 新分頁也一併生效。
+  const LAYOUT_GUARD_MARK = 'data-heals-layout-guard';
+  const LAYOUT_GUARD = `<scr` + `ipt ${LAYOUT_GUARD_MARK}>
+(function () {
+  function textWidth(node) {
+    if (node.nodeType === 1) return node.getBoundingClientRect();
+    var range = document.createRange();
+    range.selectNodeContents(node);
+    return range.getBoundingClientRect();
+  }
+  function fix() {
+    var all = document.body ? document.body.querySelectorAll('*') : [];
+    for (var i = 0; i < all.length; i++) {
+      var box = all[i];
+      if (box.closest('table, svg, figure')) continue;
+      var d = getComputedStyle(box).display;
+      if (!/grid|flex/.test(d)) continue;
+      if (box.getBoundingClientRect().width < 240) continue;
+      var kids = box.childNodes;
+      for (var k = 0; k < kids.length; k++) {
+        var n = kids[k];
+        if (n.nodeType !== 1 && n.nodeType !== 3) continue;
+        if ((n.textContent || '').trim().length < 8) continue;
+        var r = textWidth(n);
+        if (r.width > 0 && r.width < 90 && r.height > r.width * 3) {
+          box.style.display = 'block';
+          break;
+        }
+      }
+    }
+  }
+  function run() { fix(); setTimeout(fix, 600); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
+  else run();
+  window.addEventListener('load', fix);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fix);
+})();
+</scr` + `ipt>`;
+
+  function withLayoutGuard(html) {
+    if (!html || html.includes(LAYOUT_GUARD_MARK)) return html;
+    if (/<\/body>/i.test(html)) return html.replace(/<\/body>(?![\s\S]*<\/body>)/i, LAYOUT_GUARD + '</body>');
+    return html + LAYOUT_GUARD;
+  }
+
   function showResult(html) {
+    html = withLayoutGuard(html);
     analysisResult = html;
     const frame = document.getElementById('resultFrame');
     frame.srcdoc = html;
