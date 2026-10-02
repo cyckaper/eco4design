@@ -3570,7 +3570,7 @@ ${a}
       get rock() { return `url(#${PID}-rk)`; }, get sand() { return `url(#${PID}-sd)`; },
       get mud() { return `url(#${PID}-md)`; }, get water() { return `url(#${PID}-wt)`; },
       get water2() { return `url(#${PID}-wt2)`; }, get wood() { return `url(#${PID}-wd)`; },
-      crown: '#ffffff', crown2: '#ffffff', mkP: '#ffffff', mkI: '#ffffff', mkA: '#ffffff',
+      crown: '#3b3c3a', crown2: '#7d7f7b', bg: '#cdd1cf', mkP: '#ffffff', mkI: '#ffffff', mkA: '#ffffff',
     };
     const FONT = "'Noto Sans TC','Noto Sans',sans-serif";
     const r1 = v => Math.round(v * 10) / 10;
@@ -3616,13 +3616,13 @@ ${a}
       for (let i = 0; i < 8; i++) md += `<path d="M${r1(R() * 70)},${r1(R() * 40)}h${r1(5 + R() * 8)}" stroke="${C.ink}" stroke-width="0.7"/>`;
       const bg = (w, h) => `<rect width="${w}" height="${h}" fill="#fff"/>`;
       return `<defs>` +
-        `<pattern id="${id}-st" width="90" height="90" patternUnits="userSpaceOnUse">${bg(90, 90)}${dots(46, 90, 90, 0.45, 1.05)}</pattern>` +
+        `<pattern id="${id}-st" width="200" height="14" patternUnits="userSpaceOnUse">${bg(200, 14)}<line x1="0" y1="13" x2="200" y2="13" stroke="#b9bcb9" stroke-width="0.7"/></pattern>` +
         `<pattern id="${id}-lt" width="60" height="30" patternUnits="userSpaceOnUse">${bg(60, 30)}<path d="${lt}" stroke="${C.ink}" stroke-width="0.9" stroke-linecap="round"/></pattern>` +
         `<pattern id="${id}-rk" width="11" height="11" patternUnits="userSpaceOnUse" patternTransform="rotate(38)">${bg(11, 11)}<line x1="0" y1="0" x2="0" y2="11" stroke="${C.ink}" stroke-width="0.8"/></pattern>` +
         `<pattern id="${id}-sd" width="70" height="70" patternUnits="userSpaceOnUse">${bg(70, 70)}${dots(22, 70, 70, 0.4, 0.8)}</pattern>` +
         `<pattern id="${id}-md" width="80" height="40" patternUnits="userSpaceOnUse">${bg(80, 40)}${md}</pattern>` +
-        `<pattern id="${id}-wt" width="100" height="60" patternUnits="userSpaceOnUse">${bg(100, 60)}<path d="${wt}" stroke="${C.ink}" stroke-width="0.8" stroke-linecap="round"/></pattern>` +
-        `<pattern id="${id}-wt2" width="100" height="60" patternUnits="userSpaceOnUse">${bg(100, 60)}<path d="${wt2}" stroke="${C.ink}" stroke-width="0.8" stroke-linecap="round"/></pattern>` +
+        `<linearGradient id="${id}-wt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e9f0f2"/><stop offset="1" stop-color="#bccfd6"/></linearGradient>` +
+        `<linearGradient id="${id}-wt2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#cddde2"/><stop offset="1" stop-color="#9fb8c1"/></linearGradient>` +
         `<pattern id="${id}-wd" width="8" height="40" patternUnits="userSpaceOnUse">${bg(8, 40)}<path d="M2,0 q1.5,10 0,20 q-1.5,10 0,20 M6,4 v14" stroke="${C.ink}" stroke-width="0.6" fill="none"/></pattern>` +
         `</defs>`;
     }
@@ -3641,8 +3641,8 @@ ${a}
     function ground(poly, fill) {
       return `<polygon points="${pts(poly)} 1000,420 0,420" fill="${fill || C.soil}"/>`;
     }
-    function sectionLine(poly) { // 剖切線：最粗的墨線
-      return sketch(poly, 2.6, 0.9);
+    function sectionLine(poly) { // 剖切線：最粗的墨線（圖版風格：乾淨俐落）
+      return `<polyline points="${pts(poly)}" fill="none" stroke="${C.ink}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>`;
     }
     function band(poly, x0, x1, depth, fill) { // 沿地面線往下的帶狀（落葉層、沙、泥）
       const g = groundFn(poly), top = [], n = Math.max(2, Math.ceil((x1 - x0) / 10));
@@ -3653,55 +3653,47 @@ ${a}
     function horizon(poly, x0, x1, depth) { // 與地面平行的土層虛線
       const g = groundFn(poly), a = [];
       for (let X = x0; X <= x1; X += 20) a.push([X, g(X) + depth]);
-      return `<path d="${wobD(a, 1.4, 20)}" fill="none" stroke="${C.ink}" stroke-width="0.8" stroke-dasharray="9 6 2 6"/>`;
+      return `<polyline points="${pts(a)}" fill="none" stroke="#8d918d" stroke-width="0.8" stroke-dasharray="2 4"/>`;
     }
-    function cloud(cx, cy, rx, ry, fill) { // 手繪樹冠：不規則葉團外緣（低頻起伏＋細碎小弧）、陰影側葉叢筆觸
-      const ph1 = rnd(0, 6.3), ph2 = rnd(0, 6.3), per = Math.PI * (rx + ry), n = Math.max(14, Math.round(per / 7));
-      const P = [];
+    function cloud(cx, cy, rx, ry, fill) { // 圖版風格的葉團剪影：許多重疊小圓構成不規則外緣，邊緣散出細碎葉點
+      fill = fill || C.crown;
+      const n = Math.min(160, Math.max(14, Math.round(rx * ry / 32))), m = Math.min(rx, ry);
+      let c = '';
       for (let i = 0; i < n; i++) {
-        const t = -Math.PI / 2 + 2 * Math.PI * (i + rnd(-0.3, 0.3)) / n;
-        const k = 1 + 0.1 * Math.sin(3 * t + ph1) + 0.06 * Math.sin(5 * t + ph2) + rnd(-0.04, 0.04);
-        P.push([cx + rx * k * Math.cos(t), cy + ry * k * Math.sin(t)]);
+        const t = rnd(0, Math.PI * 2), q = Math.sqrt(rnd(0, 1)) * 0.86, r = m * rnd(0.08, 0.2) + 1.5;
+        c += `<circle cx="${r1(cx + rx * q * Math.cos(t))}" cy="${r1(cy + ry * q * Math.sin(t))}" r="${r1(r)}"/>`;
       }
-      let d = `M${r1(P[0][0])},${r1(P[0][1])}`;
-      for (let i = 0; i < n; i++) {
-        const q = P[(i + 1) % n], r = r1(Math.hypot(q[0] - P[i][0], q[1] - P[i][1]) * rnd(0.5, 0.62));
-        d += ` A${r},${r} 0 0 1 ${r1(q[0])},${r1(q[1])}`;
+      for (let i = 0, k = Math.round((rx + ry) / 3); i < k; i++) { // 外緣細葉點
+        const t = rnd(0, Math.PI * 2), q = rnd(0.88, 1.06);
+        c += `<circle cx="${r1(cx + rx * q * Math.cos(t))}" cy="${r1(cy + ry * q * Math.sin(t))}" r="${r1(rnd(0.8, 2.2))}"/>`;
       }
-      // 內部葉團輪廓：陰影側（右下）較多的短弧線，只畫下半緣（像鋼筆勾勒的葉叢）；外加少量陰影排線
-      let tex = '', hat = '';
-      const m = Math.max(2, Math.round(rx * ry / 420));
-      for (let i = 0; i < m; i++) {
-        const t = rnd(-0.6, 2.4), q = rnd(0.25, 0.7), x = cx + rx * q * Math.cos(t), y = cy + ry * q * Math.sin(t) - 4, rr = rnd(7, 13), seg = 4 + Math.floor(rnd(0, 3));
-        let p0 = null;
-        for (let k = 0; k <= seg; k++) {
-          const u = Math.PI * (0.12 + 0.76 * k / seg), pt = [x + rr * Math.cos(u), y + rr * 0.7 * Math.sin(u)];
-          if (!p0) tex += `M${r1(pt[0])},${r1(pt[1])}`;
-          else { const r = r1(Math.hypot(pt[0] - p0[0], pt[1] - p0[1]) * 0.55); tex += `A${r},${r} 0 0 1 ${r1(pt[0])},${r1(pt[1])}`; }
-          p0 = pt;
-        }
-      }
-      for (let i = 0, hn = Math.round(rx / 6); i < hn; i++) {
-        const t = rnd(0.1, 1.4), q = rnd(0.6, 0.88), x = cx + rx * q * Math.cos(t), y = cy + ry * q * Math.sin(t), L = rnd(4, 8);
-        hat += `M${r1(x)},${r1(y)}l${r1(-L * 0.6)},${r1(L * 0.8)}`;
-      }
-      return `<path d="${d}Z" fill="${fill || C.crown}" stroke="${C.ink}" stroke-width="1" stroke-linejoin="round"/>` +
-        `<path d="${tex}" fill="none" stroke="${C.ink}" stroke-width="0.7" stroke-linecap="round"/>` +
-        (hat ? `<path d="${hat}" fill="none" stroke="${C.ink}" stroke-width="0.5" stroke-linecap="round"/>` : '');
+      return `<g fill="${fill}">${c}</g>`;
     }
-    function trunk(x, yTop, yBase, w) { // 樹幹：白底遮擋＋兩條手繪輪廓＋分枝
-      const L = [[x - w / 2, yBase], [x - w * 0.3, yTop]], Rr = [[x + w / 2, yBase], [x + w * 0.3, yTop]];
-      const br = Math.min(30, (yBase - yTop) * 0.35);
-      return `<polygon points="${pts([L[0], L[1], Rr[1], Rr[0]])}" fill="#fff"/>` +
-        `<path d="${wobD(L, 0.7, 10)}${wobD(Rr, 0.7, 10).replace('M', ' M')}" fill="none" stroke="${C.ink}" stroke-width="1.1" stroke-linecap="round"/>` +
-        `<path d="M${r1(x)},${r1(yTop + br)}q${r1(-w * 0.4)},${r1(-br * 0.5)} ${r1(-w * 0.9 - 6)},${r1(-br)}M${r1(x + w * 0.1)},${r1(yTop + br * 0.6)}q${r1(w * 0.4)},${r1(-br * 0.4)} ${r1(w * 0.8 + 5)},${r1(-br * 0.9)}" fill="none" stroke="${C.ink}" stroke-width="0.9" stroke-linecap="round"/>` +
-        `<path d="M${r1(x - w * 0.15)},${r1(yBase - 4)}v${r1(-(yBase - yTop) * 0.4)}" stroke="${C.ink}" stroke-width="0.5" stroke-opacity="0.6"/>`;
+    function trunk(x, yTop, yBase, w) { // 剪影樹幹：上窄下寬，伸出幾條細枝
+      const br = Math.min(34, (yBase - yTop) * 0.4);
+      return `<polygon points="${pts([[x - w * 0.45, yBase], [x - w * 0.18, yTop], [x + w * 0.18, yTop], [x + w * 0.45, yBase]])}" fill="${C.crown}"/>` +
+        `<path d="M${r1(x)},${r1(yTop + br)}q${r1(-w)},${r1(-br * 0.5)} ${r1(-w * 1.6 - 8)},${r1(-br * 1.1)}M${r1(x)},${r1(yTop + br * 0.7)}q${r1(w)},${r1(-br * 0.4)} ${r1(w * 1.5 + 7)},${r1(-br)}" fill="none" stroke="${C.crown}" stroke-width="${r1(Math.max(1, w * 0.18))}" stroke-linecap="round"/>`;
     }
-    function tree(x, g, cy, rx, ry, w, fill) { // 樹：樹幹＋葉團＋從樹冠下緣透出的枝條
-      const y0 = cy + ry * 0.98, L = ry * 0.45;
-      const br = `M${r1(x - w * 0.15)},${r1(y0)}q${r1(-rx * 0.08)},${r1(-L * 0.5)} ${r1(-rx * 0.22)},${r1(-L)}M${r1(x + w * 0.15)},${r1(y0)}q${r1(rx * 0.06)},${r1(-L * 0.6)} ${r1(rx * 0.18)},${r1(-L * 1.1)}`;
-      return trunk(x, cy, g(x), w) + cloud(x, cy, rx, ry, fill) +
-        `<path d="${br}" fill="none" stroke="${C.ink}" stroke-width="${r1(Math.max(0.8, w * 0.09))}" stroke-linecap="round"/>`;
+    function tree(x, g, cy, rx, ry, w, fill) { return trunk(x, cy, g(x), w) + cloud(x, cy, rx, ry, fill); }
+    // 背景樹林（淺灰、較矮），營造景深；畫在剖面之前，被地面與水體遮住下半
+    function bgTrees(poly) {
+      const g = groundFn(poly), yRef = Math.max(poly[0][1], poly[poly.length - 1][1]);
+      let s = '';
+      for (let X = rnd(5, 30); X < 1000; X += rnd(38, 70)) {
+        const base = Math.min(g(X), yRef) + 2, h = rnd(55, 120), rx = rnd(18, 34);
+        s += `<rect x="${r1(X - 1.5)}" y="${r1(base - h * 0.55)}" width="3" height="${r1(h * 0.55)}" fill="${C.bg}"/>` + cloud(X, base - h * 0.62, rx, h * 0.38, C.bg);
+      }
+      return s;
+    }
+    // 人物比例尺（約 1.7 m）與飛鳥
+    function person(x, y, k) {
+      k = k || 1;
+      const P2 = (a, b) => `${r1(x + a * k)},${r1(y + b * k)}`;
+      return `<g fill="${C.crown}"><circle cx="${r1(x)}" cy="${r1(y - 31 * k)}" r="${r1(3.4 * k)}"/>` +
+        `<polygon points="${P2(-4.5, -27)} ${P2(4.5, -27)} ${P2(5.5, -14)} ${P2(3, -14)} ${P2(3.5, 0)} ${P2(1, 0)} ${P2(0, -12)} ${P2(-1, 0)} ${P2(-3.5, 0)} ${P2(-3, -14)} ${P2(-5.5, -14)}"/></g>`;
+    }
+    function bird(x, y, k) {
+      return `<path d="M${r1(x - 7 * k)},${r1(y - 2 * k)}q${r1(3.5 * k)},${r1(-3 * k)} ${r1(7 * k)},${r1(2 * k)}q${r1(3.5 * k)},${r1(-5 * k)} ${r1(7 * k)},${r1(-2 * k)}" fill="none" stroke="${C.crown}" stroke-width="${r1(1.6 * k)}" stroke-linecap="round"/>`;
     }
     function conifer(x, base, top, half) {
       const h = base - top, a = [[x, top]];
@@ -3841,11 +3833,6 @@ ${a}
     T.stream = {
       poly: P([[0,38],[8,38],[16,56],[30,60],[34,68],[38,76],[50,78],[54,88],[62,88],[66,72],[70,66],[82,66],[86,58],[100,48]]),
       slots: { levee:[110,180.6], floodplain:[220,231], bank:[330,264.6], riffle:[420,302.4], stone:[480,333.9], surface:[580,289.8], pool:[580,336], bar:[760,268.8], riparian:[930,117.6], bridge:[520,75.6] },
-      textBoxes(used) { // 橋墩：棲位名稱不要壓在橋墩上
-        if (!used || !used.has('bridge')) return [];
-        const g = groundFn(this.poly);
-        return [[312, 63, 332, g(322)], [768, 63, 788, g(778)]];
-      },
       draw(id, v, used) {
         const p = this.poly, g = groundFn(p); let s = '';
         s += waterRect(350, 673.3, 294) + `<rect x="520" y="330" width="120" height="90" fill="${C.water2}"/>`;
@@ -3952,7 +3939,6 @@ ${a}
     T.coast = {
       poly: P([[0,48],[26,48],[32,44],[38,42],[44,46],[50,54],[62,63],[70,63],[71,67],[75,67],[76,63],[78,56],[81,56],[84,66],[92,74],[100,80]]),
       slots: { coastforest:[120,109.2], crab:[160,214.2], dune:[380,168], wrack:[560,239.4], swash:[640,260.4], tidepool:[730,275.1,0,44], splash:[800,226.8], subtidal:[950,306.6] },
-      textBoxes: [[966, 240, 998, 256], [966, 268, 998, 284]], // HWL、LWL 文字
       draw(id, v) {
         const p = this.poly, g = groundFn(p); let s = hatchDefs(id);
         s += waterRect(700, 760, 268.8) + waterRect(855, 1000, 285.6);
@@ -3977,7 +3963,6 @@ ${a}
     T.estuary = {
       poly: P([[0,40],[2,56],[16,56],[18,40],[24,40],[28,54],[40,56],[58,62],[84,66],[88,80],[100,82]]),
       slots: { fishpond:[90,214.2], embank:[210,155.4], saltmarsh:[340,210], mangrove:[480,193.2], mangfloor:[520,247.8], mudflat:[700,262.5], burrow:[700,310.8], channel:[940,310.8] },
-      textBoxes: [[966, 223, 998, 239]], // HWL 文字
       draw(id) {
         const p = this.poly, g = groundFn(p); let s = '';
         s += waterRect(10, 170, 201.6) + waterRect(845.7, 1000, 285.6);
@@ -4003,7 +3988,6 @@ ${a}
     T.urban = {
       poly: P([[0,70],[62,70],[63,80],[76,80],[80,72],[82,70],[100,70]]),
       slots: { roof:[90,88.2], facade:[170,176.4], streettree:[240,126], lawn:[400,281.4], nectar:[550,243.6], pond:[690,319.2], oldtree:[900,84], cavity:[920,193.2,-66,0], litter:[880,285.6] },
-      textBoxes: [[762, 264, 800, 330]], // 水池邊的挺水植物
       draw(id) {
         const p = this.poly, g = groundFn(p); let s = '';
         s += waterRect(622, 800, 302.4);
@@ -4036,6 +4020,9 @@ ${a}
         return s;
       },
     };
+
+    // 比例尺人物候選位置（X，依序嘗試）
+    const PERSON = { forest: [930, 760], ravine: [140, 900], stream: [60, 950, 230], pond: [900, 960], grassland: [130, 250], farmland: [540, 600], cliff: [940, 560], coast: [330, 60], estuary: [215, 650], urban: [470, 330], generic: [480, 120] };
 
     // ---------- 模板與棲位名稱（提示詞與圖表共用，代碼必須一致）----------
     const NAMES = {
@@ -4202,43 +4189,6 @@ ${a}
       });
     }
 
-    // ---------- 棲位名稱標籤：放得下才畫，絕不與標記、引線、其他標籤重疊 ----------
-    const LFS = 14;
-    function textW(s) {
-      let w = 0;
-      for (const ch of s) w += CJK.test(ch) || /[\u3000-\u303f\uff00-\uffef]/.test(ch) ? LFS : (ch === ' ' ? LFS * 0.3 : (/[A-Z&]/.test(ch) ? LFS * 0.68 : LFS * 0.56));
-      return w;
-    }
-    function placeLabels(items, textBoxes) {
-      // items: [{ text, box, moved, ax, ay, tx, ty }]
-      const obst = items.map(it => grow(it.box, 5));
-      items.forEach(it => { if (it.moved) obst.push({ x0: it.ax - 6, x1: it.ax + 6, y0: it.ay - 6, y1: it.ay + 6 }); });
-      (textBoxes || []).forEach(b => obst.push({ x0: b[0], y0: b[1], x1: b[2], y1: b[3] })); // 圖上文字與易被誤指的構造物
-      const segs = items.filter(it => it.moved).map(it => [it.ax, it.ay, it.tx, it.ty]);
-      const onSeg = r => segs.some(([x0, y0, x1, y1]) => {
-        const n = Math.max(2, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 3));
-        for (let i = 0; i <= n; i++) { const X = x0 + (x1 - x0) * i / n, Y = y0 + (y1 - y0) * i / n; if (X > r.x0 && X < r.x1 && Y > r.y0 && Y < r.y1) return true; }
-        return false;
-      });
-      const done = [];
-      let out = '';
-      items.forEach(it => {
-        const w = textW(it.text) + 4, h = LFS + 4, b = it.box, cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
-        const cand = [8, 24].flatMap(G => [[b.x1 + G, cy - h / 2], [b.x0 - G - w, cy - h / 2], [cx - w / 2, b.y0 - G - h], [cx - w / 2, b.y1 + G], [b.x0, b.y0 - G - h], [b.x1 - w, b.y0 - G - h], [b.x0, b.y1 + G], [b.x1 - w, b.y1 + G]]);
-        for (const [x, y] of cand) {
-          const r = { x0: x, x1: x + w, y0: y, y1: y + h };
-          if (r.x0 < 4 || r.x1 > 996 || r.y0 < 4 || r.y1 > 416) continue;
-          if (obst.some(o => hit(r, o)) || done.some(o => hit(r, grow(o, 3))) || onSeg(grow(r, 2))) continue;
-          done.push(r);
-          // 底襯用紙色矩形（不用文字描邊：Chrome 存成 PDF 後，pdf.js 會把描邊字畫成色塊）
-          out += `<rect x="${r1(x)}" y="${r1(y)}" width="${r1(w)}" height="${r1(h)}" rx="2" fill="#fff" fill-opacity="0.9"/>` +
-            `<text class="hx-l" x="${r1(x + 2)}" y="${r1(y + 2 + LFS * 0.86)}" font-size="${LFS}" font-weight="500" font-style="italic" font-family="${FONT}" fill="${C.ink}">${esc(it.text)}</text>`;
-          break;
-        }
-      });
-      return out;
-    }
-
     function renderSection(sec, lang, uid) {
       const tpl = T[sec.tpl], lab = LBL[lang], names = NAMES[sec.tpl][2], li = lang === 'zh' ? 0 : 1;
       const numOf = new Map(); let next = 1;
@@ -4269,19 +4219,53 @@ ${a}
       if (!rows.length) return `<div class="hx-block" id="${uid}"><p class="hx-note"><b>${esc(title)}</b>${sec.caption ? '　' + esc(sec.caption) : ''}<br>${lab.nodraw}</p>${table}</div>`;
       const lay = layout(clusters);
       let lead = '', mk = '';
-      const items = [];
       lay.forEach((l, i) => {
         const [ax, ay] = clusters[i].anchor;
         const tx = Math.min(Math.max(ax, l.box.x0), l.box.x1), ty = Math.min(Math.max(ay, l.box.y0), l.box.y1);
-        if (l.moved) lead += `<line x1="${r1(ax)}" y1="${r1(ay)}" x2="${r1(tx)}" y2="${r1(ty)}" stroke="${C.ink}" stroke-width="0.9" stroke-dasharray="3 2"/><circle cx="${r1(ax)}" cy="${r1(ay)}" r="3" fill="${C.ink}"/>`;
+        if (l.moved) lead += `<line x1="${r1(ax)}" y1="${r1(ay)}" x2="${r1(tx)}" y2="${r1(ty)}" stroke="${C.ink}" stroke-width="0.8" stroke-dasharray="1.5 2.5"/><circle cx="${r1(ax)}" cy="${r1(ay)}" r="2.6" fill="${C.ink}"/>`;
         rows[i].sp.forEach((x, k) => { mk += marker(x.g, x.num, l.pos[k][0], l.pos[k][1], x.f); });
-        items.push({ text: names[rows[i].sid] ? names[rows[i].sid][li] : rows[i].sid, box: l.box, moved: l.moved, ax, ay, tx, ty });
       });
       const used = new Set(rows.map(r => r.sid));
-      const labels = placeLabels(items, typeof tpl.textBoxes === 'function' ? tpl.textBoxes(used) : tpl.textBoxes);
       PID = uid; RNG = seeded(uid + sec.tpl + (sec.variant || ''));
-      const drawing = tpl.draw(uid, sec.variant, used);
-      const svg = `<svg class="hx-svg" viewBox="0 0 1000 420" role="img" aria-labelledby="${uid}-t" xmlns="http://www.w3.org/2000/svg"><title id="${uid}-t">${esc(title)}</title>${inkDefs(uid)}<rect width="1000" height="420" fill="${C.paper}"/>${drawing}${lead}${labels}${mk}</svg>`;
+      const drawing = bgTrees(tpl.poly) + tpl.draw(uid, sec.variant, used);
+      // 比例尺人物與飛鳥：只放在不壓到標記群的位置
+      const boxes = lay.map(l => grow(l.box, 6));
+      const free = r => !boxes.some(b => hit(r, b));
+      let deco = '';
+      const gf = groundFn(tpl.poly);
+      for (const X of (PERSON[sec.tpl] || [])) {
+        const Y = gf(X);
+        if (free({ x0: X - 8, x1: X + 8, y0: Y - 38, y1: Y })) { deco += person(X, Y); break; }
+      }
+      [[640, 40, 1], [672, 28, 0.8], [700, 46, 0.9], [735, 22, 0.7], [560, 60, 0.75]].forEach(([X, Y, k]) => {
+        if (free({ x0: X - 9, x1: X + 9, y0: Y - 6, y1: Y + 4 })) deco += bird(X, Y, k);
+      });
+      // 上方欄位（圖版式）：每個使用中的棲位一欄——棲位名稱＋編號與物種名，細點虛線引到該棲位的標記群
+      const n = rows.length, GAP = 8, maxLines = Math.min(6, Math.max(...rows.map(r => new Set(r.sp.map(x => x.num)).size)));
+      const HB = 48 + maxLines * 17;
+      const W = Math.max(84, Math.min(170, (992 - GAP * (n - 1)) / n));
+      const order = rows.map((r, i) => ({ i, cx: (lay[i].box.x0 + lay[i].box.x1) / 2 })).sort((p, q) => p.cx - q.cx);
+      order.forEach((o, k) => { o.x = Math.max(4, o.cx - W / 2); if (k) o.x = Math.max(o.x, order[k - 1].x + W + GAP); });
+      for (let k = order.length - 1; k >= 0; k--) { const lim = k === order.length - 1 ? 996 - W : order[k + 1].x - W - GAP; if (order[k].x > lim) order[k].x = lim; }
+      const fs = 12, maxCh = s2 => { let w = 0, out = ''; for (const ch of s2) { w += CJK.test(ch) ? fs : fs * 0.56; if (w > W - 4) return out + '…'; out += ch; } return out; };
+      let head = '';
+      order.forEach(o => {
+        const r = rows[o.i], l = lay[o.i], hx = o.x, mid = hx + W / 2, nm = names[r.sid] ? names[r.sid][li] : r.sid;
+        head += `<line x1="${r1(hx)}" y1="6" x2="${r1(hx)}" y2="${HB - 6}" stroke="#c9ccc9" stroke-width="0.8"/>`;
+        head += `<circle cx="${r1(hx + 5)}" cy="15" r="3" fill="${C.ink}"/><text x="${r1(hx + 12)}" y="19.5" font-size="12.5" font-weight="700" letter-spacing="0.5" font-family="${FONT}" fill="${C.ink}">${esc(maxCh(nm))}</text>`;
+        const seen = new Set();
+        let yy = 38;
+        r.sp.forEach(x => {
+          if (seen.has(x.num) || yy > HB - 18) return; seen.add(x.num);
+          head += `<text x="${r1(hx + 6)}" y="${yy}" font-size="${fs}" font-family="${FONT}" fill="${C.ink}"${x.f ? ' font-weight="700"' : ''}>${esc(maxCh(x.num + ' ' + x.n))}</text>`;
+          yy += 17;
+        });
+        // 引線：欄位底部 → 標記群上緣
+        const bx = Math.min(Math.max(mid, l.box.x0 + 6), l.box.x1 - 6), by = l.box.y0 + HB - 4;
+        lead += `<polyline points="${r1(mid)},${HB - 8} ${r1(mid)},${HB + 4} ${r1(bx)},${r1(Math.max(by, HB + 5))}" fill="none" stroke="#8f938f" stroke-width="0.6" stroke-dasharray="1.2 2.6" transform="translate(0,-${HB})"/>`;
+      });
+      const H = 420 + HB;
+      const svg = `<svg class="hx-svg" viewBox="0 0 1000 ${H}" role="img" aria-labelledby="${uid}-t" xmlns="http://www.w3.org/2000/svg"><title id="${uid}-t">${esc(title)}</title>${inkDefs(uid)}<rect width="1000" height="${H}" fill="${C.paper}"/>${head}<g transform="translate(0,${HB})">${drawing}${deco}${lead}${mk}</g></svg>`;
       const li2 = (g, f, text) => `<span class="hx-li">${badge(g, null, f)}${text}</span>`;
       const legend = `<span class="hx-lg">${li2('P', false, lab.P)} ${li2('A', false, lab.A)} ${li2('I', false, lab.I)} ${li2('A', true, lab.focal)}</span>`;
       return `<div class="hx-block" id="${uid}"><figure class="hx-fig"><div class="hx-scroll">${svg}</div><figcaption><b>${esc(title)}</b>${sec.caption ? '　' + esc(sec.caption) : ''}<br>${legend}<span class="hx-sub">${lab.note}</span><span class="hx-swipe">${lab.swipe}</span></figcaption></figure>${table}</div>`;
