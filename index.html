@@ -3574,6 +3574,10 @@ ${a}
     };
     const FONT = "'Noto Sans TC','Noto Sans',sans-serif";
     const r1 = v => Math.round(v * 10) / 10;
+    // 物種照片（iNaturalist，CC 授權）：由外部非同步查詢後透過 setPhotos 提供；名稱 → { u: 圖片網址, a: 攝影者標示, l: 授權, id: 物種 id }
+    let PHOTOS = {};
+    const PHOTO_URL_RE = /^https:\/\/(?:inaturalist-open-data\.s3\.amazonaws\.com|static\.inaturalist\.org)\/photos\/\d+\/[a-z]+\.(?:jpe?g|png)$/i;
+    function photoOf(n) { const r = PHOTOS[n]; return r && typeof r.u === 'string' && PHOTO_URL_RE.test(r.u) ? r : null; }
     // 確定性亂數（同一份資料每次畫出來完全相同 → 重繪結果一致）
     let RNG = () => 0.5;
     function seeded(str) {
@@ -4045,8 +4049,8 @@ ${a}
     const TPL_ALIAS = { river: 'stream', riparian: 'stream', wetland: 'pond', lake: 'pond', park: 'urban', campus: 'urban', farm: 'farmland', orchard: 'farmland', coastal: 'coast', mudflat: 'estuary', mangrove: 'estuary', grass: 'grassland', shrubland: 'grassland', rock: 'cliff', waterfall: 'ravine', strata: 'generic' };
     const GROUP = { p: 'P', plant: 'P', plants: 'P', '植物': 'P', a: 'A', animal: 'A', animals: 'A', '動物': 'A', vertebrate: 'A', i: 'I', insect: 'I', insects: 'I', invertebrate: 'I', '昆蟲': 'I', '無脊椎': 'I' };
     const LBL = {
-      zh: { fig: '剖面', stratum: '層位', P: '植物', A: '動物', I: '昆蟲・無脊椎', focal: '焦點物種', note: '示意剖面，非等比例；編號對應下表。', unplaced: '未能定位／歸類', capped: '超過上限未繪出', nodraw: '這些物種都無法對應到此剖面的棲位，因此未繪製剖面圖，僅列於下表。', generic: '（通用剖面）', bad: '棲地剖面資料格式有誤，未能繪製；其餘內容不受影響。', partial: '剖面資料不完整（可能被截斷），僅繪出可讀取的部分。', none: '—', swipe: '（圖可左右滑動）' },
-      en: { fig: 'Section', stratum: 'Stratum', P: 'Plants', A: 'Animals', I: 'Insects & invertebrates', focal: 'focal species', note: 'Schematic, not to scale; numbers refer to the table below.', unplaced: 'Not placed / ungrouped', capped: 'Not drawn: limit reached', nodraw: 'None of these entries matched a stratum of this template, so no drawing is shown; they are listed below.', generic: ' (generic profile)', bad: 'The habitat cross-section data could not be read, so no diagram was drawn; the rest of the report is unaffected.', partial: 'The cross-section data was incomplete (possibly cut off); only the readable part is drawn.', none: '—', swipe: ' (swipe the drawing sideways)' },
+      zh: { fig: '剖面', stratum: '層位', P: '植物', A: '動物', I: '昆蟲・無脊椎', focal: '焦點物種', note: '示意剖面，非等比例；上方欄位為各棲位物種，黑點為棲位位置。', unplaced: '未能定位／歸類', capped: '超過上限未繪出', nodraw: '這些物種都無法對應到此剖面的棲位，因此未繪製剖面圖，僅列於下表。', generic: '（通用剖面）', bad: '棲地剖面資料格式有誤，未能繪製；其餘內容不受影響。', partial: '剖面資料不完整（可能被截斷），僅繪出可讀取的部分。', none: '—', swipe: '（圖可左右滑動）' },
+      en: { fig: 'Section', stratum: 'Stratum', P: 'Plants', A: 'Animals', I: 'Insects & invertebrates', focal: 'focal species', note: 'Schematic, not to scale; columns above list the species of each stratum, black dots mark the strata.', unplaced: 'Not placed / ungrouped', capped: 'Not drawn: limit reached', nodraw: 'None of these entries matched a stratum of this template, so no drawing is shown; they are listed below.', generic: ' (generic profile)', bad: 'The habitat cross-section data could not be read, so no diagram was drawn; the rest of the report is unaffected.', partial: 'The cross-section data was incomplete (possibly cut off); only the readable part is drawn.', none: '—', swipe: ' (swipe the drawing sideways)' },
     };
     const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const clean = (s, max) => String(s == null ? '' : s).replace(/<[^>]*>/g, '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -4166,28 +4170,8 @@ ${a}
       return `<svg class="hx-b" viewBox="-18 -18 36 36" width="20" height="20" aria-hidden="true">${marker(g, num == null ? '' : num, 0, 0, focal)}</svg>`;
     }
 
-    // ---------- 標記群排版（確定性避讓）----------
     const hit = (a, b) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
     const grow = (b, d) => ({ x0: b.x0 - d, x1: b.x1 + d, y0: b.y0 - d, y1: b.y1 + d });
-    function layout(clusters) {
-      const PITCH = 32, PAD = 4, placed = [];
-      const ov = (a, b) => Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + PAD) * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) + PAD);
-      return clusters.map(cl => {
-        const perRow = cl.n <= 4 ? cl.n : Math.ceil(cl.n / Math.ceil(cl.n / 4)), rows = Math.ceil(cl.n / perRow);
-        const w = perRow * PITCH - 4, h = rows * PITCH - 4, cand = [[0, 0]];
-        for (const d of [22, 40, 60, 84, 110]) cand.push([0, -d], [0, d], [d * 1.6, 0], [-d * 1.6, 0], [d * 1.2, -d], [-d * 1.2, -d], [d * 1.2, d], [-d * 1.2, d]);
-        let best = null, bs = Infinity;
-        for (const [dx, dy] of cand) {
-          const cx = Math.min(Math.max(cl.anchor[0] + cl.pref[0] + dx, w / 2 + 4), 996 - w / 2), cy = Math.min(Math.max(cl.anchor[1] + cl.pref[1] + dy, h / 2 + 4), 416 - h / 2);
-          const box = { x0: cx - w / 2, x1: cx + w / 2, y0: cy - h / 2, y1: cy + h / 2 }, sc = placed.reduce((s, b) => s + ov(box, b), 0);
-          if (sc < bs) { bs = sc; best = { cx, cy, box }; if (!sc) break; }
-        }
-        placed.push(best.box);
-        const pos = [];
-        for (let i = 0; i < cl.n; i++) { const r = Math.floor(i / perRow), c = i % perRow, inRow = Math.min(perRow, cl.n - r * perRow); pos.push([best.cx - (inRow - 1) * PITCH / 2 + c * PITCH, best.cy - (rows - 1) * PITCH / 2 + r * PITCH]); }
-        return Object.assign(best, { pos, moved: Math.hypot(best.cx - cl.anchor[0], best.cy - cl.anchor[1]) > 12 });
-      });
-    }
 
     function renderSection(sec, lang, uid) {
       const tpl = T[sec.tpl], lab = LBL[lang], names = NAMES[sec.tpl][2], li = lang === 'zh' ? 0 : 1;
@@ -4206,8 +4190,9 @@ ${a}
       // 名稱：圖示與名稱第一個字詞不分行，只讓其餘字詞與〔活動〕換行（英文長名稱才不會撐破表格）
       const name = x => {
         const n = x.n, k = n.indexOf(' '), first = k > 0 ? n.slice(0, k) : n, w = v => v ? (x.f ? `<b>${esc(v)}</b>` : esc(v)) : '';
+        const ph = photoOf(n), ic = ph ? `<img class="hx-ph${x.f ? ' hx-f' : ''}" src="${esc(ph.u)}" alt="" loading="lazy">` : badge(x.g, '', x.f);
         // 超長的單字不黏住，讓它在格內斷開，不撐破表格
-        return first.length <= 14 ? `<span class="hx-n">${badge(x.g, x.num, x.f)}${w(first)}</span>${w(k > 0 ? n.slice(k) : '')}` : badge(x.g, x.num, x.f) + w(n);
+        return first.length <= 14 ? `<span class="hx-n">${ic}${w(first)}</span>${w(k > 0 ? n.slice(k) : '')}` : ic + w(n);
       };
       const cell = (list, g) => { const xs = list.filter(x => x.g === g); return xs.length ? xs.map(x => `<span class="hx-e">${name(x)}${x.act.length ? `<i>${esc(x.act.join(lang === 'zh' ? '・' : '/'))}</i>` : ''}</span>`).join(' ') : lab.none; };
       const td = (list, g) => `<td data-l="${esc(lab[g])}"${list.some(x => x.g === g) ? '' : ' class="hx-0"'}>${cell(list, g)}</td>`;
@@ -4217,19 +4202,12 @@ ${a}
       const table = `<table class="hx-key"><colgroup><col class="hx-c0"><col class="hx-c1"><col class="hx-c1"><col class="hx-c1"></colgroup>${rows.length ? `<thead><tr><th>${lab.stratum}</th><th>${lab.P}</th><th>${lab.A}</th><th>${lab.I}</th></tr></thead>` : ''}<tbody>${body}</tbody></table>`;
       // 沒有任何物種能放上棲位：不畫空白剖面，只列說明與名單
       if (!rows.length) return `<div class="hx-block" id="${uid}"><p class="hx-note"><b>${esc(title)}</b>${sec.caption ? '　' + esc(sec.caption) : ''}<br>${lab.nodraw}</p>${table}</div>`;
-      const lay = layout(clusters);
-      let lead = '', mk = '';
-      lay.forEach((l, i) => {
-        const [ax, ay] = clusters[i].anchor;
-        const tx = Math.min(Math.max(ax, l.box.x0), l.box.x1), ty = Math.min(Math.max(ay, l.box.y0), l.box.y1);
-        if (l.moved) lead += `<line x1="${r1(ax)}" y1="${r1(ay)}" x2="${r1(tx)}" y2="${r1(ty)}" stroke="${C.ink}" stroke-width="0.8" stroke-dasharray="1.5 2.5"/><circle cx="${r1(ax)}" cy="${r1(ay)}" r="2.6" fill="${C.ink}"/>`;
-        rows[i].sp.forEach((x, k) => { mk += marker(x.g, x.num, l.pos[k][0], l.pos[k][1], x.f); });
-      });
+      // 圖面：不再放編號標記，每個棲位只標一個點，以細點虛線引到上方欄位（欄位內是物種照片與名稱）
+      const anchors = clusters.map(c => [c.anchor[0] + c.pref[0] * 0.5, c.anchor[1] + c.pref[1] * 0.5]);
       const used = new Set(rows.map(r => r.sid));
       PID = uid; RNG = seeded(uid + sec.tpl + (sec.variant || ''));
       const drawing = bgTrees(tpl.poly) + tpl.draw(uid, sec.variant, used);
-      // 比例尺人物與飛鳥：只放在不壓到標記群的位置
-      const boxes = lay.map(l => grow(l.box, 6));
+      const boxes = anchors.map(([x, y]) => ({ x0: x - 22, x1: x + 22, y0: y - 22, y1: y + 22 }));
       const free = r => !boxes.some(b => hit(r, b));
       let deco = '';
       const gf = groundFn(tpl.poly);
@@ -4240,35 +4218,45 @@ ${a}
       [[640, 40, 1], [672, 28, 0.8], [700, 46, 0.9], [735, 22, 0.7], [560, 60, 0.75]].forEach(([X, Y, k]) => {
         if (free({ x0: X - 9, x1: X + 9, y0: Y - 6, y1: Y + 4 })) deco += bird(X, Y, k);
       });
-      // 上方欄位（圖版式）：每個使用中的棲位一欄——棲位名稱＋編號與物種名，細點虛線引到該棲位的標記群
-      const n = rows.length, GAP = 8, maxLines = Math.min(6, Math.max(...rows.map(r => new Set(r.sp.map(x => x.num)).size)));
-      const HB = 48 + maxLines * 17;
-      const W = Math.max(84, Math.min(170, (992 - GAP * (n - 1)) / n));
-      const order = rows.map((r, i) => ({ i, cx: (lay[i].box.x0 + lay[i].box.x1) / 2 })).sort((p, q) => p.cx - q.cx);
+      // 上方欄位：依棲位在圖上的位置由左到右排列
+      const n = rows.length, GAP = 8, TS = 46;
+      const W = Math.max(96, Math.min(190, (992 - GAP * (n - 1)) / n));
+      const per = Math.max(1, Math.floor((W - 4) / (TS + 8))), cw = (W - 4) / per;
+      const uniq = r => { const seen = new Set(); return r.sp.filter(x => !seen.has(x.num) && seen.add(x.num)); };
+      const maxRows = Math.max(...rows.map(r => Math.ceil(uniq(r).length / per)));
+      const HB = 30 + maxRows * (TS + 22) + 10;
+      const order = rows.map((r, i) => ({ i, cx: anchors[i][0] })).sort((p, q) => p.cx - q.cx);
       order.forEach((o, k) => { o.x = Math.max(4, o.cx - W / 2); if (k) o.x = Math.max(o.x, order[k - 1].x + W + GAP); });
       for (let k = order.length - 1; k >= 0; k--) { const lim = k === order.length - 1 ? 996 - W : order[k + 1].x - W - GAP; if (order[k].x > lim) order[k].x = lim; }
-      const fs = 12, maxCh = s2 => { let w = 0, out = ''; for (const ch of s2) { w += CJK.test(ch) ? fs : fs * 0.56; if (w > W - 4) return out + '…'; out += ch; } return out; };
-      let head = '';
+      const fit = (str, w, fs) => { let acc = 0, out = ''; for (const ch of str) { acc += CJK.test(ch) ? fs : fs * 0.56; if (acc > w) return out + '…'; out += ch; } return out; };
+      let head = '', lead = '', clip = '';
       order.forEach(o => {
-        const r = rows[o.i], l = lay[o.i], hx = o.x, mid = hx + W / 2, nm = names[r.sid] ? names[r.sid][li] : r.sid;
-        head += `<line x1="${r1(hx)}" y1="6" x2="${r1(hx)}" y2="${HB - 6}" stroke="#c9ccc9" stroke-width="0.8"/>`;
-        head += `<circle cx="${r1(hx + 5)}" cy="15" r="3" fill="${C.ink}"/><text x="${r1(hx + 12)}" y="19.5" font-size="12.5" font-weight="700" letter-spacing="0.5" font-family="${FONT}" fill="${C.ink}">${esc(maxCh(nm))}</text>`;
-        const seen = new Set();
-        let yy = 38;
-        r.sp.forEach(x => {
-          if (seen.has(x.num) || yy > HB - 18) return; seen.add(x.num);
-          head += `<text x="${r1(hx + 6)}" y="${yy}" font-size="${fs}" font-family="${FONT}" fill="${C.ink}"${x.f ? ' font-weight="700"' : ''}>${esc(maxCh(x.num + ' ' + x.n))}</text>`;
-          yy += 17;
+        const r = rows[o.i], hx = o.x, mid = hx + W / 2, nm = names[r.sid] ? names[r.sid][li] : r.sid;
+        head += `<line x1="${r1(hx)}" y1="4" x2="${r1(hx)}" y2="${HB - 4}" stroke="#c9ccc9" stroke-width="0.8"/>`;
+        head += `<circle cx="${r1(hx + 6)}" cy="14" r="3" fill="${C.ink}"/><text x="${r1(hx + 13)}" y="18.5" font-size="12.5" font-weight="700" letter-spacing="0.5" font-family="${FONT}" fill="${C.ink}">${esc(fit(nm, W - 16, 12.5))}</text>`;
+        uniq(r).forEach((x, k) => {
+          const col = k % per, row = Math.floor(k / per), tx = hx + 4 + col * cw + (cw - TS) / 2, ty = 28 + row * (TS + 22), ph = photoOf(x.n), cid = `${uid}-c${o.i}-${k}`;
+          if (ph) {
+            clip += `<clipPath id="${cid}"><rect x="${r1(tx)}" y="${ty}" width="${TS}" height="${TS}" rx="3"/></clipPath>`;
+            head += `<rect x="${r1(tx)}" y="${ty}" width="${TS}" height="${TS}" rx="3" fill="#e4e6e3"/><image href="${esc(ph.u)}" x="${r1(tx)}" y="${ty}" width="${TS}" height="${TS}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${cid})"/>`;
+          } else {
+            head += `<rect x="${r1(tx)}" y="${ty}" width="${TS}" height="${TS}" rx="3" fill="#eeefec"/>` + marker(x.g, '', tx + TS / 2, ty + TS / 2, false);
+          }
+          head += `<rect x="${r1(tx)}" y="${ty}" width="${TS}" height="${TS}" rx="3" fill="none" stroke="${x.f ? C.ink : '#a3a6a2'}" stroke-width="${x.f ? 2.6 : 0.8}"/>`;
+          head += `<text x="${r1(tx + TS / 2)}" y="${ty + TS + 13}" text-anchor="middle" font-size="11" font-family="${FONT}" fill="${C.ink}"${x.f ? ' font-weight="700"' : ''}>${esc(fit(x.n, cw - 2, 11))}</text>`;
         });
-        // 引線：欄位底部 → 標記群上緣
-        const bx = Math.min(Math.max(mid, l.box.x0 + 6), l.box.x1 - 6), by = l.box.y0 + HB - 4;
-        lead += `<polyline points="${r1(mid)},${HB - 8} ${r1(mid)},${HB + 4} ${r1(bx)},${r1(Math.max(by, HB + 5))}" fill="none" stroke="#8f938f" stroke-width="0.6" stroke-dasharray="1.2 2.6" transform="translate(0,-${HB})"/>`;
+        const [ax, ay] = anchors[o.i];
+        lead += `<polyline points="${r1(mid)},${HB - 6} ${r1(mid)},${HB + 6} ${r1(ax)},${r1(ay + HB - 6)}" fill="none" stroke="#7d817d" stroke-width="0.7" stroke-dasharray="1.2 2.6"/>` +
+          `<circle cx="${r1(ax)}" cy="${r1(ay + HB)}" r="5.5" fill="#fff"/><circle cx="${r1(ax)}" cy="${r1(ay + HB)}" r="3.4" fill="${C.ink}"/>`;
       });
       const H = 420 + HB;
-      const svg = `<svg class="hx-svg" viewBox="0 0 1000 ${H}" role="img" aria-labelledby="${uid}-t" xmlns="http://www.w3.org/2000/svg"><title id="${uid}-t">${esc(title)}</title>${inkDefs(uid)}<rect width="1000" height="${H}" fill="${C.paper}"/>${head}<g transform="translate(0,${HB})">${drawing}${deco}${lead}${mk}</g></svg>`;
+      const svg = `<svg class="hx-svg" viewBox="0 0 1000 ${H}" role="img" aria-labelledby="${uid}-t" xmlns="http://www.w3.org/2000/svg"><title id="${uid}-t">${esc(title)}</title>${inkDefs(uid)}<defs>${clip}</defs><rect width="1000" height="${H}" fill="${C.paper}"/>${head}<g transform="translate(0,${HB})">${drawing}${deco}</g>${lead}</svg>`;
+      // 照片來源與授權
+      const credits = [...new Map(rows.flatMap(r => r.sp).filter(x => photoOf(x.n)).map(x => [x.n, photoOf(x.n)])).entries()];
+      const credit = credits.length ? `<p class="hx-cr">${lang === 'zh' ? '照片：iNaturalist' : 'Photos: iNaturalist'} — ${credits.map(([nm, ph]) => `${esc(nm)} ${esc(String(ph.a || '').slice(0, 120))}`).join('；')}</p>` : '';
       const li2 = (g, f, text) => `<span class="hx-li">${badge(g, null, f)}${text}</span>`;
-      const legend = `<span class="hx-lg">${li2('P', false, lab.P)} ${li2('A', false, lab.A)} ${li2('I', false, lab.I)} ${li2('A', true, lab.focal)}</span>`;
-      return `<div class="hx-block" id="${uid}"><figure class="hx-fig"><div class="hx-scroll">${svg}</div><figcaption><b>${esc(title)}</b>${sec.caption ? '　' + esc(sec.caption) : ''}<br>${legend}<span class="hx-sub">${lab.note}</span><span class="hx-swipe">${lab.swipe}</span></figcaption></figure>${table}</div>`;
+      const legend = `<span class="hx-lg"><span class="hx-li"><span class="hx-fk"></span>${lab.focal}</span></span>`;
+      return `<div class="hx-block" id="${uid}"><figure class="hx-fig"><div class="hx-scroll">${svg}</div><figcaption><b>${esc(title)}</b>${sec.caption ? '　' + esc(sec.caption) : ''}<br>${legend}<span class="hx-sub">${lab.note}</span><span class="hx-swipe">${lab.swipe}</span></figcaption></figure>${table}${credit}</div>`;
     }
 
     const STYLE = `<style id="hx-style">
@@ -4298,6 +4286,10 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
 .hx-e i::before{content:'〔'}.hx-e i::after{content:'〕'}
 .hx-un td{color:#456238;font-style:italic}
 .hx-swipe{display:none;color:#456238}
+.hx-ph{width:22px;height:22px;object-fit:cover;border-radius:3px;vertical-align:-6px;margin-right:4px;border:1px solid #c9ccc9}
+.hx-ph.hx-f{border:2px solid #1d1d1b}
+.hx-fk{display:inline-block;width:12px;height:12px;border:2.5px solid #1d1d1b;border-radius:2px;vertical-align:-2px;margin-right:4px}
+.hx-cr{font-family:'Noto Sans TC',sans-serif;font-size:10.5px;line-height:1.5;color:#6b6e6a;margin:4px 0 0}
 .hx-note{font-family:'Noto Sans TC',sans-serif;font-size:12.5px;color:#456238;border-left:3px solid #d4cdb8;padding-left:8px}
 @media (max-width:560px){
  .hx-key colgroup{display:none}
@@ -4494,7 +4486,17 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
         slots: [{ s: sl[0], sp: [e(sp[0]), e(sp[1])] }, { s: sl[1], sp: [e(sp[2]), e(sp[3])] }] }] });
     }
 
-    return { render, pick, promptLines, example, normalise, parseLenient };
+    // 報告中所有剖面物種名稱（供照片查詢）
+    function speciesNames(html) {
+      const out = new Set();
+      String(html || '').replace(BLOCK_RE, (m, q, body) => {
+        try { const d = normalise(parseLenient(body)); if (d) d.secs.forEach(sec => sec.slots.forEach(arr => arr.forEach(x => out.add(x.n)))); } catch (_) {}
+        return m;
+      });
+      return [...out];
+    }
+    function setPhotos(p) { PHOTOS = p || {}; }
+    return { render, pick, promptLines, example, normalise, parseLenient, speciesNames, setPhotos };
   })();
 
   // 報告中的剖面資料區塊 → 剖面圖＋對照表（無區塊的舊報告原樣返回）
@@ -4502,8 +4504,49 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     return XSEC.render(html, LANG);
   }
 
+  // ---------- 剖面物種照片（iNaturalist，CC 授權）----------
+  // 以物種名稱查 iNaturalist 物種的代表照片，結果存在本機；查到新照片時重繪目前的報告
+  const XSEC_PHOTO_KEY = 'heals-xsec-photos-v1';
+  const XSEC_PHOTO_RETRY = 7 * 24 * 3600 * 1000; // 查無照片的名稱，7 天後再試
+  let xsecPhotos = (() => { try { return JSON.parse(localStorage.getItem(XSEC_PHOTO_KEY)) || {}; } catch (_) { return {}; } })();
+  XSEC.setPhotos(xsecPhotos);
+  async function fetchXsecPhoto(name) {
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 8000);
+    try {
+      const url = `https://api.inaturalist.org/v1/taxa/autocomplete?q=${encodeURIComponent(name)}&per_page=1&preferred_place_id=${TAIWAN_PLACE_ID}&locale=${LANG === 'en' ? 'en' : 'zh-TW'}`;
+      const res = await fetch(url, { signal: ctl.signal });
+      if (!res.ok) return null; // 暫時性錯誤：不記錄，下次再試
+      const t = ((await res.json()).results || [])[0], ph = t && t.default_photo;
+      if (!ph || !ph.license_code || !ph.medium_url) return { none: 1, t: Date.now() }; // 無照片或未開放授權
+      const u = String(ph.medium_url).replace(/\/(?:square|thumb|medium|large|original)\.(jpe?g|png)$/i, '/small.$1');
+      return { u, a: String(ph.attribution || '').slice(0, 160), l: String(ph.license_code), id: t.id };
+    } catch (_) { return null; } finally { clearTimeout(timer); }
+  }
+  async function fetchXsecPhotos(names) {
+    const todo = names.filter(n => { const r = xsecPhotos[n]; return !r || (r.none && Date.now() - (r.t || 0) > XSEC_PHOTO_RETRY); });
+    let found = false;
+    for (let i = 0; i < todo.length; i += 3) {
+      const got = await Promise.all(todo.slice(i, i + 3).map(fetchXsecPhoto));
+      got.forEach((r, k) => { if (r) { xsecPhotos[todo[i + k]] = r; if (r.u) found = true; } });
+    }
+    if (todo.length) {
+      try { localStorage.setItem(XSEC_PHOTO_KEY, JSON.stringify(xsecPhotos)); } catch (_) {}
+      XSEC.setPhotos(xsecPhotos);
+    }
+    return found;
+  }
+  let lastRawReport = null;
+
   // 單一出口：新分析、手動貼上、歷史重開都經過這裡；下載／列印／新分頁都讀 analysisResult
-  function showResult(html) {
+  function showResult(html, opts) {
+    opts = opts || {};
+    const raw = html;
+    lastRawReport = raw;
+    // 先用已有的照片畫；缺的照片查到後再重繪一次（不重新捲動）
+    if (!opts.photosDone) {
+      const names = XSEC.speciesNames(raw);
+      if (names.length) fetchXsecPhotos(names).then(found => { if (found && lastRawReport === raw) showResult(raw, { photosDone: true, noScroll: true }); });
+    }
     html = renderCrossSections(html);
     analysisNonce = makeNonce();
     html = withLayoutGuard(html, analysisNonce);
@@ -4535,7 +4578,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       meta.textContent = '手動載入';
     }
 
-    setTimeout(() => {
+    if (!opts.noScroll) setTimeout(() => {
       document.getElementById('resultDisplay').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 100);
   }
