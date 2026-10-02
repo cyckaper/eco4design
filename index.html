@@ -168,7 +168,7 @@
   .history-actions button.danger:hover { background: #f4dcdc; color: #a02828; border-color: #a02828; }
 
   /* Toast */
-  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--ink); color: white; padding: 10px 20px; border-radius: 3px; font-family: var(--serif); font-size: 13px; opacity: 0; transition: all 0.3s; pointer-events: none; z-index: 1000; }
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--ink); color: white; padding: 10px 20px; border-radius: 3px; font-family: var(--serif); font-size: 13px; width: max-content; max-width: min(90vw, 560px); box-sizing: border-box; line-height: 1.5; opacity: 0; transition: all 0.3s; pointer-events: none; z-index: 1000; }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
   /* Footer */
@@ -309,6 +309,7 @@
   .result-actions .btn { padding: 7px 14px; font-size: 13px; }
   .result-frame { width: 100%; height: 720px; border: 1px solid var(--border); border-radius: 3px; background: white; display: block; }
   .result-meta { font-family: var(--serif); font-size: 11.5px; color: var(--moss-light); font-style: italic; margin-top: 6px; text-align: right; }
+  .result-notice { padding: 10px 14px; margin: 0 0 12px; background: var(--gold-pale); border: 1px solid var(--clay-light); border-left: 4px solid var(--clay); border-radius: 3px; color: #5a2810; font-family: var(--serif); font-size: 13px; line-height: 1.6; }
   .result-error { padding: 14px 16px; background: var(--clay-pale); border: 1px solid var(--clay); border-left: 4px solid var(--clay); border-radius: 3px; color: #5a2810; font-family: var(--serif); font-size: 13px; line-height: 1.65; margin: 14px 0; }
   .result-error strong { color: var(--clay); }
   .result-error code { background: rgba(255,255,255,0.6); padding: 1px 5px; border-radius: 2px; font-family: ui-monospace, monospace; font-size: 11.5px; }
@@ -704,7 +705,9 @@
         <button class="btn btn-ghost" id="copyResultBtn">📋 複製原始碼</button>
         <button class="btn btn-ghost" id="closeResultBtn">✕ 收起預覽</button>
       </div>
-      <iframe id="resultFrame" class="result-frame" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
+      <div id="resultNotice" class="result-notice" role="status" style="display:none;"></div>
+      <!-- 不給 allow-same-origin：報告在獨立的不透明來源中執行，讀不到本頁的通行碼與 localStorage -->
+      <iframe id="resultFrame" class="result-frame" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
       <div class="result-meta" id="resultMeta"></div>
     </div>
   </section>
@@ -2224,62 +2227,188 @@ out tags center;`;
   }
 
   // ========== Prompt generation ==========
+  // 今天日期（瀏覽器本地時間 YYYY-MM-DD），供報告 meta 行與檢索聲明使用
+  function localDateStr(d) {
+    d = d || new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  // 依基地條件挑選 ≤3 個剖面模板（英文膠囊先經 TERMS_REV 轉回中文詞再比對）
+  function pickXsecTemplates(conditions) {
+    const zh = v => TERMS_REV[v] || v;
+    return XSEC.pick((conditions || []).map(zh), (state.species || []).map(zh));
+  }
+
+  // 報告結構：中英文共用同一份規格（同順序、同上限），避免兩版內容漂移
+  function buildReportSpec(o) {
+    return [
+      { zh: `〔標題〕<h1>：地點名稱（無則用座標）＋「生態共存設計分析」。`,
+        en: `[Title] <h1>: the place name (or the coordinates) followed by "Ecological Coexistence Design Analysis".` },
+      { zh: `〔重點摘要〕<h1> 之後放一行 <p class="meta">${o.metaZh}</p>，接著 <ul class="summary"> 3–5 點，每點 ≤40 字、合計 ≤160 字，內容為：最關鍵的資源衝突（以 R 編號標示）、首要分區或措施、最重要的保育／法規警示、主要資料限制。只指向後文，不寫細節與引用。`,
+        en: `[Key findings] After the <h1>, one <p class="meta">${o.metaEn}</p>, then <ul class="summary"> with 3–5 bullets, each ≤25 words and ≤100 words in total: the most critical resource conflict (by R#), the top zoning decision or measure, the most important conservation/legal warning, and the main data limitation. Point to later sections; no details or citations.` },
+      { zh: `〔地圖〕重點摘要之後單獨一行輸出 <!--HEALS:MAP-->；不要自行撰寫地圖、<img>、<figure> 或圖說，系統會在此插入基地位置圖。`,
+        en: `[Map] After the key findings, output <!--HEALS:MAP--> on its own line. Do not write a map, <img>, <figure> or caption yourself; the tool inserts the site map there.` },
+      { zh: `1 基地判讀：一張兩欄表（項目｜內容），≤8 列：海拔（取自已搜得的資料，不必為此單獨搜尋）、植被／林相、流域／水系、保育或法定身分、鄰近聚落／原住民族傳統領域、主要人為干擾、OSM 環境重點、在地代表物種（≤5 種${o.hasInat ? '，可取自 iNaturalist 清單' : ''}）。每格 ≤30 字（引用不計入）並附來源；未搜尋或查無資料寫「未查得」。表後 <ul class="warn"> 列設計警示 3–5 點，每點 ≤50 字，格式為「風險 → 必要對策（來源）」；保育敏感區、原住民族傳統領域、人為干擾三類各至少一點（經搜尋確認不適用者寫「經查無」，未搜尋者寫「未查得」）。警示為必備，不受篇幅壓縮。不寫敘述段落。`,
+        en: `1 Site reading: one two-column table (item | finding) of ≤8 rows: elevation (from sources you already found; do not spend a search on it), vegetation/forest type, watershed/water system, conservation or legal status, nearby settlements / indigenous traditional territories, main human disturbances, OSM highlights, and local representative species (≤5${o.hasInat ? ', may come from the iNaturalist list' : ''}). Each cell ≤20 words (citations excluded) with a source; write "not found" when you did not search for it or found nothing, never an estimate. Then <ul class="warn"> with 3–5 design warnings, each ≤30 words, in the form "risk → required response (source)". Conservation-sensitive areas, indigenous traditional territories and human disturbance each get at least one item (write "none found" only when a search confirmed it does not apply; otherwise "not found"). The warnings are mandatory and exempt from length cuts. No narrative paragraphs.` },
+      { zh: `2 物種需求表：一張表，每個焦點物種一列。欄位：物種（中名・學名・保育等級）｜食｜住（棲位高度 m／掩蔽）｜育（繁殖月份／巢位）｜活動時段與範圍｜敏感因子（光、噪音、犬貓、路殺等）。食、住、育每格 ≤40 字，並以一筆（作者, 年）結尾；同一物種的三格可引用同一份物種文獻，不必逐格搜尋。其餘各欄 ≤25 字；焦點物種超過 5 種時，上限改為 30 字與 20 字（引用均不計入字數）。這是全文唯一陳述物種生態之處；不寫物種卡片、圖示或段落。`,
+        en: `2 Species requirements: one table with one row per focal species. Columns: species (common name · scientific name · conservation status) | food | shelter (niche height in m / cover) | breeding (months / nest site) | activity period & range | sensitivities (light, noise, dogs/cats, roadkill, etc.). Food, shelter and breeding cells are ≤25 words and each ends with one (Author, Year); one species account may serve all three cells, so no separate search per cell is needed. Other cells ≤15 words. With more than 5 focal species, the caps drop to 18 and 10 words (citations never count toward word caps). This is the only place species biology is stated; no species cards, icons or paragraphs.` },
+      { zh: `3 資源利用矩陣：<table class="matrix">，欄位為 編號｜環境資源｜〔各焦點物種〕｜物種互動｜設計啟示。「基地條件」中的每項資源一列，編號 R1、R2…；相近條件可合併為一列（列出原名稱），但每項條件都須出現；所有物種皆為低／無的條件不另立列，改於表下以一行「低利用條件（不另立列）：…」列出。最後加一列「捕食／干擾」（如 犬貓→地棲鳥、夜間照明→蛙類）。「棲地需求」各項併入對應 R 列的資源名稱；步道、林道、橋梁、堤防等設施不另立資源列，列於最後的「捕食／干擾」列。物種格只填 高／中／低／無。「物種互動」寫配對與重疊時段，如「A↔B 強烈競爭（3–6 月重疊）；A↔C 無關」，≤30 字。「設計啟示」≤30 字，寫一種機制並盡量附數值（時間分離、垂直分層、緩衝 30 m、獨立結構）。表後 ≤3 點（每點 ≤60 字）：① 需分區或時空分離的資源（以 R 編號）② 可共享資源 ③ 主要捕食／干擾關係與緩解策略。不另寫整體互動段落。`,
+        en: `3 Resource partitioning matrix: <table class="matrix"> with columns No. | resource | [each focal species] | interaction | design implication. One row per resource in Site Conditions, numbered R1, R2 …. Similar conditions may share a row (list their names), but every condition must appear. Conditions where every species is Low/None get no row; list them in one line under the table, "Low-use conditions (no row): …". Add a final "Predation / disturbance" row (e.g. dogs/cats → ground birds; night lighting → frogs). Fold each Habitat Needs item into the resource name of the matching R row; infrastructure such as trails, forest roads, bridges and levees gets no resource row and goes into the final "Predation / disturbance" row. Species cells contain only High / Med / Low / None. The interaction cell names pairs and overlap periods, e.g. "A↔B strong competition (overlap Mar–Jun); A↔C unrelated", ≤18 words. Design implication ≤18 words: one mechanism, with a number where possible (temporal separation, vertical stratification, 30 m buffer, separate structure). After the table, ≤3 bullets (≤35 words each): (1) resources that need spatial or temporal separation (by R#), (2) shareable resources, (3) the main predation/disturbance links and how to mitigate them. No separate interaction overview.` },
+      { zh: `4 空間分區與棲地剖面（<h2>），其下 4.1 分區配置表（<h3>）：≤6 區，欄位為 分區｜位置／棲地類型（剖面代號 A–C）｜目標物種｜關鍵資源與構造（對應 R 編號）｜人為使用與季節管制（禁入／限時／開放；月份）｜緩衝寬度（m）。每格 ≤25 字；不寫物種生態（見第 2 節），不寫配置原則段落。`,
+        en: `4 Zoning and habitat cross-sections (<h2>), then 4.1 Zoning table (<h3>): ≤6 zones, with columns zone | location / habitat type (cross-section ID A–C) | target species | key resources & structures (R#) | human use & seasonal control (closed / timed / open; months) | buffer width (m). Cells ≤15 words. No species biology (see section 2) and no prose on configuration principles.` },
+      { zh: `4.2 棲地剖面分析圖（<h3>）：不要畫圖、不要寫 <svg>，也不要自寫圖例表或說明段落。在此 <h3> 之後只輸出一個 JSON 資料區塊；系統會依下列模板繪出側向剖面圖，以及「層位｜植物｜動物｜昆蟲・無脊椎」的編號對照表。
+可用剖面模板（格式為「tpl 名稱：棲位代碼 名稱」；tpl 與 s 只能使用這些代碼）：
+${o.xsecZh}
+規則：
+① 每幅剖面代表基地實際存在的一種棲地類型。共 1–3 幅，依重要性排序，id 依序為 A、B、C，並與 4.1 分區表的剖面代號一致；基地只有一種棲地類型時畫 1 幅即可。
+② 每幅使用 4–8 個棲位、10–18 筆物種。植物（g:"P"，含蕨類、苔蘚）、脊椎動物（g:"A"）、昆蟲與其他無脊椎動物（g:"I"）各至少 3 種（沒有把握的類群可減為 2 種）；每個棲位最多 4 種。
+③ 整個 JSON 區塊中，每個焦點物種至少出現一次並加上 "f":1，只放在其實際使用的剖面。伴生物種只列支撐焦點物種的關鍵者，例如蜜源植物、幼蟲食草、結果樹、獵物昆蟲、授粉者與水棲昆蟲；優先取自${o.hasInat ? '上方 iNaturalist 清單、' : ''}已引用的文獻或本地區常見的原生種。JSON 內的物種不需引用、也不必逐一搜尋，但只列確實分布於本地區與海拔帶的原生種，不得臆造；外來種不列。
+④ 同一物種若使用多個棲位，在各棲位各列一次（最多 3 處），並分別填寫 act。
+⑤ act 只能使用下列詞彙，最多兩項，以「・」連接。動物與昆蟲：覓食、棲息、繁殖、通行、越冬；植物：蜜源、食草、果實、遮蔭、結構。
+⑥ n 只寫中文俗名（≤8 字），不寫學名、說明、顏色或座標。title ≤12 字。caption 寫一句 ≤40 字的配置原則，並附數值或月份。
+⑦ 整個區塊 ≤4,000 字元，必須是合法 JSON：使用雙引號，不加註解，不留結尾逗號，字串內不得出現 < 或 >。
+格式如下（tpl 與 s 取自上列第一個模板，物種名稱為占位字，請依本基地填寫）：
+<script type="application/json" class="heals-xsec">
+${o.exZh}
+<\/script>`,
+        en: `4.2 Habitat cross-sections (<h3>): do not draw anything, do not write <svg>, and do not write your own legend table or explanatory prose. Directly after this <h3>, output exactly one JSON data block. The tool uses it to draw a side-elevation cross-section from the templates below, plus a numbered key table with the columns "stratum | plants | animals | insects & invertebrates".
+Available templates (format "tpl name: slot code name"; use only these codes for tpl and s):
+${o.xsecEn}
+Rules:
+1. Each section shows one habitat type that actually exists at the site. Give 1–3 sections, most important first, with id A, B, C in order, matching the cross-section IDs in the 4.1 zoning table. If the site has only one habitat type, give one section.
+2. Each section uses 4–8 slots and 10–18 species entries. Include at least 3 plants (g:"P", including ferns and mosses), 3 vertebrates (g:"A") and 3 insects or other invertebrates (g:"I"); a group you are unsure about may drop to 2. Put no more than 4 species in one slot.
+3. Across the whole JSON block, every focal species appears at least once, marked "f":1, and only in the sections where it actually occurs. Add only the supporting species that sustain the focal species, such as nectar plants, larval host plants, fruiting trees, prey insects, pollinators and aquatic insects. Prefer species from ${o.hasInat ? 'the iNaturalist list above, ' : ''}works you cite or common native species of the region. JSON entries need no citations and no species-by-species searches, but list only native species that genuinely occur in this region and elevation band; never invent species, and leave out non-native species.
+4. If a species uses several slots, list it once in each slot (3 slots at most), each with its own act.
+5. act uses only these words, at most two, joined by "/". Animals and insects: forage, roost, breed, move, overwinter. Plants: nectar, host plant, fruit, shade, structure.
+6. n is the English common name only (4 words or fewer); use the binomial only when no English name exists. Add no notes, colours or coordinates. title is 5 words or fewer. caption is one configuration principle of 25 words or fewer, with a number or months.
+7. The whole block is 4,000 characters or fewer of valid JSON: double quotes, no comments, no trailing commas, and no < or > inside strings.
+Format (tpl and s come from the first template above; the species names are placeholders, so fill in this site's species):
+<script type="application/json" class="heals-xsec">
+${o.exEn}
+<\/script>` },
+      { zh: `5 設計措施表：≤8 列，欄位為 措施｜位置（分區，或「剖面代號-層位」如「A-岸邊灌叢」）｜對應（R 編號・目標物種）｜規格／數值（例：涵洞 ≥1.2 m、光源 ≤2700K 且向下、繁殖期 3–6 月封閉）｜材料／工法與注意事項。每格 ≤30 字；每列都須對應矩陣列或分區；不收無具體數值或對象的通則（如「使用原生植物」「維持連通」）。材料僅在措施需要時填寫；毒性、耐久或生態效益等非常識性主張須附（作者, 年）。`,
+        en: `5 Design measures: a table of ≤8 rows with columns measure | location (zone, or "section-stratum" such as "A-Bank shrubs") | links (R# · target species) | spec / numbers (e.g. culvert ≥1.2 m, lighting ≤2700 K and aimed downward, closed during breeding Mar–Jun) | material / method & cautions. Cells ≤18 words. Every row traces to a matrix row or a zone. No generic principles without a site-specific number or target (e.g. "use native plants", "maintain connectivity"). Fill in materials only where a measure needs one, and cite (Author, Year) for non-obvious claims about toxicity, durability or ecological benefit.` },
+      { zh: `6 參考案例：至多 3 個經本次搜尋查證的真實案例，以一張表呈現：案例（地點・年份）｜對應問題／物種／棲地｜可移植做法（≤40 字）｜URL（以可見文字列出完整網址）。可查證者不足 3 個時只列已查證者並註明，不得以未查證案例湊數；不寫案例敘述。`,
+        en: `6 Case references: up to 3 real cases verified in this session's searches, in one table: case (place · year) | matching issue / species / habitat | transferable technique (≤25 words) | URL (full address as visible text). If fewer than 3 can be verified, list only those and say so; never pad with unverified cases. No case narratives.` },
+      { zh: `7 參考文獻：<ul class="refs"> 單一 APA 7 清單，不分類（中文依第一作者筆畫排在前，英文依字母排在後）。只列正文實際引用者，且正文每筆引用都須列出；目標 ≤15 筆，不為湊數增列。每筆末加標籤［政府］［期刊］［書籍］［資料庫］［NGO］［媒體］；優先列 DOI，否則以可見文字列完整 URL；GBIF、IUCN、TBN、iNaturalist、OSM 等動態資料庫須註明擷取日期；若使用了上方的 iNaturalist／OSM 脈絡，須列為資料來源。`,
+        en: `7 References: one APA 7 list in <ul class="refs">, alphabetical and not grouped. List only works cited in the text, and every in-text citation must appear here; target ≤15 entries, never padded. End each entry with a tag [Gov] [Journal] [Book] [Database] [NGO] [Media]. Prefer a DOI, otherwise give the full URL as visible text. Dynamic databases (GBIF, IUCN, TBN, iNaturalist, OSM) include a retrieval date. If the iNaturalist/OSM context above was used, cite it as a data source.` },
+      { zh: `〔檢索聲明〕報告最後一行 <p class="note">：「資料檢索日期：${o.today}｜以網路搜尋取得並核對 N 筆來源｜未能查證：…（無則寫「無」）｜未經現地調查，施工前請現地確認。」不要另做定稿前的重檢搜尋。`,
+        en: `[Retrieval note] The last line of the report, <p class="note">: "Sources retrieved ${o.today} via web search; N sources checked | Not verified: … (or "none") | Not field-verified; confirm on site before construction." Do not run a separate round of re-check searches.` },
+    ];
+  }
+
+  const REPORT_RULES_ZH = `【輸出格式與篇幅（全文適用）】
+1. 只輸出報告本文：一個 <article>，從 <article> 開始、到 </article> 結束。不要 <!DOCTYPE>、<head>、<style>、style 屬性、顏色、字型或 <svg>（唯一例外是第 4.2 節的 JSON 資料區塊）。版面、配色、字型與地圖由系統套用。
+2. 只用 h1–h3、p、ul、li、table、thead、tbody、tr、th、td、strong、em、a，以及 class：meta、summary、warn、matrix、refs、note（另含第 4.2 節的 JSON <script> 區塊與 <!--HEALS:MAP--> 標記）。各節標題用 <h2>（4.1、4.2 用 <h3>），依上列編號與名稱。
+3. 不要封面、目錄、輸入條件複述、方法論、導言、結語或過場段落；不要 ASCII 框線圖；不要平面分區圖、配置圖或任何裝飾圖示。除系統插入的基地位置圖外，報告中唯一的圖由系統依 4.2 的 JSON 資料區塊繪製。
+4. 表格優先，每個事實只寫一次：物種生態只在第 2 節，資源衝突只在第 3 節，空間位置只在第 4 節。其他地方以物種中名、矩陣列號（R1、R2…）或分區名回指，不得重述。同一物種全文使用同一中名。
+5. 全文可見文字（不含參考文獻與剖面 JSON）≤ 6,000 字。篇幅不足時先壓縮第 5、6 節；設計警示、資源矩陣、參考文獻與檢索聲明不得刪減。
+6. 事實陳述須附 APA 7 行內引用（作者, 年），引用不計入各格字數上限；第 4.2 節的 JSON 區塊不需引用。未搜尋或查無資料寫「未查得」，不得以近緣種推論或估計。只引用本次網路搜尋實際取得的來源與 URL；沒有來源的陳述標「未查證」。
+7. 保育類或敏感物種，不得寫出巢位、棲所或出沒點的精確位置或座標。
+8. 來源優先序：政府機構（林業及自然保育署、TaiEOL、TBN）→ GBIF／IUCN 紅皮書 → 學術期刊 → NGO／社區調查 → iNaturalist → OpenStreetMap → 媒體部落格（僅作案例灰文獻）。
+9. 全文以繁體中文撰寫。`;
+
+  const REPORT_RULES_EN = `OUTPUT FORMAT AND LENGTH (applies to the whole report)
+1. Output only the report body: one <article>, starting with <article> and ending with </article>. No <!DOCTYPE>, <head>, <style>, style attributes, colours, fonts or <svg> (the only exception is the JSON data block in section 4.2). The tool applies layout, colour, fonts and the map.
+2. Use only h1–h3, p, ul, li, table, thead, tbody, tr, th, td, strong, em, a, and the classes meta, summary, warn, matrix, refs, note (plus the 4.2 JSON <script> block and the <!--HEALS:MAP--> marker). Section headings are <h2> (<h3> for 4.1 and 4.2), with the numbers and names given above.
+3. No cover, table of contents, restatement of inputs, methodology, introduction, conclusion or transition paragraphs. No ASCII box drawings. No plan-view zoning or layout diagrams and no decorative graphics. Apart from the site map the tool inserts, the only figures in the report are drawn by the tool from the 4.2 JSON data block.
+4. Tables first, and each fact stated once: species biology only in section 2, resource conflicts only in section 3, spatial placement only in section 4. Elsewhere, refer back by species common name, matrix row number (R1, R2 …) or zone name; never restate. Use the same common name for each species throughout.
+5. Visible text ≤3,500 words, excluding references and the cross-section JSON. If space runs short, compress sections 5 and 6 first. Never cut the design warnings, the resource matrix, the references or the retrieval note.
+6. Every factual claim carries an APA 7 in-text citation (Author, Year); citations do not count toward cell word caps, and the 4.2 JSON block needs none. Write "not found" when you did not search for something or found nothing, rather than estimating or inferring from related species. Cite only sources and URLs actually returned by this session's web searches; mark any claim without a source "unverified".
+7. Never give exact nest, roost or sighting locations or coordinates for protected or sensitive species.
+8. SOURCE PRIORITY: national agencies (Forestry and Nature Conservation Agency, TaiEOL, TBN) → GBIF / IUCN Red List → peer-reviewed journals → NGO and community surveys → iNaturalist → OpenStreetMap → media and blogs (grey literature, case examples only).
+9. Write the entire report in English.`;
+
   function buildPrompt() {
+    const en = LANG === 'en';
     const hasCoord = state.lat != null && state.lon != null;
+    const coordStr = hasCoord ? `${state.lat}°N, ${state.lon}°E` : '';
     const loc = hasCoord
-      ? `${state.lat}°N, ${state.lon}°E`
-      : (LANG==='en' ? '(select a location on the map or enter coordinates)' : '（請於地圖選擇位置或輸入經緯度）');
-    const name = state.locationName ? (LANG==='en' ? `\nPlace name: ${state.locationName}` : `\n地點名稱: ${state.locationName}`) : '';
-    const species = state.species.length ? state.species.join(LANG==='en'?', ':'、') : (LANG==='en'?'(select focal species)':'（請選擇焦點物種）');
-    const conditions = state.conditions.length ? state.conditions.join(LANG==='en'?', ':'、') : (LANG==='en'?'(select site conditions)':'（請選擇基地條件）');
+      ? coordStr
+      : (en ? '(select a location on the map or enter coordinates)' : '（請於地圖選擇位置或輸入經緯度）');
+    const name = state.locationName ? (en ? `\nPlace name: ${state.locationName}` : `\n地點名稱: ${state.locationName}`) : '';
+    const today = localDateStr();
+    const species = state.species.length ? state.species.join(en?', ':'、') : (en?'(select focal species)':'（請選擇焦點物種）');
+    const conditions = state.conditions.length ? state.conditions.join(en?', ':'、') : (en?'(select site conditions)':'（請選擇基地條件）');
     const habitatNeedsStr = state.habitatNeeds.length
-      ? (LANG==='en' ? `\n\n🪺 HABITAT NEEDS (specific resources required by the focal species)\n${state.habitatNeeds.join(', ')}` : `\n\n🪺 棲地需求（焦點物種對棲地資源的具體需求）\n${state.habitatNeeds.join('、')}`)
+      ? (en ? `\n\n🪺 HABITAT NEEDS (specific resources required by the focal species)\n${state.habitatNeeds.join(', ')}` : `\n\n🪺 棲地需求（焦點物種對棲地資源的具體需求）\n${state.habitatNeeds.join('、')}`)
       : '';
     const special = state.specialNotes
-      ? (LANG==='en' ? `\n\n⚠️ SPECIAL CONSIDERATIONS\n${state.specialNotes}` : `\n\n⚠️ 特別考量\n${state.specialNotes}`)
+      ? (en ? `\n\n⚠️ SPECIAL CONSIDERATIONS\n${state.specialNotes}` : `\n\n⚠️ 特別考量\n${state.specialNotes}`)
       : '';
 
+    // iNaturalist／OSM 脈絡：依介面語言輸出標題與單位
+    const sep = en ? ', ' : '、';
     const inatContext = inatLastSummary && state.lat != null
-      ? `\n\n📡 iNaturalist 在地觀察脈絡（半徑 ${inatLastSummary.radius} km · ${inatLastSummary.quality === 'research' ? '研究級' : '全部'}）
+      ? (en
+        ? `\n\n📡 iNaturalist LOCAL OBSERVATIONS (radius ${inatLastSummary.radius} km · ${inatLastSummary.quality === 'research' ? 'research grade' : 'all grades'})
+${inatLastSummary.total} observations of ${inatLastSummary.speciesCount} species
+Representative species (by number of observations):
+${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.sci && s.sci !== s.name ? ` (${s.sci})` : ''} — ${s.count} obs.`).join('\n')}`
+        : `\n\n📡 iNaturalist 在地觀察脈絡（半徑 ${inatLastSummary.radius} km · ${inatLastSummary.quality === 'research' ? '研究級' : '全部'}）
 共 ${inatLastSummary.total} 筆觀察、${inatLastSummary.speciesCount} 種記錄
 代表性出現物種（依觀察筆數排序）:
-${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.sci && s.sci !== s.name ? ` (${s.sci})` : ''} — ${s.count} 筆`).join('\n')}`
+${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.sci && s.sci !== s.name ? ` (${s.sci})` : ''} — ${s.count} 筆`).join('\n')}`)
       : '';
 
     let osmContext = '';
     if (osmLastSummary && state.lat != null) {
       const lines = [];
+      const named = (arr, n) => { const names = arr.map(x => x.name).filter(Boolean); return names.length ? ': ' + names.slice(0, n).join(sep) : ''; };
       if (osmLastSummary.protectedCount > 0) {
-        const names = osmLastSummary.protectedAreas.map(p => p.name).filter(Boolean);
-        lines.push(`🛡️ 保護區 (${osmLastSummary.protectedCount} 處)${names.length ? ': ' + names.slice(0,3).join('、') : ''} ⚠️ 環境敏感區`);
+        lines.push(en
+          ? `🛡️ Protected areas (${osmLastSummary.protectedCount})${named(osmLastSummary.protectedAreas, 3)} ⚠️ environmentally sensitive`
+          : `🛡️ 保護區 (${osmLastSummary.protectedCount} 處)${named(osmLastSummary.protectedAreas, 3)} ⚠️ 環境敏感區`);
       }
       if (osmLastSummary.waterCount > 0) {
-        const names = osmLastSummary.water.map(w => w.name).filter(Boolean);
-        lines.push(`💧 水體 (${osmLastSummary.waterCount} 處)${names.length ? ': ' + names.slice(0,5).join('、') : ''}`);
+        lines.push(en
+          ? `💧 Water bodies (${osmLastSummary.waterCount})${named(osmLastSummary.water, 5)}`
+          : `💧 水體 (${osmLastSummary.waterCount} 處)${named(osmLastSummary.water, 5)}`);
       }
-      if (osmLastSummary.forestCount > 0) lines.push(`🌲 森林斑塊: ${osmLastSummary.forestCount} 處`);
+      if (osmLastSummary.forestCount > 0) lines.push(en ? `🌲 Forest patches: ${osmLastSummary.forestCount}` : `🌲 森林斑塊: ${osmLastSummary.forestCount} 處`);
       if (osmLastSummary.settlementCount > 0) {
-        const names = osmLastSummary.settlements.map(s => s.name).filter(Boolean);
-        lines.push(`🏘️ 聚落 (${osmLastSummary.settlementCount} 處)${names.length ? ': ' + names.slice(0,3).join('、') : ''}`);
+        lines.push(en
+          ? `🏘️ Settlements (${osmLastSummary.settlementCount})${named(osmLastSummary.settlements, 3)}`
+          : `🏘️ 聚落 (${osmLastSummary.settlementCount} 處)${named(osmLastSummary.settlements, 3)}`);
       }
       if (osmLastSummary.trailCount > 0) {
-        const names = osmLastSummary.trails.map(t => t.name).filter(Boolean);
-        lines.push(`🛤️ 步道/林道 (${osmLastSummary.trailCount} 條)${names.length ? ': ' + names.slice(0,3).join('、') : ''}`);
+        lines.push(en
+          ? `🛤️ Trails / forest roads (${osmLastSummary.trailCount})${named(osmLastSummary.trails, 3)}`
+          : `🛤️ 步道/林道 (${osmLastSummary.trailCount} 條)${named(osmLastSummary.trails, 3)}`);
       }
       if (osmLastSummary.naturalCount > 0) {
-        const names = osmLastSummary.naturalFeatures.map(n => n.name).filter(Boolean);
-        lines.push(`⛰️ 自然地形 (${osmLastSummary.naturalCount} 處)${names.length ? ': ' + names.slice(0,3).join('、') : ''}`);
+        lines.push(en
+          ? `⛰️ Natural features (${osmLastSummary.naturalCount})${named(osmLastSummary.naturalFeatures, 3)}`
+          : `⛰️ 自然地形 (${osmLastSummary.naturalCount} 處)${named(osmLastSummary.naturalFeatures, 3)}`);
       }
       if (lines.length) {
-        osmContext = `\n\n🌍 OSM 環境脈絡（半徑 ${osmLastSummary.radius} km · 來源 OpenStreetMap）\n${lines.join('\n')}`;
+        osmContext = en
+          ? `\n\n🌍 OSM ENVIRONMENTAL CONTEXT (radius ${osmLastSummary.radius} km · source OpenStreetMap)\n${lines.join('\n')}`
+          : `\n\n🌍 OSM 環境脈絡（半徑 ${osmLastSummary.radius} km · 來源 OpenStreetMap）\n${lines.join('\n')}`;
       }
     }
 
-    if (LANG === 'en') {
-      return `Conduct an ecological site coexistence design analysis following the "Qi-Coexistence" workflow.
+    // 剖面模板只送出被選中的 ≤3 個（代碼與 renderCrossSections 接受的完全一致）
+    const picked = pickXsecTemplates(state.conditions);
+    const metaParts = [coordStr, state.locationName, today].filter(Boolean);
+    const spec = buildReportSpec({
+      today,
+      hasInat: !!inatContext,
+      metaZh: metaParts.join('・'),
+      metaEn: metaParts.join(' · '),
+      xsecZh: en ? '' : XSEC.promptLines(picked, 'zh'),
+      xsecEn: en ? XSEC.promptLines(picked, 'en') : '',
+      exZh: en ? '' : XSEC.example(picked, 'zh'),
+      exEn: en ? XSEC.example(picked, 'en') : '',
+    });
+    const structure = spec.map(s => en ? s.en : s.zh).join('\n\n');
+
+    if (en) {
+      return `Conduct an ecological site coexistence design analysis for the site below, following the "Qi-Coexistence" workflow, and write a concise, table-first design report.
 
 📍 SITE LOCATION
 Coordinates: ${loc}${name}
+Today's date: ${today}
 
 🎯 FOCAL SPECIES
 ${species}
@@ -2287,79 +2416,18 @@ ${species}
 🌳 SITE CONDITIONS
 ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
 
-📋 REQUIRED OUTPUT
+📋 REPORT STRUCTURE (in this order; use the section numbers and names given)
 
-⓪ At the very beginning of the report (after the main title, before the site interpretation), include a site location map:
+${structure}
 
-<figure style="margin: 24px auto 32px; text-align: center; max-width: 800px;">
-  <img src="https://staticmap.openstreetmap.de/staticmap.php?center={LAT},{LON}&zoom=15&size=800x500&maptype=mapnik"
-       alt="Site location map"
-       style="max-width: 100%; height: auto; border: 1px solid #d4cdb8; border-radius: 4px; display: block; margin: 0 auto;" />
-  <figcaption style="font-family: 'Noto Serif TC', serif; font-size: 12px; color: #6b7d5f; font-style: italic; margin-top: 8px; line-height: 1.5;">
-    Site location: {LAT}°, {LON}° · {place name if available} · Base map: OpenStreetMap © contributors
-  </figcaption>
-</figure>
-
-Replace {LAT} and {LON} with the actual coordinates. This block is for location reference only — do NOT overlay zones, SVG shapes, labels or design diagrams on it.
-
-1. Look up the representative species, elevation, forest type, conservation designations, watershed and nearby settlements for these coordinates.
-2. Provide a "Site Interpretation" summary including design-context warnings (conservation-sensitive areas, indigenous traditional territories, human disturbance risks).
-3. Build a complete "food / shelter / breeding" ecological profile for each focal species, with APA 7 in-text citations.
-4. Interspecific conflict, competition and cooperation analysis — both parts required:
-   (a) **Overall interaction relationships**: food-web overlap, territoriality, breeding-season synchrony, with design implications.
-   (b) **Resource Partitioning Matrix**: an HTML table covering EVERY environmental resource listed in "Site Conditions" (list them individually). For each resource, rate each focal species' requirement level (**High / Medium / Low / None**), and in the final columns state the interaction type under that resource (**strong competition / partial competition / cooperation / avoidance / unrelated**) and the design implication. Suggested structure:
-       | Resource | [Species 1] | [Species 2] | [Species 3] … | Interaction | Design implication |
-       Name specific pairings in the interaction column (e.g. "A↔B strong competition; A↔C unrelated"). Design implications should be concrete (temporal/spatial separation, vertical stratification, buffer design, independent habitat structures).
-   (c) Follow the table with 1–2 paragraphs synthesising which resources are design priorities (high competition, need zoning) and which can be shared.
-5. Spatial resource allocation (zoning by species requirements) — present zone data in an HTML <table>. **Do NOT draw any SVG, site plan, or zoning diagram.** Describe spatial configuration principles in prose (e.g. "an ecological spine along the ravine–stream axis, radiating outward through vegetation strata").
-6. Five verified real-world case references with working URLs.
-7. Eight to ten ecological design principles.
-8. Ten construction material recommendations.
-9. A complete APA 7 reference list, grouped into government agencies / academic databases / field guides & books / international databases.
-10. A dual-verification statement: sources gathered during research and re-checked before finalisation for URL validity and citation accuracy; record the verification date at the end of the report.
-
-FORMAT AND COLOUR (strict — violating any rule below makes the printed PDF unusable):
-
-This report is an academic field notebook printed on off-white paper. The entire page is paper-coloured; only TEXT and THIN LINES carry colour.
-
-[Permitted background colours — whitelist, no exceptions]
-The background of any element (body / section / header / div / card / heading row / table / hero / footer) may only be one of:
-- #faf6ea (primary cream paper, default)
-- #fffdf7 (near-white for cards)
-- #ffffff (pure white, table cells)
-- #ede4cc (light beige, table header rows only — this is the darkest permitted background)
-
-[Text colours]
-- Body: #2e2a22 (deep brown-black — this colour is for TEXT ONLY, never a background)
-- Headings h1–h4: #456238 (moss green)
-- Inline emphasis: #b8694a (clay)
-
-[Lines / borders] #d4cdb8 (light tan) or #456238 (moss), 1–6px
-
-[Strictly forbidden]
-✗ Any section, heading row, chapter divider, hero or block using black / dark grey / dark brown / brick red / dark green as a BACKGROUND. Dark backgrounds are never permitted.
-✗ Reversed text (light text on dark background) — always dark text on light background.
-✗ ASCII art or text-drawn boxes (||, ─, ┌┐└┘, ═). CJK characters are full-width while Latin is half-width, so such alignment always breaks.
-✗ Site plans, zoning diagrams, SVG plan drawings, conceptual layout graphics.
-✗ Laying out numbered items (design principles, materials) with display:grid or display:flex that puts the number, bold title and description in side-by-side columns — the text gets squeezed into a one-character-wide column. Use plain block layout: one <div> or <li> per item, the number circle as display:inline-block before the title, description flowing below.
-✗ clay #b8694a in any block larger than 40×40px. clay is limited to: section number circles (≤36px diameter), inline bold emphasis, and ≤6px borders.
-✗ Gradient backgrounds, dark banners, dark covers.
-✗ Any CSS writing background as #000, black, #1a1a1a, #222 or similar.
-
-[Self-check before finishing] Review every background / background-color declaration; if it is not one of the four permitted values, change it to #faf6ea. Inline <svg> is permitted only for decorative elements (species silhouette icons, footer botanical ornaments, section dividers).
-
-[Typography] Display: Fraunces; body: Noto Serif TC or a serif fallback; tables and metadata: Noto Sans TC or a sans fallback.
-
-Write the entire report in English. Output a complete standalone HTML document.
-
-SOURCE PRIORITY: government and academic institutions (national forestry/wildlife agencies, GBIF, IUCN Red List) → peer-reviewed journals → NGO and community surveys → iNaturalist observation records → OpenStreetMap environmental context → media and blogs (grey literature, for case examples only).`;
+${REPORT_RULES_EN}`;
     }
 
-
-    return `請依「棲共生」工作流進行生態基地共存設計分析。
+    return `請依「棲共生」工作流，為下列基地進行生態共存設計分析，並撰寫一份精簡、以表格為主的設計報告。
 
 📍 基地位置
 座標: ${loc}${name}
+今日日期: ${today}
 
 🎯 焦點物種
 ${species}
@@ -2367,81 +2435,11 @@ ${species}
 🌳 基地條件
 ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
 
-📋 工作流要求：
+📋 報告結構（依序輸出；各節標題的編號與名稱照列）
 
-⓪ 報告開頭（在主標題之後、「基地判讀」之前）**必須加入一張基地位置地圖**：
+${structure}
 
-<figure style="margin: 24px auto 32px; text-align: center; max-width: 800px;">
-  <img src="https://staticmap.openstreetmap.de/staticmap.php?center={LAT},{LON}&zoom=15&size=800x500&maptype=mapnik"
-       alt="基地位置地圖"
-       style="max-width: 100%; height: auto; border: 1px solid #d4cdb8; border-radius: 4px; display: block; margin: 0 auto;" />
-  <figcaption style="font-family: 'Noto Serif TC', serif; font-size: 12px; color: #6b7d5f; font-style: italic; margin-top: 8px; line-height: 1.5;">
-    基地位置：{LAT}°, {LON}° · {地點名稱（若有）} · 底圖：OpenStreetMap © 貢獻者
-  </figcaption>
-</figure>
-
-將 {LAT} 與 {LON} 替換為基地實際座標。此區塊**僅作位置展示，禁止疊加任何分區色塊、SVG 圖形、文字標籤、或設計示意**——保持純淨的 OSM 地圖即可。
-
-1. 依座標自動查詢該位置的代表性物種、海拔、林相、保育公告狀態、流域、附近聚落
-2. 提供「基地判讀」摘要，含設計脈絡警示（如保育敏感區、原住民傳統領域、人為干擾風險）
-3. 每個焦點物種建立完整「食 / 住 / 育」生態檔，含 APA 7 行內引用
-4. 物種間衝突、競爭、合作互動分析（兩部分必須齊備）：
-   (a) **整體互動關係**：物種間食物網重疊、領域、繁殖期同步等一般性分析，含設計啟示。
-   (b) **資源利用矩陣（Resource Partitioning Matrix）**：用 HTML 表格針對「基地條件」中列出的**每一項環境資源**（請逐項列出，例如：「河川」「次生林」「岩壁」「林道」「人工設施」等使用者輸入的具體條件），分析各焦點物種對該資源的需求程度（**高 / 中 / 低 / 無**），並在最後一欄標註該資源下的物種互動類型（**強烈競爭 / 部分競爭 / 合作 / 迴避 / 無關**）。表格建議結構：
-       | 環境資源 | [物種 1] | [物種 2] | [物種 3] ... | 物種互動 | 設計啟示 |
-       每個物種欄填入需求度標記；「物種互動」欄具體寫明「A↔B 強烈競爭、A↔C 無關」這類配對；「設計啟示」欄寫具體做法（時空分離、垂直分層、緩衝設計、獨立棲息結構等）。
-   (c) 表格後用 1–2 段文字綜整：哪些資源是設計重點（高度競爭、需分區處理）、哪些可共享（合作或無關）、有哪些設計策略可緩解競爭。
-5. 空間資源分配（依物種需求分區）—— 用 HTML <table> 呈現分區資料；**禁止繪製任何 SVG / 平面示意圖 / 分區圖**；空間配置原則純文字敘述即可（例如：「以生態池為核心、向外輻射林相梯度，由水域→挺水帶→灌叢→喬木」）
-6. 5 個經查證的真實案例參考（含可開啟之 URL）
-7. 8–10 條生態設計原則
-8. 10 項施工材料建議
-9. 完整 APA 7 參考文獻表，分為政府機構 / 學術資料庫 / 書籍圖鑑 / 國際資料庫四類
-10. 雙重驗證聲明：研究時收集 + 定稿前重檢 URL 有效性與引用內容一致性，於報告末端記錄驗證日期
-
-══════ 配色規則（最高優先，違反任何一條即視為失敗）══════
-
-本報告是「印在米白色道林紙上的學術田野筆記」。整頁從頭到尾都是紙的顏色，只有「文字」和「細線」帶顏色。
-
-【唯一允許的背景色——白名單，沒有例外】
-任何元素（body / section / header / div / 卡片 / 標題列 / 表格 / 過場區 / hero 區 / footer）的背景，只能是下列四者之一：
-- #faf6ea（主 cream 紙色，預設）
-- #fffdf7（卡片用的近白）
-- #ffffff（純白，表格儲存格）
-- #ede4cc（淺米色，僅用於表格標題列 thead，這已是允許的「最深」背景）
-
-【文字色】
-- 內文：#2e2a22（深褐近黑——這個顏色只能給「文字」，永遠不可當背景）
-- 標題 h1–h4：#456238（moss 綠）
-- 行內強調字：#b8694a（clay）
-
-【線條／邊框】#d4cdb8（淺褐）或 #456238（moss），寬度 1–6px
-
-【絕對禁止——這些是上一版報告列印變醜的原因】
-✗ 任何 section、標題列、章節過場、hero 區、區塊使用「黑色 / 深灰 / 深褐 / 磚紅 / 深綠」當背景。深色背景一律不准，連章節之間的過場區也不行。
-✗ 反白文字（淺色字疊在深色底）——文字永遠「深字、淺底」，絕不可顛倒。
-✗ clay #b8694a 出現在任何面積大於 40×40px 的色塊。clay 只能是：① section 編號小圓圈（直徑 ≤ 36px）② 行內粗體強調字 ③ ≤ 6px 細邊框。除此之外 clay 不可出現。
-✗ 漸層背景、陰影色塊、深色 banner、深色 cover。
-✗ 任何 CSS 寫 background 為 #000、black、#1a1a1a、#222、rgb(深色) 等。
-
-【自我檢查（生成後必做）】
-完成 HTML 後，逐一檢視每個 background / background-color 宣告：若不是上述四個允許值之一，改成 #faf6ea。把整份報告想成印在同一張米白色紙上——任何一塊不是紙色的地方都是錯的。
-
-【字型】顯示字 Fraunces（標題、編號）；中文內文 Noto Serif TC；表格與 metadata Noto Sans TC。
-
-【列印友善】大面積深色 = 耗墨、視覺壓迫、雙面列印穿透。整頁淺色才是正確的學術報告樣貌。
-
-結構與細節可參照前期分析（如 eco_analysis_demo_3.html），但配色一律以上述白名單為準。
-══════════════════════════════════════════
-
-⚠️ 排版禁令（避免 PDF 列印錯位與視覺雜訊）：
-- 嚴禁使用 ASCII art / 文字框線繪圖（如 ||、─、┌┐└┘、═ 等字元堆疊成方框、流程圖、表格）。中文字為全形、Latin/數字為半形，混排時對齊必崩，列印 PDF 尤其慘烈。
-- **嚴禁繪製基地平面示意圖、分區示意圖、SVG 平面圖、概念配置圖**——這類抽象幾何疊圖（不論有無底圖）無地理意義，反而讓報告失焦。空間配置一律用「表格 + 文字敘述」呈現。
-- 「分區資料」用 <table> + <th> + <td>，加 CSS border 與 padding。
-- 「流程圖」「結構圖」如必要可用 CSS Grid（<div style="display:grid;grid-template-columns:...">）排列文字卡片，但不要畫幾何圖形。
-- **編號條列（設計原則、施工材料等）一律用一般區塊排版**：每條用一個 <div> 或 <li>，編號圓圈設為 display:inline-block 放在標題文字前面，說明文字直接接在後面換行即可。**不要**用 display:grid / display:flex 把「編號」「粗體標題」「說明文字」拆成並排欄位——窄螢幕或欄寬計算錯誤時文字會被擠成一字一行。
-- 內嵌 <svg> 僅在以下情境可用：物種圖示符號（如鳥類剪影 icon）、頁尾植物紋飾、章節分隔線等純裝飾元素。
-
-來源優先序：政府/學術機構（林業署、TaiEOL、TBN）→ 學術期刊 → NGO/社區調查 → iNaturalist 在地觀察記錄 → OpenStreetMap 環境脈絡 → 媒體部落格（僅作灰文獻案例參考）。`;
+${REPORT_RULES_ZH}`;
   }
 
   function updatePrompt() {
@@ -2484,7 +2482,10 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       navigator.clipboard.writeText(text).catch(() => {});
     }
     window.open(url, '_blank');
-    toast(t('🔗 已開啟 Claude（提示詞已同步複製到剪貼簿備用）'));
+    // 剖面圖、地圖與版面只在本工具內產生：提醒使用者把結果貼回來
+    toast(LANG === 'en'
+      ? '🔗 Claude opened (the prompt is also on your clipboard). When it finishes, paste the <article> back with "Paste manual result" to get the cross-sections, map and layout.'
+      : '🔗 已開啟 Claude（提示詞已同步複製到剪貼簿備用）。完成後請用「貼上手動結果」貼回 <article>，即可產生剖面圖、地圖與版面。', 7000);
   }
 
   // ========== History ==========
@@ -2669,6 +2670,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
   // v2：換 key 讓舊的模型偏好失效，所有人重設為 Sonnet 4.6 預設
   const MODEL_STORAGE = 'qi-coexistence-model-v2';
   let analysisResult = null;
+  let analysisNonce = '';   // 本次報告的 CSP nonce（見 withLayoutGuard）
   let analysisMeta = null;
   let loadingTimerInterval = null;
 
@@ -2718,19 +2720,297 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     });
   }
 
-  // 從 Claude 回應中萃取 HTML（處理 code fence、純 HTML 等格式）
+  // 從 Claude 回應中萃取報告。
+  // 新格式：模型只輸出 <article>…</article>，由 wrapReport() 包成完整文件；
+  // 舊格式（歷史紀錄、舊的手動貼上）：完整 HTML 文件，照舊處理。
+  // 回傳 { html, isArticle, complete }；找不到報告內容時回傳 null，絕不把說明文字當成報告。
+  // 找出報告的 <article>：略過說明文字中提到的「<article>」字樣（其後不是標籤），
+  // 結尾取最後一個緊接在結尾標籤或註解之後的 </article>
+  function findArticle(s) {
+    const opens = [...s.matchAll(/<article\b[^>]*>/gi)];
+    if (!opens.length) return null;
+    const next = m => s.slice(m.index + m[0].length).replace(/^\s+/, '');
+    const open = opens.find(m => /^<h1\b/i.test(next(m))) || opens.find(m => /^<(?:[a-z]|!--)/i.test(next(m))) || opens[0];
+    const rest = s.slice(open.index);
+    const ends = [...rest.matchAll(/<\/article\s*>/gi)];
+    if (!ends.length) {
+      // 沒有 </article>：輸出被截斷，保留已收到的部分
+      return { start: open.index, html: rest.replace(/\s*```\s*$/, '').trim(), complete: false };
+    }
+    let end = ends[ends.length - 1];
+    for (let i = ends.length - 1; i >= 0; i--) {
+      if (/(?:<\/[a-z][a-z0-9]*\s*>|-->|<br\s*\/?>)\s*$/i.test(rest.slice(0, ends[i].index))) { end = ends[i]; break; }
+    }
+    return { start: open.index, html: rest.slice(0, end.index + end[0].length), complete: true };
+  }
+
   function extractHTML(text) {
-    // ```html ... ``` 區塊
-    const fenceMatch = text.match(/```(?:html|HTML)?\s*\n([\s\S]*?)```/);
-    if (fenceMatch && fenceMatch[1].includes('<')) return fenceMatch[1].trim();
-    // <!DOCTYPE html> ... </html>
-    const docMatch = text.match(/(<!DOCTYPE[\s\S]*?<\/html>)/i);
-    if (docMatch) return docMatch[1];
-    // <html> ... </html>
-    const htmlMatch = text.match(/(<html[\s\S]*?<\/html>)/i);
-    if (htmlMatch) return htmlMatch[1];
-    // 退而求其次：整段
-    return text.trim();
+    const s = String(text || '').replace(/^﻿/, '');
+    if (!s.trim()) return null;
+    const art = findArticle(s);
+    const dStart = s.search(/<!DOCTYPE\s+html|<html[\s>]/i);
+    const asArticle = () => ({ html: art.html, isArticle: true, complete: art.complete });
+    // 1) <article>…</article>（前後可能夾著說明文字或 code fence）
+    if (art && (dStart < 0 || art.start < dStart)) return asArticle();
+    // 2) 完整 HTML 文件（<!DOCTYPE html> … </html> 或 <html> … </html>）
+    const docMatch = s.match(/(<!DOCTYPE[\s\S]*?<\/html>)/i) || s.match(/(<html[\s\S]*?<\/html>)/i);
+    if (dStart >= 0) {
+      const doc = docMatch ? docMatch[1] : s.slice(dStart);
+      // 新格式的 <article> 被包在完整文件裡（例如 claude.ai 的 HTML artifact，或說明文字提到 <html>）：
+      // 取出 article，與 API 路徑一樣套固定樣式表與地圖。本工具自己產生的報告（REPORT_MARK）與舊格式照舊。
+      const newFormat = doc.indexOf(REPORT_MARK) < 0 && /<!--\s*HEALS:MAP\s*-->|heals-xsec/i.test(doc);
+      if (art && (newFormat || (doc.indexOf(REPORT_MARK) < 0 && !/<style\b/i.test(doc)))) return asArticle();
+      // 新格式內容（有地圖標記或剖面資料）卻寫成沒有 <article> 的完整文件：取 <body> 內容當 article
+      if (!art && newFormat) {
+        const b = doc.match(/<body\b[^>]*>([\s\S]*?)(?:<\/body\s*>|$)/i);
+        if (b && /<(?:h1|h2|table)\b/i.test(b[1])) {
+          return { html: '<article>\n' + b[1].replace(/\s*```\s*$/, '').trim() + '\n</article>', isArticle: true, complete: !!docMatch && /<\/body\s*>/i.test(doc) };
+        }
+      }
+      if (docMatch) return { html: docMatch[1], isArticle: false, complete: true };
+      return { html: s.slice(dStart).replace(/\s*```\s*$/, '').trim(), isArticle: false, complete: false };
+    }
+    // 3) 漏了 <article> 包裝、但有標題或表格的報告片段 → 當作 article 內容
+    const fence = s.match(/```(?:html|HTML)?\s*\n([\s\S]*?)(?:```|$)/);
+    const body = fence ? fence[1] : s;
+    const fStart = body.search(/<(?:h1|h2|table)[\s>]/i);
+    if (fStart >= 0) {
+      const frag = body.slice(fStart).trim();
+      return { html: '<article>\n' + frag + '\n</article>', isArticle: true, complete: /class\s*=\s*["']?note\b/i.test(frag) };
+    }
+    return null;
+  }
+
+  // ========== 新格式報告的包裝（固定樣式表 + 地圖 + 截斷標記）==========
+  const REPORT_MARK = 'heals-report-v2';
+  const INCOMPLETE_MARK = '<meta name="heals-incomplete" content="1">';
+  const REPORT_FONTS = 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Noto+Serif+TC:wght@400;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap';
+  // 列印友善的唯一樣式表：背景只用 #faf6ea／#fffdf7／#ffffff／#ede4cc（表頭），
+  // 內文 #2e2a22、標題 moss #456238、強調 clay #b8694a、線條 #d4cdb8／#456238。
+  const REPORT_CSS = `<style id="heals-report-style">
+:root{color-scheme:light}
+html{background:#faf6ea}
+body.heals-doc{margin:0;background:#faf6ea;color:#2e2a22;font-family:'Noto Serif TC','Fraunces',Georgia,serif;font-size:15px;line-height:1.75;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+.heals-doc article{display:block;max-width:880px;margin:0 auto;padding:30px 24px 44px;box-sizing:border-box}
+.heals-doc h1,.heals-doc h2,.heals-doc h3{color:#456238;font-family:'Fraunces','Noto Serif TC',serif;font-weight:600;line-height:1.35;break-after:avoid;page-break-after:avoid}
+.heals-doc h1{font-size:26px;margin:0 0 6px;padding-bottom:10px;border-bottom:2px solid #456238}
+.heals-doc h2{font-size:19px;margin:32px 0 10px;padding-bottom:4px;border-bottom:1px solid #d4cdb8}
+.heals-doc h3{font-size:16px;margin:20px 0 8px}
+.heals-doc p{margin:0 0 10px}
+.heals-doc strong{color:#b8694a;font-weight:600}
+.heals-doc a{color:#456238;text-decoration:underline;text-decoration-color:#d4cdb8;text-underline-offset:2px;overflow-wrap:anywhere}
+.heals-doc ul{margin:0 0 12px;padding-left:1.3em}
+.heals-doc li{margin:0 0 4px}
+.heals-doc .meta{font-family:'Noto Sans TC',sans-serif;font-size:12.5px;color:#456238;margin:0 0 14px;letter-spacing:.02em}
+.heals-doc ul.summary{list-style:none;margin:0 0 18px;padding:12px 16px;background:#fffdf7;border:1px solid #d4cdb8;border-left:3px solid #456238}
+.heals-doc ul.summary li{position:relative;padding-left:1.1em}
+.heals-doc ul.summary li::before{content:'▸';position:absolute;left:0;color:#b8694a}
+.heals-doc ul.warn{list-style:none;margin:10px 0 16px;padding:10px 14px;background:#fffdf7;border:1px solid #d4cdb8;border-left:3px solid #b8694a;font-size:14px}
+.heals-doc ul.warn li{position:relative;padding-left:1.2em}
+.heals-doc ul.warn li::before{content:'!';position:absolute;left:.15em;color:#b8694a;font-weight:700;font-family:'Noto Sans TC',sans-serif}
+.heals-doc table{width:100%;border-collapse:collapse;table-layout:auto;margin:10px 0 16px;background:#ffffff;font-family:'Noto Sans TC',sans-serif;font-size:12.5px;line-height:1.6}
+.heals-doc table.matrix tbody td:first-child,.heals-doc table.matrix thead th:first-child{white-space:nowrap}
+.heals-doc th,.heals-doc td{border:1px solid #d4cdb8;padding:6px 8px;vertical-align:top;text-align:left;overflow-wrap:anywhere;color:#2e2a22;background:#ffffff}
+.heals-doc thead th{background:#ede4cc;color:#456238;font-weight:700}
+.heals-doc tbody th{background:#fffdf7;color:#456238;font-weight:700}
+.heals-doc ul.refs{list-style:none;padding:0;font-size:13px;line-height:1.65}
+.heals-doc ul.refs li{padding-left:2em;text-indent:-2em;margin-bottom:6px;overflow-wrap:anywhere}
+.heals-doc .note{margin-top:26px;padding-top:10px;border-top:1px solid #d4cdb8;font-family:'Noto Sans TC',sans-serif;font-size:12px;color:#456238}
+.heals-doc figure.heals-map{margin:4px 0 22px;text-align:center}
+.heals-doc figure.heals-map img{display:block;box-sizing:border-box;max-width:100%;height:auto;margin:0 auto;border:1px solid #d4cdb8;border-radius:3px;background:#fffdf7}
+.heals-doc figure.heals-map figcaption{font-family:'Noto Sans TC',sans-serif;font-size:12px;color:#456238;font-style:italic;margin-top:6px;line-height:1.5}
+.heals-doc .heals-swipe{display:none;margin:8px 0 -6px;font-family:'Noto Sans TC',sans-serif;font-size:11.5px;color:#456238;text-align:right}
+@media (max-width:600px){
+ body.heals-doc{font-size:14.5px}
+ .heals-doc article{padding:18px 12px 32px}
+ .heals-doc h1{font-size:22px}
+ .heals-doc h2{font-size:17.5px}
+ .heals-doc table:not(.hx-key){display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;table-layout:auto;font-size:12px}
+ .heals-doc table:not(.hx-key) th,.heals-doc table:not(.hx-key) td{min-width:6em;overflow-wrap:break-word}
+ .heals-doc .heals-swipe{display:block}
+}
+@page{size:A4 portrait;margin:14mm 12mm}
+@media print{
+ html,body.heals-doc{background:#ffffff;font-size:10.5pt;line-height:1.6}
+ .heals-doc article{max-width:none;padding:0}
+ .heals-doc h1{font-size:18pt}
+ .heals-doc h2{font-size:13.5pt;margin-top:18pt}
+ .heals-doc h3{font-size:11.5pt}
+ .heals-doc article,.heals-doc table{break-inside:auto;page-break-inside:auto}
+ .heals-doc table{font-size:8.5pt}
+ .heals-doc thead{display:table-header-group}
+ .heals-doc tr,.heals-doc figure,.heals-doc ul.summary,.heals-doc ul.warn{break-inside:avoid;page-break-inside:avoid}
+ .heals-doc a{color:inherit;text-decoration:none}
+ .heals-doc .heals-swipe{display:none}
+}
+</style>`;
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // 解析前的修補（字串層級，只處理「會吞掉後文」的情況）：
+  // 1) 剖面 JSON 字串裡寫了 script 結尾標籤：區塊會在那裡提前結束，其餘 JSON 變成可見文字。
+  //    只有在「合併後是合法 JSON」時，才把中間那個結尾標籤改成 JSON 合法的 <\/script>。
+  // 2) <script>／<style> 等原始文字元素漏了結尾標籤：瀏覽器會把之後整份報告當成它的內容。
+  //    報告完整時補在下一個區塊標籤（h1–h6、p、table、ul…）之前；被截斷時才補在最後。
+  function repairRawText(a) {
+    const OPEN = /<script\b[^>]*\bheals-xsec\b[^>]*>/gi;
+    const ok = t => { try { JSON.parse(t.replace(/,\s*([}\]])/g, '$1')); return true; } catch (_) { return false; } };
+    let m;
+    while ((m = OPEN.exec(a))) {
+      const from = m.index + m[0].length, close = /<\/script\s*>/gi, ends = [];
+      close.lastIndex = from;
+      for (let c; ends.length < 6 && (c = close.exec(a));) ends.push(c);
+      if (ends.length < 2 || ok(a.slice(from, ends[0].index))) continue;
+      for (let k = 1; k < ends.length; k++) { // 試著把前 k 個結尾標籤視為字串內容
+        const joined = a.slice(from, ends[k].index).replace(/<\/script\s*>/gi, '<\\/script>');
+        if (!ok(joined)) continue;
+        a = a.slice(0, from) + joined + a.slice(ends[k].index);
+        break;
+      }
+      OPEN.lastIndex = from;
+    }
+    a = a.replace(/<plaintext\b[^>]*>/gi, '').replace(/<!--(?![\s\S]*?-->)/g, '&lt;!--');
+    const RAW = /<(script|style|textarea|title|xmp|iframe|noembed|noframes)\b[^>]*>/gi;
+    const BLOCK = /<(?:h[1-6]|p|table|ul|ol|div|section|figure|blockquote)\b|<\/(?:article|section|div)\s*>/gi;
+    while ((m = RAW.exec(a))) {
+      const from = m.index + m[0].length;
+      const endRe = new RegExp('<\\/' + m[1] + '\\s*>', 'gi');
+      endRe.lastIndex = from;
+      const end = endRe.exec(a);
+      BLOCK.lastIndex = from;
+      const blk = BLOCK.exec(a);
+      if (end && (!blk || end.index < blk.index)) { RAW.lastIndex = end.index + end[0].length; continue; }
+      const at = blk ? blk.index : a.length;
+      a = a.slice(0, at) + `</${m[1]}>` + a.slice(at);
+      RAW.lastIndex = at;
+    }
+    return a;
+  }
+
+  // 清理模型輸出的 <article>：以 DOMParser 解析（惰性，不執行腳本、不載入資源）後走訪節點，
+  // 只保留白名單內的標籤與屬性；危險元素連同內容移除，其他未知標籤只拆掉外殼、保留文字。
+  // 4.2 的剖面 JSON 區塊保留（型別固定為 application/json），交給 renderCrossSections() 繪製。
+  const SAN_DROP = new Set(['SCRIPT', 'STYLE', 'SVG', 'MATH', 'IFRAME', 'FRAME', 'FRAMESET', 'OBJECT', 'EMBED', 'APPLET', 'LINK', 'META', 'BASE', 'FORM', 'INPUT', 'BUTTON', 'TEXTAREA', 'SELECT', 'OPTION', 'OPTGROUP', 'DATALIST', 'TEMPLATE', 'NOSCRIPT', 'IMG', 'IMAGE', 'PICTURE', 'SOURCE', 'VIDEO', 'AUDIO', 'TRACK', 'CANVAS', 'MAP', 'AREA', 'TITLE', 'HEAD', 'DIALOG', 'PORTAL', 'XMP', 'NOEMBED', 'NOFRAMES']);
+  const SAN_KEEP = new Set(['ARTICLE', 'SECTION', 'DIV', 'SPAN', 'P', 'BR', 'HR', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'LI', 'DL', 'DT', 'DD', 'TABLE', 'CAPTION', 'COLGROUP', 'COL', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD', 'EM', 'STRONG', 'B', 'I', 'U', 'S', 'SMALL', 'SUP', 'SUB', 'MARK', 'CODE', 'PRE', 'BLOCKQUOTE', 'Q', 'CITE', 'ABBR', 'A', 'TIME', 'FIGURE', 'FIGCAPTION']);
+  const SAN_ATTR = new Set(['class', 'id', 'href', 'title', 'colspan', 'rowspan', 'scope', 'headers', 'lang', 'dir', 'start', 'datetime', 'abbr', 'target']);
+  function sanitizeArticle(a) {
+    const doc = new DOMParser().parseFromString('<!DOCTYPE html><html><head></head><body>' + repairRawText(String(a)) + '</body></html>', 'text/html');
+    const walk = parent => {
+      for (const node of [...parent.childNodes]) {
+        if (node.nodeType === 8) { // 註解：只留地圖標記
+          if (!/^\s*HEALS:MAP\s*$/i.test(node.data)) node.remove();
+          continue;
+        }
+        if (node.nodeType !== 1) { if (node.nodeType !== 3) node.remove(); continue; }
+        const tag = node.nodeName.toUpperCase();
+        if (tag === 'SCRIPT' && /(?:^|\s)heals-xsec(?:\s|$)/.test(node.getAttribute('class') || '')) {
+          const s = doc.createElement('script');
+          s.setAttribute('type', 'application/json');
+          s.setAttribute('class', 'heals-xsec');
+          // JSON 內不得有 <（提示詞已規定）；一律轉成 \u003c 跳脫，序列化後不可能提前結束或改變 script 元素的解析
+          s.textContent = node.textContent.replace(/</g, '\\u003c');
+          node.replaceWith(s);
+          continue;
+        }
+        if (SAN_DROP.has(tag) || node.namespaceURI !== 'http://www.w3.org/1999/xhtml') { node.remove(); continue; }
+        walk(node);
+        if (!SAN_KEEP.has(tag)) { node.replaceWith(...node.childNodes); continue; }
+        for (const at of [...node.attributes]) {
+          const name = at.name.toLowerCase();
+          let keep = SAN_ATTR.has(name);
+          if (keep && name === 'href') keep = /^(?:https?:|mailto:|#)/i.test(at.value.replace(/[\u0000-\u0020\u007f-\u009f]+/g, ''));
+          if (keep && name === 'target') keep = at.value === '_blank';
+          if (!keep) { node.removeAttribute(at.name); continue; }
+          // 屬性值不留 < >：舊版瀏覽器（Chrome <138、Firefox <140、Safari）序列化時不跳脫屬性裡的 < >，
+          // 之後以字串處理地圖標記與剖面區塊時，屬性裡的假標記會被當成真的而拆開屬性
+          if (/[<>]/.test(at.value)) {
+            node.setAttribute(at.name, name === 'href'
+              ? at.value.replace(/</g, '%3C').replace(/>/g, '%3E')
+              : at.value.replace(/</g, '\uFF1C').replace(/>/g, '\uFF1E'));
+          }
+        }
+        // 外部連結開新分頁（結果框沒有 allow-same-origin，在框內開外站常會失敗）
+        if (tag === 'A' && /^https?:/i.test(node.getAttribute('href') || '')) node.setAttribute('target', '_blank');
+        if (node.hasAttribute('target')) node.setAttribute('rel', 'noopener noreferrer');
+      }
+    };
+    walk(doc.body);
+    return doc.body.innerHTML;
+  }
+
+  // 基地位置圖：優先用本機截取的 Leaflet 地圖，否則用 staticmap（載入失敗就只留圖說）
+  function buildMapFigure(site, mapDataUrl, en) {
+    if (!site || site.lat == null || site.lon == null || isNaN(+site.lat) || isNaN(+site.lon)) return '';
+    const lat = +site.lat, lon = +site.lon, la = lat.toFixed(5), lo = lon.toFixed(5);
+    const latS = `${Math.abs(lat).toFixed(5)}°${lat >= 0 ? 'N' : 'S'}`;
+    const lonS = `${Math.abs(lon).toFixed(5)}°${lon >= 0 ? 'E' : 'W'}`;
+    const place = site.name ? ' · ' + escapeHtml(site.name) : '';
+    const osmUrl = `https://www.openstreetmap.org/?mlat=${la}&amp;mlon=${lo}#map=15/${la}/${lo}`;
+    const alt = en ? 'Site location map' : '基地位置地圖';
+    const img = mapDataUrl
+      ? `<img src="${mapDataUrl}" alt="${alt}">`
+      : `<img src="https://staticmap.openstreetmap.de/staticmap.php?center=${la},${lo}&amp;zoom=15&amp;size=800x500&amp;maptype=mapnik&amp;markers=${la},${lo},red-pushpin" alt="${alt}">`; // 載入失敗時由版面防護腳本移除
+    const cap = en
+      ? `Site location: ${latS}, ${lonS}${place} · Base map: © <a href="${osmUrl}" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors`
+      : `基地位置：${latS}, ${lonS}${place} · 底圖：© <a href="${osmUrl}" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> 貢獻者`;
+    return `\n<figure class="heals-map">${img}<figcaption>${cap}</figcaption></figure>\n`;
+  }
+
+  // 把 <article> 包成可獨立開啟／下載／列印的完整 HTML 文件
+  // opts: { lang, site: {lat, lon, name}, mapDataUrl, incomplete }
+  function wrapReport(article, opts) {
+    opts = opts || {};
+    const en = opts.lang === 'en';
+    let a = String(article || '').trim();
+    if (opts.incomplete) a = a.replace(/<[^>]*$/, '');                       // 去掉被截斷的半個標籤
+    if (!/<\/article\s*>\s*$/i.test(a)) a += '\n</article>';
+    a = sanitizeArticle(a);                                                   // 也會補上漏掉的 script／style 結尾標籤
+
+    // 地圖：<!--HEALS:MAP--> 換成系統地圖；沒有標記時放在重點摘要（或 h1）之後
+    const fig = buildMapFigure(opts.site, opts.mapDataUrl, en);
+    if (/<!--\s*HEALS:MAP\s*-->/i.test(a)) {
+      let first = true;
+      a = a.replace(/<!--\s*HEALS:MAP\s*-->/gi, () => { const r = first ? fig : ''; first = false; return r; });
+    } else if (fig) {
+      const sum = a.match(/<ul\b[^>]*\bclass\s*=\s*["']?[^"'>]*\bsummary\b[^>]*>[\s\S]*?<\/ul\s*>/i);
+      if (sum) a = a.replace(sum[0], () => sum[0] + fig);
+      else if (/<\/h1\s*>/i.test(a)) a = a.replace(/<\/h1\s*>/i, m => m + fig);
+      else a = a.replace(/<article\b[^>]*>/i, m => m + fig);
+    }
+
+    const h1 = a.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i);
+    const title = (h1 ? h1[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim() : '') ||
+      (en ? 'Qi-Coexistence design analysis' : '棲共生 生態共存設計分析');
+    return `<!DOCTYPE html>
+<html lang="${en ? 'en' : 'zh-Hant'}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="${REPORT_MARK}">
+${opts.incomplete ? INCOMPLETE_MARK + '\n' : ''}<title>${title.replace(/</g, '&lt;')}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="${REPORT_FONTS}" rel="stylesheet">
+${REPORT_CSS}
+</head>
+<body class="heals-doc">
+${a}
+</body>
+</html>
+`;
+  }
+
+  // 舊格式（完整文件）被截斷時也加上標記，讓結果區顯示「可能不完整」提示
+  function markIncomplete(html) {
+    if (!html || html.includes(INCOMPLETE_MARK)) return html;
+    if (/<head\b[^>]*>/i.test(html)) return html.replace(/<head\b[^>]*>/i, m => m + INCOMPLETE_MARK);
+    return INCOMPLETE_MARK + html;
+  }
+
+  function isIncompleteReport(html) {
+    return !!html && html.indexOf('name="heals-incomplete"') >= 0;
   }
 
   // 後處理：把任何深色背景強制改成 cream、淺色文字改成深色
@@ -2815,6 +3095,9 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     });
   }
 
+  const WEB_SEARCH_MAX = 8;        // 與 netlify/edge-functions/analyze.js 的 web_search max_uses 一致
+  const PROMPT_MAX_CHARS = 24000;  // 與 analyze.js 的 MAX_PROMPT_CHARS 一致
+
   async function callClaudeAPI() {
     const passcode = getPasscode();
     if (!passcode) {
@@ -2832,14 +3115,24 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       return;
     }
 
-    // 加上「請直接回 HTML」指令，方便解析
+    // 加上回應格式指令：只輸出 <article>，方便解析（版面與地圖由 wrapReport 套用）；
+    // 搜尋次數上限只適用 API 路徑（手動到 Claude.ai 沒有上限，buildPrompt 不提）
     const basePrompt = buildPrompt();
     const fullPrompt = basePrompt +
       (LANG==='en'
-        ? '\n\n⚠️ RESPONSE FORMAT: output the complete HTML document directly (from <!DOCTYPE html> to </html>). Do not wrap it in a markdown code fence and do not add any explanatory text.'
-        : '\n\n⚠️ 回應格式：請直接輸出完整的 HTML 文件（從 <!DOCTYPE html> 開始至 </html> 結束），不要附加 markdown code fence、不要加入任何說明文字。');
+        ? `\n\n⚠️ RESPONSE FORMAT: You have at most ${WEB_SEARCH_MAX} web searches. Prioritise legal/conservation status and focal-species ecology, then cases; one species account can serve all of a species' cells. Finish all searches before writing the report, and do not write any commentary while searching. The first characters you output are <article> and the last are </article>. No markdown code fence.`
+        : `\n\n⚠️ 回應格式：網路搜尋最多 ${WEB_SEARCH_MAX} 次——先查保育／法規身分與焦點物種生態，再查案例；同一物種的各欄可共用一份物種文獻。全部搜尋完成後才開始輸出報告，搜尋期間不要輸出任何說明文字；第一個輸出字元即為 <article>，最後為 </article>；不要加 markdown code fence。`);
+    if (fullPrompt.length > PROMPT_MAX_CHARS) {
+      toast(LANG === 'en'
+        ? `❌ The prompt is too long (${fullPrompt.length.toLocaleString()} characters; limit ${PROMPT_MAX_CHARS.toLocaleString()}). Shorten the special considerations and try again.`
+        : `❌ 提示詞過長（${fullPrompt.length.toLocaleString()} 字元，上限 ${PROMPT_MAX_CHARS.toLocaleString()}），請縮短「特別考量」後再試。`, 6000);
+      return;
+    }
 
     const model = document.getElementById('apiModel').value;
+    // 分析期間使用者可能切換語言或移動地圖：先記下本次分析的語言與基地
+    const runLang = LANG;
+    const runSite = { lat: state.lat, lon: state.lon, name: state.locationName };
 
     document.getElementById('analyzeBtn').disabled = true;
     document.getElementById('resultDisplay').style.display = 'none';
@@ -2914,6 +3207,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       let searchCalls = 0;
       let usage = {};
       let streamError = null;
+      let stopReason = '';   // end_turn / max_tokens / pause_turn…；用來判斷報告是否被截斷
 
       const subtextEl = document.getElementById('loadingProgress');
 
@@ -2941,6 +3235,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
             }
           } else if (ev.type === 'message_delta') {
             if (ev.usage) usage = Object.assign(usage, ev.usage);
+            if (ev.delta && ev.delta.stop_reason) stopReason = ev.delta.stop_reason;
           } else if (ev.type === 'error') {
             streamError = (ev.error && ev.error.message) ? ev.error.message : '串流中發生錯誤';
           }
@@ -2957,24 +3252,43 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       if (streamError) throw new Error(streamError);
       if (!fullText.trim()) throw new Error('API 回應為空');
 
-      let html = extractHTML(fullText);
-
-      // 後處理：把 Claude 寫的 staticmap.openstreetmap.de URL 換成我們本機截的地圖
-      // 確保位置地圖一定能顯示（不受 staticmap 服務當機影響）
-      if (capturedMapDataUrl) {
-        const beforeCount = (html.match(/staticmap\.openstreetmap\.de/g) || []).length;
-        html = html.replace(
-          /(<img[^>]*\ssrc\s*=\s*["'])https:\/\/staticmap\.openstreetmap\.de\/[^"']+(["'])/gi,
-          `$1${capturedMapDataUrl}$2`
-        );
-        const afterCount = (html.match(/staticmap\.openstreetmap\.de/g) || []).length;
-        if (beforeCount > afterCount) {
-          console.info(`Replaced ${beforeCount - afterCount} staticmap URL(s) with captured map.`);
-        }
+      const extracted = extractHTML(fullText);
+      if (!extracted) {
+        // 模型只回了說明文字（或在搜尋階段就結束），不要把它當成報告顯示
+        const head = fullText.trim().replace(/\s+/g, ' ').slice(0, 160);
+        const noReport = new Error(runLang === 'en'
+          ? `No report was found in the response (expected <article>…</article>)${stopReason ? ` [stop_reason: ${stopReason}]` : ''}.\n\nThe response began: "${head}…"\n\nPress "🚀 Start Analysis" to try again.`
+          : `回應中找不到報告內容（應為 <article>…</article>）${stopReason ? `［stop_reason: ${stopReason}］` : ''}。\n\n回應開頭：「${head}…」\n\n請重新按「🚀 開始分析」。`);
+        noReport.healsNoReport = true;
+        throw noReport;
       }
+      // 輸出達 max_tokens、伺服器端搜尋迴圈暫停（pause_turn），或 article 沒有結尾 → 報告可能不完整
+      const truncated = stopReason === 'max_tokens' || stopReason === 'pause_turn' || !extracted.complete;
+      let html = extracted.html;
 
-      // 後處理：強制把深色背景改 cream、淺色文字改深色（防 Claude 自加深色 section）
-      html = neutralizeDarkColors(html);
+      if (extracted.isArticle) {
+        // 新格式：包成完整文件，套固定樣式表並插入地圖
+        html = wrapReport(html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated });
+      } else {
+        // 舊格式（模型仍輸出完整文件）：沿用原本的後處理
+        // 把 Claude 寫的 staticmap.openstreetmap.de URL 換成我們本機截的地圖
+        // 確保位置地圖一定能顯示（不受 staticmap 服務當機影響）
+        if (capturedMapDataUrl) {
+          const beforeCount = (html.match(/staticmap\.openstreetmap\.de/g) || []).length;
+          html = html.replace(
+            /(<img[^>]*\ssrc\s*=\s*["'])https:\/\/staticmap\.openstreetmap\.de\/[^"']+(["'])/gi,
+            `$1${capturedMapDataUrl}$2`
+          );
+          const afterCount = (html.match(/staticmap\.openstreetmap\.de/g) || []).length;
+          if (beforeCount > afterCount) {
+            console.info(`Replaced ${beforeCount - afterCount} staticmap URL(s) with captured map.`);
+          }
+        }
+
+        // 後處理：強制把深色背景改 cream、淺色文字改深色（防 Claude 自加深色 section）
+        html = neutralizeDarkColors(html);
+        if (truncated) html = markIncomplete(html);
+      }
 
       const elapsed = Math.round((Date.now() - startTime) / 1000);
 
@@ -2984,11 +3298,17 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
         timestamp: new Date().toISOString(),
         usage: usage || {},
         searchCalls: searchCalls,
+        stopReason: stopReason,
       };
 
       showResult(html);
+      // 歷史紀錄存「繪製剖面圖之前」的版本（JSON 約 2–4 KB，而非每幅約 25 KB 的 SVG）；重開時會重新繪製
       saveToHistoryWithResult(html);
-      toast(LANG==='en' ? `✅ Analysis complete (${elapsed}s)` : `✅ 分析完成（${elapsed} 秒）`);
+      if (truncated) {
+        toast(LANG==='en' ? `⚠️ Analysis finished (${elapsed}s) — the report may be incomplete` : `⚠️ 分析結束（${elapsed} 秒）——報告可能不完整`);
+      } else {
+        toast(LANG==='en' ? `✅ Analysis complete (${elapsed}s)` : `✅ 分析完成（${elapsed} 秒）`);
+      }
     } catch (e) {
       const rawMsg = e.message || String(e);
       const elapsedSec = Math.round((Date.now() - startTime) / 1000);
@@ -2996,7 +3316,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       // Safari 的 "Load failed" 與 Chrome 的 "Failed to fetch" 都是連線中斷的通用訊息，
       // 本身不說明原因。這裡依「跑了多久、串流是否已開始、分頁是否曾被切到背景」
       // 推斷最可能的原因並給出具體處理方式。
-      const isNetworkDrop = /Load failed|Failed to fetch|NetworkError|network connection was lost|The Internet connection appears to be offline|terminated|aborted/i.test(rawMsg);
+      const isNetworkDrop = !e.healsNoReport && /Load failed|Failed to fetch|NetworkError|network connection was lost|The Internet connection appears to be offline|terminated|aborted/i.test(rawMsg);
 
       let finalMsg;
       if (isNetworkDrop) {
@@ -3135,8 +3455,22 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
   // 文字被擠進極窄的欄位，變成一字一行（直排）。載入後偵測這種情況，
   // 把出問題的容器改回一般區塊排版。注入到報告本身，下載 / 列印 / 新分頁也一併生效。
   const LAYOUT_GUARD_MARK = 'data-heals-layout-guard';
-  const LAYOUT_GUARD = `<scr` + `ipt ${LAYOUT_GUARD_MARK}>
+  const LAYOUT_GUARD_JS = `
 (function () {
+  // 基地位置圖（staticmap 後備）載入失敗就移除圖片、只留圖說（CSP 不允許 onerror 屬性）
+  document.addEventListener('error', function (e) {
+    var el = e.target;
+    if (el && el.tagName === 'IMG' && el.parentNode && el.closest && el.closest('figure.heals-map')) el.parentNode.removeChild(el);
+  }, true);
+  // 報告內的 #錨點連結：srcdoc 文件的 # 連結會以上層頁面網址解析、把整個結果框導走，改成框內捲動
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('a[href^="#"]') : null;
+    if (!a) return;
+    e.preventDefault();
+    var id = a.getAttribute('href').slice(1), t = null;
+    try { t = id && document.getElementById(decodeURIComponent(id)); } catch (_) { t = document.getElementById(id); }
+    if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
   function textWidth(node) {
     if (node.nodeType === 1) return node.getBoundingClientRect();
     var range = document.createRange();
@@ -3164,26 +3498,958 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
       }
     }
   }
-  function run() { fix(); setTimeout(fix, 600); }
+  // 手機上可橫向捲動的表格：在表格上方加一行「可左右滑動」提示（只在本工具的報告樣式下）
+  function hints() {
+    if (!document.body || (' ' + document.body.className + ' ').indexOf(' heals-doc ') < 0) return;
+    var en = /^en/i.test(document.documentElement.lang || '');
+    var ts = document.querySelectorAll('article table:not(.hx-key)');
+    for (var i = 0; i < ts.length; i++) {
+      var t = ts[i], prev = t.previousElementSibling, has = !!(prev && prev.className === 'heals-swipe');
+      var over = t.scrollWidth > t.clientWidth + 2;
+      if (over && !has) {
+        var d = document.createElement('div');
+        d.className = 'heals-swipe';
+        d.setAttribute('aria-hidden', 'true');
+        d.textContent = en ? 'Scroll the table sideways →' : '表格可左右滑動 →';
+        t.parentNode.insertBefore(d, t);
+      } else if (!over && has) prev.parentNode.removeChild(prev);
+    }
+  }
+  function all() { fix(); hints(); }
+  function run() { all(); setTimeout(all, 600); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
   else run();
-  window.addEventListener('load', fix);
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fix);
+  window.addEventListener('load', all);
+  var rt;
+  window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(hints, 200); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(all);
 })();
-</scr` + `ipt>`;
+`;
+  const layoutGuardTag = nonce => `<scr` + `ipt ${LAYOUT_GUARD_MARK} nonce="${nonce}">${LAYOUT_GUARD_JS}</scr` + `ipt>`;
 
-  function withLayoutGuard(html) {
-    if (!html || html.includes(LAYOUT_GUARD_MARK)) return html;
-    if (/<\/body>/i.test(html)) return html.replace(/<\/body>(?![\s\S]*<\/body>)/i, LAYOUT_GUARD + '</body>');
-    return html + LAYOUT_GUARD;
+  // 報告隔離：結果框有 sandbox，但「新分頁開啟／列印 PDF」開的是 blob:（與本工具同源），下載的檔案也沒有 sandbox。
+  // 舊格式、貼上或匯入的完整文件沒有經過 sanitizeArticle，自稱的 REPORT_MARK 也不能當作「本工具產生」的證明。
+  // 因此每份報告最前面（doctype 之後、任何報告內容之前）放一個 CSP：只允許帶本次隨機 nonce 的腳本
+  // （版面防護、列印腳本），報告裡的 <script>、on* 屬性、javascript: 連結一律不執行，
+  // 讀不到 localStorage（通行碼、歷史）或 window.opener。nonce 只出現在報告內容之前，報告無法以殘缺標籤竊取。
+  const CSP_MARK = 'data-heals-csp';
+  const OLD_CSP_RE = new RegExp(`<meta charset="utf-8" ${CSP_MARK}>|<meta http-equiv="Content-Security-Policy" ${CSP_MARK} content="[^"]*">`, 'g');
+  const OLD_GUARD_RE = new RegExp('<scr' + 'ipt ' + LAYOUT_GUARD_MARK + '(?: nonce="[A-Za-z0-9]*")?>[\\s\\S]*?<\\/scr' + 'ipt>', 'g');
+  function makeNonce() {
+    const b = new Uint8Array(18);
+    crypto.getRandomValues(b);
+    return Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
+  }
+  function withLayoutGuard(html, nonce) {
+    if (!html) return html;
+    nonce = nonce || makeNonce();
+    // 再次貼上的已存報告：拿掉上一次的 CSP 與版面防護（舊 nonce 會擋掉這次的腳本）；
+    // 移除只會減少內容，新的 CSP 一定在最前面，所以不影響安全性
+    let s = String(html).replace(/^\uFEFF/, '').replace(OLD_CSP_RE, '').replace(OLD_GUARD_RE, '');
+    // 保留原本的 doctype（有無決定標準／怪異模式）。前面只能是 HTML 空白（不是 \s：\u00a0 等字元會先建立 <body>，
+    // CSP meta 落在 body 裡就無效）；其他情況一律放在最開頭
+    const dt = s.match(/^[\t\n\f\r ]*<!DOCTYPE[^>]*>/i);
+    const at = dt ? dt[0].length : 0;
+    return s.slice(0, at) +
+      `<meta charset="utf-8" ${CSP_MARK}>` +
+      `<meta http-equiv="Content-Security-Policy" ${CSP_MARK} content="script-src 'nonce-${nonce}'; object-src 'none'; base-uri 'none'; form-action 'none'">` +
+      layoutGuardTag(nonce) + s.slice(at);
   }
 
+  // ========== 棲地剖面圖（Habitat cross-sections）==========
+  // 模型不畫圖，只在 4.2 節輸出 <script type="application/json" class="heals-xsec"> 資料區塊；
+  // 這裡依固定模板畫成側向剖面 SVG，加上「層位｜植物｜動物｜昆蟲・無脊椎」編號對照表。
+  // 純字串進、字串出、不丟例外；重複執行結果相同（已繪製者不再處理）。
+  // viewBox 0 0 1000 420；模板座標 X = 10·x、Y = 4.2·y（0–100 網格）。
+  const XSEC = (function () {
+    const C = {
+      ink: '#2e2a22', moss: '#456238', line: '#d4cdb8', clay: '#b8694a', paper: '#fffdf7',
+      soil: '#ede4cc', litter: '#e4d5b7', rock: '#e8e4d8', sand: '#f3ecd6', mud: '#e3d7be',
+      water: '#e2ece5', water2: '#d6e4dc', crown: '#e1e9d1', crown2: '#e9efdd', wood: '#e6dcc4',
+      mkP: '#e4ecd8', mkI: '#f6eadf', mkA: '#fffdf7',
+    };
+    const FONT = "'Noto Sans TC','Noto Sans',sans-serif";
+    const r1 = v => Math.round(v * 10) / 10;
+
+    // ---------- 繪圖基本元件 ----------
+    function pts(a) { return a.map(p => r1(p[0]) + ',' + r1(p[1])).join(' '); }
+    function groundFn(poly) {
+      return X => {
+        for (let i = 0; i < poly.length - 1; i++) {
+          const [x0, y0] = poly[i], [x1, y1] = poly[i + 1];
+          if (X >= x0 && X <= x1 && x1 !== x0) return y0 + (X - x0) / (x1 - x0) * (y1 - y0);
+        }
+        return poly[poly.length - 1][1];
+      };
+    }
+    function ground(poly, fill) {
+      return `<polygon points="${pts(poly)} 1000,420 0,420" fill="${fill || C.soil}"/>`;
+    }
+    function sectionLine(poly) {
+      return `<polyline points="${pts(poly)}" fill="none" stroke="${C.moss}" stroke-width="3" stroke-linejoin="round"/>`;
+    }
+    function band(poly, x0, x1, depth, fill) { // 沿地面線往下的帶狀（落葉層、沙、泥）
+      const g = groundFn(poly), top = [], n = Math.max(2, Math.ceil((x1 - x0) / 10));
+      for (let i = 0; i <= n; i++) { const X = x0 + (x1 - x0) * i / n; top.push([X, g(X)]); }
+      const bot = top.slice().reverse().map(([X, Y]) => [X, Y + depth]);
+      return `<polygon points="${pts(top.concat(bot))}" fill="${fill}"/>`;
+    }
+    function horizon(poly, x0, x1, depth) { // 與地面平行的土層虛線
+      const g = groundFn(poly), a = [];
+      for (let X = x0; X <= x1; X += 20) a.push([X, g(X) + depth]);
+      return `<polyline points="${pts(a)}" fill="none" stroke="${C.line}" stroke-width="1.5" stroke-dasharray="6 5"/>`;
+    }
+    function cloud(cx, cy, rx, ry, fill, n) { // 扇貝狀樹冠
+      n = n || Math.max(7, Math.round((rx + ry) / 9));
+      const P = [];
+      for (let i = 0; i < n; i++) { const t = -Math.PI / 2 + 2 * Math.PI * i / n; P.push([cx + rx * Math.cos(t), cy + ry * Math.sin(t)]); }
+      let d = `M${r1(P[0][0])},${r1(P[0][1])}`;
+      for (let i = 0; i < n; i++) {
+        const a = P[i], b = P[(i + 1) % n];
+        const r = r1(Math.hypot(b[0] - a[0], b[1] - a[1]) * 0.62);
+        d += ` A${r},${r} 0 0 1 ${r1(b[0])},${r1(b[1])}`;
+      }
+      return `<path d="${d}Z" fill="${fill || C.crown}" stroke="${C.moss}" stroke-width="1.3" stroke-linejoin="round"/>`;
+    }
+    function trunk(x, yTop, yBase, w) {
+      return `<polygon points="${pts([[x - w / 2, yBase], [x - w * 0.32, yTop], [x + w * 0.32, yTop], [x + w / 2, yBase]])}" fill="${C.wood}" stroke="${C.moss}" stroke-width="1.2" stroke-linejoin="round"/>`;
+    }
+    function tree(x, g, cy, rx, ry, w, fill) { return trunk(x, cy, g(x), w) + cloud(x, cy, rx, ry, fill); }
+    function conifer(x, base, top, half) {
+      const h = base - top, a = [[x, top]];
+      for (let k = 1; k <= 3; k++) { a.push([x + half * k / 3, top + h * k / 3.4]); a.push([x + half * k / 6, top + h * k / 3.4 - h * 0.06]); }
+      const right = a.slice(1), left = right.map(([X, Y]) => [2 * x - X, Y]).reverse();
+      return `<polygon points="${pts([a[0]].concat(right, left))}" fill="${C.crown}" stroke="${C.moss}" stroke-width="1.3" stroke-linejoin="round"/>`;
+    }
+    function tufts(x0, x1, step, h, g, opts) { // 草叢
+      opts = opts || {};
+      let d = '';
+      for (let X = x0, i = 0; X <= x1; X += step, i++) {
+        const Y = (opts.base != null ? opts.base : g(X)), hh = h * [1, 0.8, 0.92, 0.75][i % 4];
+        d += `M${r1(X)},${r1(Y)}l${r1(-hh * 0.28)},${r1(-hh)}M${r1(X)},${r1(Y)}l0,${r1(-hh * 1.08)}M${r1(X)},${r1(Y)}l${r1(hh * 0.28)},${r1(-hh)}`;
+      }
+      return `<path d="${d}" fill="none" stroke="${C.moss}" stroke-width="1.2" stroke-linecap="round"/>`;
+    }
+    function plumes(x0, x1, step, h, g) { // 高草／蘆葦
+      let d = '', heads = '';
+      for (let X = x0, i = 0; X <= x1; X += step, i++) {
+        const Y = g(X), hh = h * [1, 0.86, 0.95, 0.8][i % 4], lean = [8, -6, 10, -4][i % 4];
+        d += `M${r1(X)},${r1(Y)}q${r1(lean * 0.3)},${r1(-hh * 0.6)} ${lean},${r1(-hh)}`;
+        heads += `<ellipse cx="${r1(X + lean)}" cy="${r1(Y - hh - 6)}" rx="3.2" ry="9" transform="rotate(${lean * 1.5} ${r1(X + lean)} ${r1(Y - hh - 6)})" fill="${C.crown2}" stroke="${C.moss}" stroke-width="1"/>`;
+      }
+      return `<path d="${d}" fill="none" stroke="${C.moss}" stroke-width="1.3" stroke-linecap="round"/>` + heads;
+    }
+    function ferns(x0, x1, step, h, g) {
+      let d = '';
+      for (let X = x0, i = 0; X <= x1; X += step, i++) {
+        const Y = g(X), hh = h * [1, 0.75, 0.9][i % 3];
+        d += `M${r1(X)},${r1(Y)}q${r1(-hh * 0.9)},${r1(-hh * 0.9)} ${r1(-hh * 1.3)},${r1(-hh * 0.35)}M${r1(X)},${r1(Y)}q${r1(hh * 0.9)},${r1(-hh * 0.9)} ${r1(hh * 1.3)},${r1(-hh * 0.35)}M${r1(X)},${r1(Y)}q0,${r1(-hh * 0.7)} ${r1(hh * 0.2)},${r1(-hh * 1.1)}`;
+      }
+      return `<path d="${d}" fill="none" stroke="${C.moss}" stroke-width="1.2" stroke-linecap="round"/>`;
+    }
+    function flowers(x0, x1, step, h, g) {
+      let d = '', heads = '';
+      for (let X = x0, i = 0; X <= x1; X += step, i++) {
+        const Y = g(X), hh = h * [1, 0.7, 0.85][i % 3];
+        d += `M${r1(X)},${r1(Y)}l${[2, -2, 1][i % 3]},${r1(-hh)}`;
+        heads += `<circle cx="${r1(X + [2, -2, 1][i % 3])}" cy="${r1(Y - hh - 3)}" r="4" fill="${C.mkI}" stroke="${C.moss}" stroke-width="1"/>`;
+      }
+      return `<path d="${d}" fill="none" stroke="${C.moss}" stroke-width="1.2"/>` + heads;
+    }
+    function rock(cx, cy, rx, ry, fill) {
+      const k = [1, 0.86, 0.96, 0.82, 1, 0.9, 0.86, 0.94], P = [];
+      for (let i = 0; i < 8; i++) { const t = Math.PI * 2 * i / 8 + 0.3; P.push([cx + rx * k[i] * Math.cos(t), cy + ry * k[i] * Math.sin(t)]); }
+      let d = '';
+      for (let i = 0; i < 8; i++) { const a = P[i], b = P[(i + 1) % 8]; const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; d += (i ? ' Q' : `M${r1(m[0])},${r1(m[1])} Q`) + `${r1(b[0])},${r1(b[1])} ${r1((b[0] + P[(i + 2) % 8][0]) / 2)},${r1((b[1] + P[(i + 2) % 8][1]) / 2)}`; }
+      return `<path d="${d}Z" fill="${fill || C.rock}" stroke="${C.moss}" stroke-width="1.1"/>`;
+    }
+    function waterRect(x0, x1, ysurf, fill) {
+      return `<rect x="${r1(x0)}" y="${r1(ysurf)}" width="${r1(x1 - x0)}" height="${r1(420 - ysurf)}" fill="${fill || C.water}"/>`;
+    }
+    function waterLine(x0, x1, y) {
+      let ripple = '';
+      for (let X = x0 + 18; X < x1 - 18; X += 46) ripple += `M${r1(X)},${r1(y + 7)}h16`;
+      return `<line x1="${r1(x0)}" y1="${r1(y)}" x2="${r1(x1)}" y2="${r1(y)}" stroke="${C.moss}" stroke-width="1.6"/>` +
+        (ripple ? `<path d="${ripple}" stroke="${C.moss}" stroke-width="1" stroke-opacity="0.45"/>` : '');
+    }
+    function dashed(x0, x1, y, label) {
+      return `<line x1="${x0}" y1="${y}" x2="${x1}" y2="${y}" stroke="${C.moss}" stroke-width="1" stroke-dasharray="7 5" stroke-opacity="0.8"/>` +
+        (label ? `<text x="${x1 - 2}" y="${y - 4}" text-anchor="end" font-size="13" font-family="${FONT}" fill="${C.moss}">${label}</text>` : '');
+    }
+    function hatchDefs(id) {
+      return `<defs><pattern id="${id}-rk" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(35)"><line x1="0" y1="0" x2="0" y2="14" stroke="${C.line}" stroke-width="1.4"/></pattern></defs>`;
+    }
+
+    // ---------- 模板幾何（slots: id → [X, Y, 偏好位移 dx, dy]）----------
+    const T = {};
+    const P = a => a.map(([x, y]) => [x * 10, y * 4.2]);
+
+    T.forest = {
+      poly: P([[0,64],[30,67],[60,70],[84,71],[86,74],[95,74],[97,71],[100,70]]),
+      slots: { canopy:[300,75.6], subcanopy:[140,176.4], cavity:[660,168,62,0], shrub:[400,239.4], herb:[180,260.4], litter:[350,289.8], log:[530,281.4,0,-40], soil:[400,361.2], edge:[830,252] },
+      draw(id, v) {
+        const p = this.poly, g = groundFn(p); let s = '';
+        s += ground(p) + band(p, 0, 840, 9, C.litter) + horizon(p, 0, 1000, 46);
+        s += `<path d="M80,272 q-14,26 -34,40 M80,272 q10,30 30,44 M260,280 q-18,24 -40,34 M260,280 q8,34 34,48 M440,287 q-16,26 -38,36 M440,287 q14,28 40,38" fill="none" stroke="${C.moss}" stroke-opacity="0.35" stroke-width="1.6"/>`;
+        s += sectionLine(p);
+        if (v === 'bamboo') {
+          for (let X = 20; X <= 580; X += 26) s += `<line x1="${X}" y1="${r1(g(X))}" x2="${X + 4}" y2="70" stroke="${C.moss}" stroke-width="2.2"/>`;
+          s += cloud(300, 92, 300, 40, C.crown);
+        } else if (v === 'conifer') {
+          [[60,40],[150,34],[260,30],[370,36],[480,42],[570,52]].forEach(([X, top]) => { s += trunk(X, top + 60, g(X), 12) + conifer(X, 150, top, 42); });
+        } else {
+          s += trunk(80, 100, g(80), 20) + trunk(260, 90, g(260), 24) + trunk(440, 100, g(440), 20);
+          s += cloud(90, 98, 100, 42) + cloud(450, 98, 125, 44) + cloud(265, 86, 112, 52);
+        }
+        if (v !== 'bamboo' && v !== 'conifer') {
+          s += tree(150, g, 180, 72, 28, 10, C.crown2) + tree(360, g, 186, 58, 25, 9, C.crown2) + tree(565, g, 190, 50, 24, 9, C.crown2);
+          s += cloud(320, 262, 44, 24, C.crown) + cloud(415, 254, 54, 34, C.crown) + cloud(605, 272, 36, 22, C.crown);
+        } else {
+          s += cloud(150, 186, 60, 22, C.crown2) + cloud(420, 262, 44, 24, C.crown);
+        }
+        s += ferns(16, 290, 26, 20, g);
+        s += `<polygon points="651,295 655,150 650,138 658,126 664,134 667,124 669,152 671,295" fill="${C.wood}" stroke="${C.moss}" stroke-width="1.3" stroke-linejoin="round"/>`;
+        s += `<path d="M656,200 l-20,-14 M669,230 l18,-12" stroke="${C.moss}" stroke-width="2.4" stroke-linecap="round"/>`;
+        s += `<ellipse cx="660" cy="168" rx="5" ry="9" fill="${C.soil}" stroke="${C.moss}" stroke-width="1.2"/>`;
+        s += `<rect x="482" y="273" width="98" height="18" rx="9" fill="${C.wood}" stroke="${C.moss}" stroke-width="1.3" transform="rotate(2.4 531 282)"/><ellipse cx="575" cy="284" rx="5" ry="8.5" fill="${C.soil}" stroke="${C.moss}" stroke-width="1"/>`;
+        s += trunk(812, 250, g(812), 9) + cloud(812, 246, 44, 32) + cloud(785, 282, 30, 16, C.crown2) + cloud(872, 286, 26, 14, C.crown2);
+        s += `<line x1="862" y1="310.8" x2="948" y2="310.8" stroke="${C.paper}" stroke-width="3" stroke-dasharray="10 6"/>`;
+        s += tufts(972, 996, 12, 14, g);
+        return s;
+      },
+    };
+
+    T.ravine = {
+      poly: P([[0,22],[15,32],[28,46],[38,60],[44,72],[46,86],[56,88],[58,74],[60,56],[64,40],[70,28],[80,22],[100,18]]),
+      slots: { canopy:[200,42], slope:[120,117.6], seep:[300,197.4], overhang:[420,252], moss:[625,193.2], crevice:[600,277.2,56,6], surface:[470,308.7], pool:[510,336], stone:[550,367.1] },
+      draw(id) {
+        const p = this.poly, g = groundFn(p); let s = hatchDefs(id);
+        s += `<path d="M150,150 Q410,126 680,150 L680,420 L150,420 Z" fill="#f1eee5" stroke="${C.line}" stroke-width="1.2"/>`;
+        s += `<rect x="480" y="150" width="60" height="161" fill="${C.water}"/>`;
+        s += `<path d="M490,156 v150 M503,152 v156 M517,152 v156 M530,156 v150" stroke="${C.moss}" stroke-opacity="0.35" stroke-width="1.2"/>`;
+        s += waterRect(443, 580, 310.8, C.water2);
+        const rockPoly = [[560,369.6],[580,310.8],[600,235.2],[640,168],[700,117.6],[800,92.4],[1000,75.6],[1000,420],[560,420]];
+        s += ground(p) + `<polygon points="${pts(rockPoly)}" fill="${C.rock}"/><polygon points="${pts(rockPoly)}" fill="url(#${id}-rk)"/>`;
+        s += band(p, 0, 440, 8, C.litter);
+        s += sectionLine(p);
+        s += waterLine(443, 580, 310.8);
+        s += `<ellipse cx="510" cy="312" rx="42" ry="5" fill="${C.paper}" stroke="${C.moss}" stroke-opacity="0.5"/>`;
+        s += rock(482, 358, 18, 8) + rock(522, 361, 14, 7) + rock(548, 362, 12, 6);
+        s += `<path d="M284,198 q6,14 0,26 M300,206 q6,14 0,26 M316,214 q5,12 0,22" fill="none" stroke="${C.moss}" stroke-opacity="0.55" stroke-width="1.4" stroke-dasharray="4 4"/>`;
+        let mt = '';
+        for (const Y of [200, 214, 228, 248, 262, 280, 296]) { const X = Y < 235.2 ? 600 + (235.2 - Y) / 67.2 * 40 : 580 + (310.8 - Y) / 75.6 * 20; mt += `M${r1(X)},${Y}q-7,-3 -9,-9M${r1(X)},${Y}q-9,1 -12,-3`; }
+        s += `<path d="${mt}" fill="none" stroke="${C.moss}" stroke-width="1.3" stroke-linecap="round"/>`;
+        s += `<path d="M590,270 L612,276 L590,284 Z" fill="${C.paper}" stroke="${C.moss}" stroke-width="1.1"/>`;
+        s += trunk(60, 50, g(60), 14) + trunk(210, 46, g(210), 16) + trunk(800, 32, g(800), 14) + trunk(910, 30, g(910), 14);
+        s += cloud(90, 50, 92, 34) + cloud(235, 46, 112, 36) + cloud(770, 36, 78, 28) + cloud(910, 30, 100, 26);
+        s += `<path d="M345,226 Q380,236 420,248" fill="none" stroke="${C.moss}" stroke-width="5" stroke-linecap="round"/>`;
+        s += cloud(420, 252, 46, 16, C.crown2);
+        s += ferns(40, 260, 30, 16, g);
+        return s;
+      },
+    };
+
+    T.stream = {
+      poly: P([[0,38],[8,38],[16,56],[30,60],[34,68],[38,76],[50,78],[54,88],[62,88],[66,72],[70,66],[82,66],[86,58],[100,48]]),
+      slots: { levee:[110,180.6], floodplain:[220,231], bank:[330,264.6], riffle:[420,302.4], stone:[480,333.9], surface:[580,289.8], pool:[580,336], bar:[760,268.8], riparian:[930,117.6], bridge:[520,75.6] },
+      textBoxes(used) { // 橋墩：棲位名稱不要壓在橋墩上
+        if (!used || !used.has('bridge')) return [];
+        const g = groundFn(this.poly);
+        return [[312, 63, 332, g(322)], [768, 63, 788, g(778)]];
+      },
+      draw(id, v, used) {
+        const p = this.poly, g = groundFn(p); let s = '';
+        s += waterRect(350, 673.3, 294) + `<rect x="520" y="330" width="120" height="90" fill="${C.water2}"/>`;
+        s += ground(p) + band(p, 670, 822, 10, C.sand) + horizon(p, 0, 1000, 44);
+        s += sectionLine(p) + waterLine(350, 673.3, 294);
+        s += `<path d="M388,300 q10,-6 20,0 q10,6 20,0 M440,300 q10,-6 20,0 q10,6 20,0" fill="none" stroke="${C.moss}" stroke-width="1.1" stroke-opacity="0.7"/>`;
+        s += rock(398, 318, 14, 6) + rock(436, 321, 16, 7) + rock(470, 323, 12, 6) + rock(492, 324, 9, 5);
+        for (let X = 680; X <= 815; X += 15) s += `<ellipse cx="${X}" cy="275" rx="6" ry="3.4" fill="${C.rock}" stroke="${C.moss}" stroke-width="0.9"/>`;
+        s += tufts(20, 150, 16, 12, g) + plumes(170, 300, 18, 44, g);
+        s += cloud(318, 258, 42, 24, C.crown);
+        s += tufts(700, 800, 25, 10, g);
+        s += tree(905, g, 116, 62, 42, 14) + tree(966, g, 104, 48, 46, 12);
+        if (used && used.has('bridge')) {
+          s += `<rect x="300" y="50.4" width="500" height="12.6" fill="${C.paper}" stroke="${C.moss}" stroke-width="1.5"/>`;
+          s += `<path d="M300,42 h500 M330,42 v8 M420,42 v8 M510,42 v8 M600,42 v8 M690,42 v8 M780,42 v8" stroke="${C.moss}" stroke-width="1.2"/>`;
+          s += `<rect x="316" y="63" width="12" height="${r1(g(322) - 63)}" fill="${C.paper}" stroke="${C.moss}" stroke-width="1.3"/><rect x="772" y="63" width="12" height="${r1(g(778) - 63)}" fill="${C.paper}" stroke="${C.moss}" stroke-width="1.3"/>`;
+        }
+        return s;
+      },
+    };
+
+    T.pond = {
+      poly: P([[0,50],[12,52],[18,60],[30,67],[42,76],[50,84],[64,84],[72,72],[76,60],[78,50],[84,48],[100,48]]),
+      slots: { upland:[60,176.4], emergent:[240,231], floating:[360,252], submerged:[460,310.8], open:[560,268.8], mud:[570,365.4], basking:[680,252], bank:[775,231] },
+      draw(id) {
+        const p = this.poly, g = groundFn(p); let s = '';
+        s += waterRect(180, 760, 252);
+        s += ground(p) + band(p, 180, 760, 34, C.mud) + horizon(p, 0, 1000, 70);
+        s += sectionLine(p) + waterLine(180, 760, 252);
+        let d = '', heads = '';
+        for (let X = 186, i = 0; X <= 320; X += 14, i++) { const top = 200 + [0, 10, 4, 14][i % 4]; d += `M${X},${r1(g(X))}L${X + 2},${top}`; if (i % 2 === 0) heads += `<rect x="${X - 1.5}" y="${top + 6}" width="7" height="18" rx="3.5" fill="${C.wood}" stroke="${C.moss}" stroke-width="1"/>`; }
+        s += `<path d="${d}" stroke="${C.moss}" stroke-width="1.4"/>` + heads;
+        for (const X of [312, 338, 366, 394, 416]) s += `<path d="M${X},${r1(g(X))} q-6,-30 0,${r1(252 - g(X))}" fill="none" stroke="${C.moss}" stroke-opacity="0.55" stroke-width="1"/><ellipse cx="${X}" cy="251" rx="13" ry="3.2" fill="${C.crown}" stroke="${C.moss}" stroke-width="1.1"/>`;
+        let w = '';
+        for (const X of [404, 424, 446, 468, 492, 512]) w += `M${X},${r1(g(X))} q-10,-16 0,-28 q10,-12 0,-26`;
+        s += `<path d="${w}" fill="none" stroke="${C.moss}" stroke-width="1.3"/>`;
+        s += `<path d="M642,256 L768,240" stroke="${C.moss}" stroke-width="16" stroke-linecap="round"/><path d="M642,256 L768,240" stroke="${C.wood}" stroke-width="13" stroke-linecap="round"/>`;
+        s += `<ellipse cx="771" cy="226" rx="5" ry="4" fill="${C.paper}" stroke="${C.moss}"/><ellipse cx="775" cy="240" rx="4" ry="3.5" fill="${C.paper}" stroke="${C.moss}"/>`;
+        s += tree(70, g, 150, 62, 34, 12) + cloud(132, 202, 30, 18, C.crown2) + tufts(830, 990, 20, 12, g);
+        return s;
+      },
+    };
+
+    T.grassland = {
+      poly: P([[0,72],[24,72],[27,68],[100,66]]),
+      slots: { air:[300,50.4], shortgrass:[100,285.6], bare:[200,298.2], tallgrass:[380,226.8], nectar:[500,252], pile:[580,268.8,-6,-46], shrub:[680,218.4], pioneer:[880,126], soil:[400,361.2] },
+      draw(id) {
+        const p = this.poly, g = groundFn(p); let s = '';
+        s += ground(p) + horizon(p, 0, 1000, 44) + sectionLine(p);
+        s += tufts(8, 172, 14, 16, g);
+        s += `<path d="M190,300 h3 M206,301 h3 M222,299 h2" stroke="${C.moss}" stroke-width="2" stroke-linecap="round"/>`;
+        s += plumes(300, 480, 15, 86, g);
+        s += flowers(462, 540, 13, 34, g);
+        s += `<path d="M550,${r1(g(550))} Q580,250 612,${r1(g(612))} Z" fill="${C.wood}" stroke="${C.moss}" stroke-width="1.2"/><path d="M556,272 l46,-12 M560,262 l40,16 M570,256 l26,22" stroke="${C.moss}" stroke-width="1.6" stroke-linecap="round"/>`;
+        s += cloud(645, 238, 44, 42, C.crown) + cloud(722, 232, 46, 46, C.crown);
+        s += tree(838, g, 140, 64, 46, 12) + tree(944, g, 118, 60, 52, 14);
+        return s;
+      },
+    };
+
+    T.farmland = {
+      poly: P([[0,60],[12,60],[13,70],[15,70],[16,58],[19,58],[20,62],[40,62],[42,48],[62,48],[64,36],[90,32],[92,30],[100,30]]),
+      slots: { village:[60,193.2], ditch:[140,277.2], bund:[175,235.2], paddy:[300,252], wall:[410,231,62,10], dryfield:[520,189], orchard:[760,75.6], groundcover:[800,130.2], road:[960,117.6] },
+      draw(id) {
+        const p = this.poly, g = groundFn(p); let s = '';
+        s += waterRect(124.5, 155.5, 268.8) + `<rect x="200" y="254.1" width="200" height="8" fill="${C.water}"/>`;
+        s += ground(p) + horizon(p, 170, 1000, 40) + sectionLine(p);
+        s += `<line x1="124.5" y1="268.8" x2="155.5" y2="268.8" stroke="${C.moss}" stroke-width="1.4"/><line x1="200" y1="254.1" x2="400" y2="254.1" stroke="${C.moss}" stroke-width="1.2"/>`;
+        s += `<rect x="12" y="172" width="96" height="80" fill="${C.paper}" stroke="${C.moss}" stroke-width="1.5"/><path d="M0,174 L60,140 L122,174" fill="${C.paper}" stroke="${C.moss}" stroke-width="1.8" stroke-linejoin="round"/><rect x="28" y="196" width="22" height="20" fill="none" stroke="${C.line}" stroke-width="1.5"/><rect x="70" y="210" width="20" height="42" fill="none" stroke="${C.line}" stroke-width="1.5"/>`;
+        s += tufts(210, 392, 14, 26, g, { base: 260.4 });
+        let st = '';
+        for (const [Y, off] of [[210, 0], [224, 4], [238, 0], [252, 4]]) { const X = 400 + (260.4 - Y) / 58.8 * 20; st += `<rect x="${r1(X - 9 + off)}" y="${Y - 6}" width="12" height="11" rx="3" fill="${C.rock}" stroke="${C.moss}" stroke-width="0.9"/>`; }
+        s += st;
+        let fr = '';
+        for (let X = 430; X <= 610; X += 20) fr += `M${X},201.6 q10,-8 20,0`;
+        s += `<path d="${fr}" fill="none" stroke="${C.moss}" stroke-width="1.1"/>` + tufts(440, 600, 40, 14, g);
+        s += tree(700, g, 82, 46, 28, 10) + tree(782, g, 74, 46, 30, 10) + tree(852, g, 80, 36, 26, 9);
+        s += tufts(650, 900, 18, 8, g);
+        s += `<rect x="920" y="120" width="80" height="6" fill="${C.paper}" stroke="${C.moss}" stroke-width="1.2"/><path d="M930,123 h12 M956,123 h12 M982,123 h12" stroke="${C.line}" stroke-width="1.4"/>`;
+        return s;
+      },
+    };
+
+    T.cliff = {
+      poly: P([[0,12],[10,12],[13,16],[16,30],[20,31],[22,44],[26,58],[30,62],[40,66],[50,72],[58,72],[66,62],[76,50],[86,40],[100,30]]),
+      slots: { ridge:[60,33.6], ledge:[180,117.6], crevice:[200,168,52,0], cave:[220,222.6,84,-8], sunrock:[340,256.2], scree:[440,298.2], scar:[700,235.2], pioneer:[900,130.2] },
+      draw(id) {
+        const p = this.poly, g = groundFn(p); let s = hatchDefs(id);
+        const rockPoly = [[0,50.4],[100,50.4],[130,67.2],[160,126],[200,130.2],[220,184.8],[260,243.6],[300,260.4],[300,420],[0,420]];
+        s += ground(p) + `<polygon points="${pts(rockPoly)}" fill="${C.rock}"/><polygon points="${pts(rockPoly)}" fill="url(#${id}-rk)"/>`;
+        s += horizon(p, 600, 1000, 40);
+        s += sectionLine(p);
+        s += `<path d="M257.1,239.4 L205,239.4 Q199,207 222,205.8 L234.3,205.8 Z" fill="${C.soil}"/><path d="M257.1,239.4 L205,239.4 Q199,207 222,205.8 L234.3,205.8" fill="none" stroke="${C.moss}" stroke-width="1.6"/>`;
+        s += `<path d="M213,160 L196,168 L212,176" fill="${C.paper}" stroke="${C.moss}" stroke-width="1.2"/>`;
+        s += rock(322, 252, 22, 14) + rock(362, 260, 18, 12) + rock(404, 270, 20, 12) + rock(446, 282, 22, 13) + rock(476, 292, 14, 9);
+        s += `<path d="M640,262 l40,-30 M670,252 l40,-30 M700,238 l44,-32 M736,222 l40,-28" stroke="${C.moss}" stroke-opacity="0.45" stroke-width="1.2" stroke-dasharray="5 5"/>`;
+        s += cloud(30, 40, 30, 11, C.crown) + cloud(80, 42, 26, 9, C.crown);
+        s += `<path d="M176,126 q2,-16 8,-24 M184,102 l-6,-8 M184,102 l6,-8 M190,126 q-1,-10 4,-16" fill="none" stroke="${C.moss}" stroke-width="1.3"/>`;
+        s += cloud(840, 158, 34, 20, C.crown2) + tree(905, g, 116, 46, 26, 9) + tree(970, g, 100, 36, 24, 8);
+        return s;
+      },
+    };
+
+    T.coast = {
+      poly: P([[0,48],[26,48],[32,44],[38,42],[44,46],[50,54],[62,63],[70,63],[71,67],[75,67],[76,63],[78,56],[81,56],[84,66],[92,74],[100,80]]),
+      slots: { coastforest:[120,109.2], crab:[160,214.2], dune:[380,168], wrack:[560,239.4], swash:[640,260.4], tidepool:[730,275.1,0,44], splash:[800,226.8], subtidal:[950,306.6] },
+      textBoxes: [[966, 240, 998, 256], [966, 268, 998, 284]], // HWL、LWL 文字
+      draw(id, v) {
+        const p = this.poly, g = groundFn(p); let s = hatchDefs(id);
+        s += waterRect(700, 760, 268.8) + waterRect(855, 1000, 285.6);
+        s += ground(p);
+        const sandPoly = [[260,201.6],[320,184.8],[380,176.4],[440,193.2],[500,226.8],[620,264.6],[620,420],[260,420]];
+        const rockPoly = [[620,264.6],[700,264.6],[710,281.4],[750,281.4],[760,264.6],[780,235.2],[810,235.2],[840,277.2],[920,310.8],[1000,336],[1000,420],[620,420]];
+        s += `<polygon points="${pts(sandPoly)}" fill="${C.sand}"/><polygon points="${pts(rockPoly)}" fill="${C.rock}"/><polygon points="${pts(rockPoly)}" fill="url(#${id}-rk)"/>`;
+        s += sectionLine(p) + waterLine(703, 757, 268.8) + waterLine(860, 1000, 285.6);
+        s += dashed(560, 1000, 256.2, 'HWL');
+        s += `<text x="998" y="281" text-anchor="end" font-size="13" font-family="${FONT}" fill="${C.moss}">LWL</text>`;
+        s += `<path d="M130,202 q6,14 -4,26 M176,202 q-4,12 6,22" fill="none" stroke="${C.moss}" stroke-opacity="0.5" stroke-width="2.4" stroke-linecap="round"/>`;
+        s += tree(50, g, 104, 60, 40, 14) + tree(150, g, 110, 58, 36, 13) + tree(232, g, 140, 42, 22, 10);
+        if (v === 'casuarina') s += trunk(256, 90, g(256), 8) + cloud(256, 110, 14, 40, C.crown2);
+        let vn = '';
+        for (let X = 300; X <= 460; X += 16) vn += `M${X},${r1(g(X) - 1)}q8,-6 16,0`;
+        s += `<path d="${vn}" fill="none" stroke="${C.moss}" stroke-width="1.6"/>` + tufts(330, 430, 33, 10, g);
+        s += `<path d="M544,244 l8,-2 M556,248 l9,1 M570,252 l7,-3" stroke="${C.moss}" stroke-width="2.2" stroke-linecap="round"/>`;
+        return s;
+      },
+    };
+
+    T.estuary = {
+      poly: P([[0,40],[2,56],[16,56],[18,40],[24,40],[28,54],[40,56],[58,62],[84,66],[88,80],[100,82]]),
+      slots: { fishpond:[90,214.2], embank:[210,155.4], saltmarsh:[340,210], mangrove:[480,193.2], mangfloor:[520,247.8], mudflat:[700,262.5], burrow:[700,310.8], channel:[940,310.8] },
+      textBoxes: [[966, 223, 998, 239]], // HWL 文字
+      draw(id) {
+        const p = this.poly, g = groundFn(p); let s = '';
+        s += waterRect(10, 170, 201.6) + waterRect(845.7, 1000, 285.6);
+        s += ground(p) + band(p, 280, 845, 26, C.mud);
+        s += sectionLine(p) + waterLine(10, 170, 201.6) + waterLine(845.7, 1000, 285.6);
+        s += dashed(280, 1000, 239.4, 'HWL');
+        s += tufts(186, 236, 14, 8, g) + plumes(286, 396, 14, 34, g);
+        let roots = '';
+        for (const X of [430, 490, 550]) { const Y = g(X); roots += `M${X},${r1(Y - 22)} q-14,6 -18,22 M${X},${r1(Y - 22)} q14,6 18,22 M${X},${r1(Y - 22)} q-2,10 -1,22`; }
+        s += `<path d="${roots}" fill="none" stroke="${C.moss}" stroke-width="1.5"/>`;
+        s += trunk(430, 182, g(430) - 20, 8) + trunk(490, 174, g(490) - 20, 9) + trunk(550, 186, g(550) - 20, 8);
+        s += cloud(430, 182, 42, 26) + cloud(550, 186, 40, 24) + cloud(490, 172, 46, 30);
+        let pn = '';
+        for (let X = 410; X <= 590; X += 12) pn += `M${X},${r1(g(X))}v-7`;
+        s += `<path d="${pn}" stroke="${C.moss}" stroke-width="1.4"/>`;
+        let b = '';
+        for (const X of [640, 690, 740, 790]) { const Y = g(X); b += `M${X},${r1(Y)} q-4,22 6,38 q8,10 18,4`; }
+        s += `<path d="${b}" fill="none" stroke="${C.moss}" stroke-opacity="0.55" stroke-width="2.2" stroke-linecap="round"/>`;
+        return s;
+      },
+    };
+
+    T.urban = {
+      poly: P([[0,70],[62,70],[63,80],[76,80],[80,72],[82,70],[100,70]]),
+      slots: { roof:[90,88.2], facade:[170,176.4], streettree:[240,126], lawn:[400,281.4], nectar:[550,243.6], pond:[690,319.2], oldtree:[900,84], cavity:[920,193.2,-66,0], litter:[880,285.6] },
+      textBoxes: [[762, 264, 800, 330]], // 水池邊的挺水植物
+      draw(id) {
+        const p = this.poly, g = groundFn(p); let s = '';
+        s += waterRect(622, 800, 302.4);
+        s += ground(p) + horizon(p, 0, 1000, 40) + sectionLine(p) + waterLine(630, 800, 302.4);
+        s += `<rect x="20" y="100.8" width="140" height="193.2" fill="${C.paper}" stroke="${C.moss}" stroke-width="1.6"/><rect x="12" y="96" width="172" height="7" fill="${C.paper}" stroke="${C.moss}" stroke-width="1.4"/><rect x="160" y="166" width="32" height="6" fill="${C.paper}" stroke="${C.moss}" stroke-width="1.3"/>`;
+        let wn = '';
+        for (const Y of [126, 196, 246]) for (const X of [40, 96]) wn += `<rect x="${X}" y="${Y}" width="28" height="24" fill="none" stroke="${C.line}" stroke-width="1.5"/>`;
+        s += wn;
+        s += `<rect x="180" y="294" width="120" height="5" fill="${C.paper}" stroke="${C.moss}" stroke-width="1"/>`;
+        s += tree(240, g, 130, 56, 38, 12);
+        s += tufts(306, 496, 12, 6, g);
+        s += cloud(528, 262, 30, 32) + cloud(578, 270, 24, 24, C.crown2) + flowers(512, 592, 20, 44, g);
+        s += `<rect x="616" y="290" width="12" height="46" fill="${C.paper}" stroke="${C.moss}" stroke-width="1.3"/>`;
+        s += `<path d="M770,${r1(g(770))} l-2,-50 M782,${r1(g(782))} l1,-44 M792,${r1(g(792))} l3,-40" stroke="${C.moss}" stroke-width="1.3"/>`;
+        s += trunk(920, 120, 294, 34) + cloud(856, 96, 62, 44) + cloud(952, 82, 52, 44) + cloud(904, 64, 60, 40);
+        s += `<ellipse cx="920" cy="193.2" rx="7" ry="11" fill="${C.soil}" stroke="${C.moss}" stroke-width="1.2"/>`;
+        s += `<path d="M840,294 Q900,282 960,294 Z" fill="${C.litter}" stroke="${C.moss}" stroke-width="1"/>`;
+        return s;
+      },
+    };
+
+    T.generic = {
+      poly: [[0,300],[600,300],[620,380],[1000,380]],
+      slots: { air:[420,46], canopy:[200,96], subcanopy:[390,176], shrub:[300,252], herb:[110,282], ground:[470,296], soil:[300,360], surface:[810,296], water:[810,336], bed:[880,392] },
+      draw(id) {
+        const p = this.poly, g = groundFn(p); let s = '';
+        s += waterRect(604, 1000, 300);
+        s += ground(p) + band(p, 0, 600, 8, C.litter) + horizon(p, 0, 600, 44) + sectionLine(p) + waterLine(604, 1000, 300);
+        s += tree(200, g, 100, 110, 50, 22) + tree(400, g, 180, 60, 26, 10, C.crown2) + cloud(300, 262, 50, 34) + ferns(30, 190, 26, 18, g);
+        return s;
+      },
+    };
+
+    // ---------- 模板與棲位名稱（提示詞與圖表共用，代碼必須一致）----------
+    const NAMES = {
+      forest: ['森林', 'Forest', { canopy: ['樹冠層', 'Canopy'], subcanopy: ['亞喬木層', 'Subcanopy'], cavity: ['樹洞枯木', 'Cavity & snag'], shrub: ['灌木層', 'Shrub layer'], herb: ['草本地被', 'Herb layer'], litter: ['落葉層', 'Leaf litter'], log: ['倒木枝堆', 'Deadwood'], soil: ['土壤層', 'Soil'], edge: ['林緣林道', 'Edge & trail'] }],
+      ravine: ['山溝瀑布', 'Ravine & falls', { canopy: ['遮蔭樹冠', 'Shade canopy'], slope: ['林床邊坡', 'Ravine slope'], seep: ['湧泉滲流', 'Seep'], overhang: ['懸垂枝葉', 'Overhang'], moss: ['苔蘚岩壁', 'Wet moss wall'], crevice: ['濺水岩縫', 'Splash crevice'], surface: ['潭面', 'Pool surface'], pool: ['深潭', 'Plunge pool'], stone: ['潭底石縫', 'Under-stone'] }],
+      stream: ['溪流河岸', 'Stream & riparian', { levee: ['堤防坡面', 'Levee slope'], floodplain: ['高灘草叢', 'Floodplain'], bank: ['岸邊灌叢', 'Bank shrubs'], riffle: ['淺瀨', 'Riffle'], stone: ['石下縫隙', 'Under-stone'], surface: ['水面', 'Water surface'], pool: ['深潭緩流', 'Pool'], bar: ['礫石灘', 'Gravel bar'], riparian: ['河畔林冠', 'Riparian canopy'], bridge: ['橋下空間', 'Under-bridge'] }],
+      pond: ['埤塘濕地', 'Pond & wetland', { upland: ['池岸林緣', 'Upland edge'], emergent: ['挺水帶', 'Emergent belt'], floating: ['浮葉帶', 'Floating-leaf'], submerged: ['沉水帶', 'Submerged'], open: ['開闊水面', 'Open water'], mud: ['泥質池底', 'Mud bottom'], basking: ['曬背倒木', 'Basking log'], bank: ['土質陡岸', 'Earth bank'] }],
+      grassland: ['草生灌叢', 'Grass & shrubland', { air: ['草原上空', 'Open air'], shortgrass: ['短草地', 'Short grass'], bare: ['裸露地', 'Bare patch'], tallgrass: ['高草叢', 'Tall grass'], nectar: ['野花草本', 'Wildflowers'], pile: ['枝堆石堆', 'Brush pile'], shrub: ['灌叢', 'Shrub thicket'], pioneer: ['先驅樹林緣', 'Pioneer edge'], soil: ['土壤', 'Soil'] }],
+      farmland: ['農田果園梯田', 'Farm & terraces', { village: ['聚落屋舍', 'Village'], ditch: ['水圳', 'Irrigation ditch'], bund: ['田埂', 'Field bund'], paddy: ['水田', 'Paddy'], wall: ['砌石駁坎', 'Dry-stone wall'], dryfield: ['旱田休耕', 'Dry/fallow field'], orchard: ['果樹冠', 'Orchard canopy'], groundcover: ['果園地被', 'Orchard cover'], road: ['產業道路', 'Road verge'] }],
+      cliff: ['岩壁崩塌地', 'Cliff & landslide', { ridge: ['稜線', 'Ridgeline'], ledge: ['岩階', 'Ledge'], crevice: ['岩縫', 'Crevice'], cave: ['洞穴隧道', 'Cave/tunnel'], sunrock: ['日照岩面', 'Sunlit rock'], scree: ['岩塊間隙', 'Scree gaps'], scar: ['崩塌裸面', 'Landslide scar'], pioneer: ['先驅植生', 'Pioneer regrowth'] }],
+      coast: ['海岸', 'Coast', { coastforest: ['海岸林', 'Coastal forest'], crab: ['陸蟹林床', 'Land-crab floor'], dune: ['沙丘植被', 'Dune'], wrack: ['漂積線', 'Wrack line'], swash: ['沙質潮間', 'Swash zone'], tidepool: ['潮池', 'Tide pool'], splash: ['飛沫帶', 'Splash zone'], subtidal: ['亞潮帶', 'Subtidal'] }],
+      estuary: ['河口潮灘', 'Estuary & mudflat', { fishpond: ['魚塭', 'Fishpond'], embank: ['堤岸', 'Embankment'], saltmarsh: ['鹽沼草澤', 'Salt marsh'], mangrove: ['紅樹林冠', 'Mangrove'], mangfloor: ['林下泥面', 'Mangrove floor'], mudflat: ['潮間泥灘', 'Mudflat'], burrow: ['底泥洞穴', 'Burrows'], channel: ['潮溝', 'Tidal channel'] }],
+      urban: ['都市校園公園', 'Urban / campus / park', { roof: ['屋頂', 'Roof'], facade: ['牆面屋簷', 'Facade & eaves'], streettree: ['行道樹', 'Street trees'], lawn: ['草坪', 'Lawn'], nectar: ['蜜源灌木', 'Nectar shrubs'], pond: ['人工水池', 'Built pond'], oldtree: ['老樹冠', 'Veteran tree'], cavity: ['樹洞', 'Tree hollow'], litter: ['樹下落葉', 'Leaf litter'] }],
+      generic: ['通用剖面', 'Generic profile', { air: ['上空', 'Air'], canopy: ['樹冠層', 'Canopy'], subcanopy: ['亞冠層', 'Subcanopy'], shrub: ['灌木層', 'Shrub'], herb: ['草本層', 'Herb'], ground: ['地被', 'Ground'], soil: ['土壤／石縫', 'Soil / crevice'], surface: ['水面', 'Water surface'], water: ['水中', 'Water column'], bed: ['底質', 'Bed'] }],
+    };
+    // 各模板接受的變體（其餘值忽略）
+    const VARIANTS = { forest: ['bamboo', 'conifer', 'broadleaf'], coast: ['casuarina'] };
+    // 通用詞 → 該模板自己的棲位（依序嘗試）
+    const ALIAS = { understory: 'shrub', understorey: 'shrub', ground: 'litter|herb|shortgrass|lawn|mangfloor', water: 'pool|open|submerged|riffle|paddy|channel|subtidal|fishpond', bed: 'stone|mud|burrow', sky: 'air', crevice: 'crevice|scree|wall|stone' };
+    const TPL_ALIAS = { river: 'stream', riparian: 'stream', wetland: 'pond', lake: 'pond', park: 'urban', campus: 'urban', farm: 'farmland', orchard: 'farmland', coastal: 'coast', mudflat: 'estuary', mangrove: 'estuary', grass: 'grassland', shrubland: 'grassland', rock: 'cliff', waterfall: 'ravine', strata: 'generic' };
+    const GROUP = { p: 'P', plant: 'P', plants: 'P', '植物': 'P', a: 'A', animal: 'A', animals: 'A', '動物': 'A', vertebrate: 'A', i: 'I', insect: 'I', insects: 'I', invertebrate: 'I', '昆蟲': 'I', '無脊椎': 'I' };
+    const LBL = {
+      zh: { fig: '剖面', stratum: '層位', P: '植物', A: '動物', I: '昆蟲・無脊椎', focal: '焦點物種', note: '示意剖面，非等比例；編號對應下表。', unplaced: '未能定位／歸類', capped: '超過上限未繪出', nodraw: '這些物種都無法對應到此剖面的棲位，因此未繪製剖面圖，僅列於下表。', generic: '（通用剖面）', bad: '棲地剖面資料格式有誤，未能繪製；其餘內容不受影響。', partial: '剖面資料不完整（可能被截斷），僅繪出可讀取的部分。', none: '—', swipe: '（圖可左右滑動）' },
+      en: { fig: 'Section', stratum: 'Stratum', P: 'Plants', A: 'Animals', I: 'Insects & invertebrates', focal: 'focal species', note: 'Schematic, not to scale; numbers refer to the table below.', unplaced: 'Not placed / ungrouped', capped: 'Not drawn: limit reached', nodraw: 'None of these entries matched a stratum of this template, so no drawing is shown; they are listed below.', generic: ' (generic profile)', bad: 'The habitat cross-section data could not be read, so no diagram was drawn; the rest of the report is unaffected.', partial: 'The cross-section data was incomplete (possibly cut off); only the readable part is drawn.', none: '—', swipe: ' (swipe the drawing sideways)' },
+    };
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const clean = (s, max) => String(s == null ? '' : s).replace(/<[^>]*>/g, '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+    const CJK = /[\u2e80-\u9fff\uf900-\ufaff]/;
+
+    // ---------- 解析（寬鬆）與正規化 ----------
+    function parseLenient(txt) {
+      const t = String(txt).replace(/^\ufeff/, '').trim().replace(/^```(?:json)?\s*|```$/g, '').replace(/^<!--|-->$/g, '').trim();
+      const noComma = s => s.replace(/,\s*([}\]])/g, '$1');
+      const decode = s => s.replace(/&quot;/g, '"').replace(/&#34;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+      const tries = [t, noComma(t), noComma(decode(t))];
+      if (t.indexOf('"') < 0) tries.push(noComma(decode(t).replace(/[\u201c\u201d]/g, '"')));
+      for (const s of tries) { try { return JSON.parse(s); } catch (_) {} }
+      return repairTruncated(noComma(decode(t)));
+    }
+
+    // 被截斷的 JSON（報告輸出中止）：退回到最後一個完整的 } 或 ]，補上未關閉的括號，盡量保住已完成的剖面
+    function repairTruncated(t) {
+      let tries = 0;
+      for (let end = t.length - 1; end > 0 && tries < 60; end--) {
+        if (t[end] !== '}' && t[end] !== ']') continue;
+        tries++;
+        const pre = t.slice(0, end + 1), stack = [];
+        let inStr = false, escp = false;
+        for (const c of pre) {
+          if (inStr) { if (escp) escp = false; else if (c === '\\') escp = true; else if (c === '"') inStr = false; continue; }
+          if (c === '"') inStr = true;
+          else if (c === '{' || c === '[') stack.push(c);
+          else if (c === '}' || c === ']') stack.pop();
+        }
+        if (inStr) continue;
+        try {
+          const obj = JSON.parse((pre + stack.reverse().map(c => c === '{' ? '}' : ']').join('')).replace(/,\s*([}\]])/g, '$1'));
+          if (obj && typeof obj === 'object') Object.defineProperty(obj, '__partial', { value: true });
+          return obj;
+        } catch (_) {}
+      }
+      return null;
+    }
+
+    function normalise(data, prefLang) {
+      if (!data || typeof data !== 'object') return null;
+      const secs = Array.isArray(data) ? data : Array.isArray(data.sections) ? data.sections : null;
+      if (!secs || !secs.length) return null;
+      const lang = (data.lang === 'en' || data.lang === 'zh') ? data.lang
+        : (prefLang || (CJK.test(JSON.stringify(secs).slice(0, 4000)) ? 'zh' : 'en'));
+      const zh = lang === 'zh', nmax = zh ? 12 : 36;
+      const out = [], usedIds = new Set();
+      secs.slice(0, 4).forEach(s => {
+        if (!s || typeof s !== 'object') return;
+        let tpl = String(s.tpl || s.template || '').toLowerCase().trim();
+        tpl = T[tpl] ? tpl : (TPL_ALIAS[tpl] || 'generic');
+        const slotIds = Object.keys(T[tpl].slots);
+        const names = NAMES[tpl][2];
+        const resolve = raw => {
+          const k = String(raw || '').toLowerCase().trim();
+          if (slotIds.includes(k)) return k;
+          for (const id of slotIds) { const n = names[id]; if (n && (n[0] === String(raw || '').trim() || n[1].toLowerCase() === k)) return id; }
+          if (ALIAS[k]) for (const c of ALIAS[k].split('|')) if (slotIds.includes(c)) return c;
+          return null;
+        };
+        const slots = new Map(), unplaced = [], capped = [];
+        let total = 0;
+        let rawSlots = s.slots || [];
+        if (!Array.isArray(rawSlots) && typeof rawSlots === 'object') rawSlots = Object.entries(rawSlots).map(([k, v]) => ({ s: k, sp: v }));
+        if (!Array.isArray(rawSlots)) rawSlots = [];
+        const entries = [];
+        rawSlots.forEach(rs => {
+          if (!rs || !Array.isArray(rs.sp || rs.species)) return;
+          const sid = resolve(rs.s || rs.slot);
+          (rs.sp || rs.species).forEach(x => {
+            if (typeof x === 'string') x = { n: x };
+            if (!x || typeof x !== 'object') return;
+            const n = clean(x.n || x.name, nmax); if (!n) return;
+            const g = GROUP[String(x.g || x.group || '').toLowerCase().trim()];
+            const act = clean(x.act || x.activity, 24).split(/\s*[・·\/、,，;；]\s*/).filter(Boolean).slice(0, 2).map(a => a.slice(0, zh ? 4 : 12));
+            entries.push({ sid, sp: { n, g, act, f: !!(x.f || x.focal) } });
+          });
+        });
+        // 焦點物種先佔名額：超過每層／每幅上限時，被擠掉的是伴生物種而不是焦點物種（stable sort，其餘維持原順序）
+        entries.sort((a, b) => (b.sp.f ? 1 : 0) - (a.sp.f ? 1 : 0));
+        entries.forEach(({ sid, sp }) => {
+          const { n, g, act } = sp;
+          if (!sid || !g) { unplaced.push(sp); return; }
+          const arr = slots.get(sid) || [];
+          const dup = arr.find(y => y.n === n);
+          if (dup) { dup.act = [...new Set(dup.act.concat(act))].slice(0, 2); dup.f = dup.f || sp.f; }
+          else if (arr.length < 6 && total < 30) { arr.push(sp); total++; }
+          else capped.push(sp); // 合法但超過每層 6 種／每幅 30 筆上限
+          slots.set(sid, arr);
+        });
+        // 已畫在其他棲位的物種不再列為未定位／未繪出；同名只列一次
+        const placed = new Set([].concat(...[...slots.values()]).map(x => x.n));
+        const uniq = list => { const seen = new Set(); return list.filter(x => !placed.has(x.n) && !seen.has(x.n) && seen.add(x.n)); };
+        const left = uniq(unplaced), over = uniq(capped).filter(x => !left.some(y => y.n === x.n));
+        if (!placed.size && !left.length && !over.length) return;
+        let id = String(s.id || '').trim().toUpperCase();
+        if (!/^[A-Z]$/.test(id) || usedIds.has(id)) { id = 'A'; while (usedIds.has(id)) id = String.fromCharCode(id.charCodeAt(0) + 1); }
+        usedIds.add(id);
+        const variant = (VARIANTS[tpl] || []).includes(String(s.variant || '').toLowerCase()) ? String(s.variant).toLowerCase() : '';
+        out.push({ id, tpl, generic: tpl === 'generic', variant, title: clean(s.title, zh ? 20 : 60) || NAMES[tpl][zh ? 0 : 1], caption: clean(s.caption, zh ? 80 : 220), slots, unplaced: left, capped: over });
+      });
+      return out.length ? { lang, secs: out } : null;
+    }
+
+    // ---------- 標記（植物＝圓角方形、動物＝圓、昆蟲・無脊椎＝六角形；焦點物種加陶土色外框）----------
+    function marker(g, num, X, Y, focal) {
+      const stroke = focal ? C.clay : C.moss, sw = focal ? 3 : 1.5;
+      const hex = rr => { const a = []; for (let k = 0; k < 6; k++) { const t = Math.PI / 6 + k * Math.PI / 3; a.push(r1(X + rr * Math.cos(t)) + ',' + r1(Y + rr * Math.sin(t))); } return a.join(' '); };
+      let s;
+      if (g === 'P') s = `<rect x="${r1(X - 15)}" y="${r1(Y - 15)}" width="30" height="30" rx="8" fill="${C.paper}"/><rect x="${r1(X - 13)}" y="${r1(Y - 13)}" width="26" height="26" rx="6" fill="${C.mkP}" stroke="${stroke}" stroke-width="${sw}"/>`;
+      else if (g === 'I') s = `<polygon points="${hex(18)}" fill="${C.paper}"/><polygon points="${hex(15.5)}" fill="${C.mkI}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"/>`;
+      else s = `<circle cx="${r1(X)}" cy="${r1(Y)}" r="16.5" fill="${C.paper}"/><circle cx="${r1(X)}" cy="${r1(Y)}" r="14" fill="${C.mkA}" stroke="${stroke}" stroke-width="${sw}"/>`;
+      return s + `<text x="${r1(X)}" y="${r1(Y)}" dy="0.36em" text-anchor="middle" font-size="${num > 9 ? 15 : 16}" font-weight="700" font-family="${FONT}" fill="${C.ink}">${num}</text>`;
+    }
+    function badge(g, num, focal) { // 圖例與對照表用，形狀與圖上相同
+      return `<svg class="hx-b" viewBox="-18 -18 36 36" width="20" height="20" aria-hidden="true">${marker(g, num == null ? '' : num, 0, 0, focal)}</svg>`;
+    }
+
+    // ---------- 標記群排版（確定性避讓）----------
+    const hit = (a, b) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+    const grow = (b, d) => ({ x0: b.x0 - d, x1: b.x1 + d, y0: b.y0 - d, y1: b.y1 + d });
+    function layout(clusters) {
+      const PITCH = 32, PAD = 4, placed = [];
+      const ov = (a, b) => Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + PAD) * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) + PAD);
+      return clusters.map(cl => {
+        const perRow = cl.n <= 4 ? cl.n : Math.ceil(cl.n / Math.ceil(cl.n / 4)), rows = Math.ceil(cl.n / perRow);
+        const w = perRow * PITCH - 4, h = rows * PITCH - 4, cand = [[0, 0]];
+        for (const d of [22, 40, 60, 84, 110]) cand.push([0, -d], [0, d], [d * 1.6, 0], [-d * 1.6, 0], [d * 1.2, -d], [-d * 1.2, -d], [d * 1.2, d], [-d * 1.2, d]);
+        let best = null, bs = Infinity;
+        for (const [dx, dy] of cand) {
+          const cx = Math.min(Math.max(cl.anchor[0] + cl.pref[0] + dx, w / 2 + 4), 996 - w / 2), cy = Math.min(Math.max(cl.anchor[1] + cl.pref[1] + dy, h / 2 + 4), 416 - h / 2);
+          const box = { x0: cx - w / 2, x1: cx + w / 2, y0: cy - h / 2, y1: cy + h / 2 }, sc = placed.reduce((s, b) => s + ov(box, b), 0);
+          if (sc < bs) { bs = sc; best = { cx, cy, box }; if (!sc) break; }
+        }
+        placed.push(best.box);
+        const pos = [];
+        for (let i = 0; i < cl.n; i++) { const r = Math.floor(i / perRow), c = i % perRow, inRow = Math.min(perRow, cl.n - r * perRow); pos.push([best.cx - (inRow - 1) * PITCH / 2 + c * PITCH, best.cy - (rows - 1) * PITCH / 2 + r * PITCH]); }
+        return Object.assign(best, { pos, moved: Math.hypot(best.cx - cl.anchor[0], best.cy - cl.anchor[1]) > 12 });
+      });
+    }
+
+    // ---------- 棲位名稱標籤：放得下才畫，絕不與標記、引線、其他標籤重疊 ----------
+    const LFS = 14;
+    function textW(s) {
+      let w = 0;
+      for (const ch of s) w += CJK.test(ch) || /[\u3000-\u303f\uff00-\uffef]/.test(ch) ? LFS : (ch === ' ' ? LFS * 0.3 : (/[A-Z&]/.test(ch) ? LFS * 0.68 : LFS * 0.56));
+      return w;
+    }
+    function placeLabels(items, textBoxes) {
+      // items: [{ text, box, moved, ax, ay, tx, ty }]
+      const obst = items.map(it => grow(it.box, 5));
+      items.forEach(it => { if (it.moved) obst.push({ x0: it.ax - 6, x1: it.ax + 6, y0: it.ay - 6, y1: it.ay + 6 }); });
+      (textBoxes || []).forEach(b => obst.push({ x0: b[0], y0: b[1], x1: b[2], y1: b[3] })); // 圖上文字與易被誤指的構造物
+      const segs = items.filter(it => it.moved).map(it => [it.ax, it.ay, it.tx, it.ty]);
+      const onSeg = r => segs.some(([x0, y0, x1, y1]) => {
+        const n = Math.max(2, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 3));
+        for (let i = 0; i <= n; i++) { const X = x0 + (x1 - x0) * i / n, Y = y0 + (y1 - y0) * i / n; if (X > r.x0 && X < r.x1 && Y > r.y0 && Y < r.y1) return true; }
+        return false;
+      });
+      const done = [];
+      let out = '';
+      items.forEach(it => {
+        const w = textW(it.text) + 4, h = LFS + 4, b = it.box, cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+        const cand = [8, 24].flatMap(G => [[b.x1 + G, cy - h / 2], [b.x0 - G - w, cy - h / 2], [cx - w / 2, b.y0 - G - h], [cx - w / 2, b.y1 + G], [b.x0, b.y0 - G - h], [b.x1 - w, b.y0 - G - h], [b.x0, b.y1 + G], [b.x1 - w, b.y1 + G]]);
+        for (const [x, y] of cand) {
+          const r = { x0: x, x1: x + w, y0: y, y1: y + h };
+          if (r.x0 < 4 || r.x1 > 996 || r.y0 < 4 || r.y1 > 416) continue;
+          if (obst.some(o => hit(r, o)) || done.some(o => hit(r, grow(o, 3))) || onSeg(grow(r, 2))) continue;
+          done.push(r);
+          // 底襯用紙色矩形（不用文字描邊：Chrome 存成 PDF 後，pdf.js 會把描邊字畫成色塊）
+          out += `<rect x="${r1(x)}" y="${r1(y)}" width="${r1(w)}" height="${r1(h)}" rx="3" fill="${C.paper}" fill-opacity="0.85"/>` +
+            `<text class="hx-l" x="${r1(x + 2)}" y="${r1(y + 2 + LFS * 0.86)}" font-size="${LFS}" font-weight="500" font-family="${FONT}" fill="${C.moss}">${esc(it.text)}</text>`;
+          break;
+        }
+      });
+      return out;
+    }
+
+    function renderSection(sec, lang, uid) {
+      const tpl = T[sec.tpl], lab = LBL[lang], names = NAMES[sec.tpl][2], li = lang === 'zh' ? 0 : 1;
+      const numOf = new Map(); let next = 1;
+      const rows = [], clusters = [];
+      for (const sid of Object.keys(tpl.slots)) {
+        const arr = sec.slots.get(sid); if (!arr || !arr.length) continue;
+        const sp = ['P', 'A', 'I'].flatMap(g => arr.filter(x => x.g === g));
+        sp.forEach(x => { if (!numOf.has(x.n)) numOf.set(x.n, next++); x.num = numOf.get(x.n); });
+        const a = tpl.slots[sid];
+        rows.push({ sid, sp }); clusters.push({ anchor: [a[0], a[1]], pref: [a[2] || 0, a[3] || 0], n: sp.length });
+      }
+      // 標題本身已是「通用剖面」時不再加註，避免「通用剖面（通用剖面）」
+      const genericTag = sec.generic && !sec.title.toLowerCase().includes(lab.generic.replace(/[（）()]/g, '').trim().toLowerCase()) ? lab.generic : '';
+      const title = `${lab.fig} ${sec.id}｜${sec.title}${genericTag}`;
+      // 名稱：圖示與名稱第一個字詞不分行，只讓其餘字詞與〔活動〕換行（英文長名稱才不會撐破表格）
+      const name = x => {
+        const n = x.n, k = n.indexOf(' '), first = k > 0 ? n.slice(0, k) : n, w = v => v ? (x.f ? `<b>${esc(v)}</b>` : esc(v)) : '';
+        // 超長的單字不黏住，讓它在格內斷開，不撐破表格
+        return first.length <= 14 ? `<span class="hx-n">${badge(x.g, x.num, x.f)}${w(first)}</span>${w(k > 0 ? n.slice(k) : '')}` : badge(x.g, x.num, x.f) + w(n);
+      };
+      const cell = (list, g) => { const xs = list.filter(x => x.g === g); return xs.length ? xs.map(x => `<span class="hx-e">${name(x)}${x.act.length ? `<i>${esc(x.act.join(lang === 'zh' ? '・' : '/'))}</i>` : ''}</span>`).join(' ') : lab.none; };
+      const td = (list, g) => `<td data-l="${esc(lab[g])}"${list.some(x => x.g === g) ? '' : ' class="hx-0"'}>${cell(list, g)}</td>`;
+      const extra = (list, label) => list.length ? `<tr class="hx-un"><th scope="row">${label}</th><td colspan="3">${esc(list.map(x => x.n).join(lang === 'zh' ? '、' : ', '))}</td></tr>` : '';
+      const body = rows.map(r => `<tr><th scope="row">${esc(names[r.sid] ? names[r.sid][li] : r.sid)}</th>${td(r.sp, 'P')}${td(r.sp, 'A')}${td(r.sp, 'I')}</tr>`).join('') +
+        extra(sec.unplaced, lab.unplaced) + extra(sec.capped, lab.capped);
+      const table = `<table class="hx-key"><colgroup><col class="hx-c0"><col class="hx-c1"><col class="hx-c1"><col class="hx-c1"></colgroup>${rows.length ? `<thead><tr><th>${lab.stratum}</th><th>${lab.P}</th><th>${lab.A}</th><th>${lab.I}</th></tr></thead>` : ''}<tbody>${body}</tbody></table>`;
+      // 沒有任何物種能放上棲位：不畫空白剖面，只列說明與名單
+      if (!rows.length) return `<div class="hx-block" id="${uid}"><p class="hx-note"><b>${esc(title)}</b>${sec.caption ? '　' + esc(sec.caption) : ''}<br>${lab.nodraw}</p>${table}</div>`;
+      const lay = layout(clusters);
+      let lead = '', mk = '';
+      const items = [];
+      lay.forEach((l, i) => {
+        const [ax, ay] = clusters[i].anchor;
+        const tx = Math.min(Math.max(ax, l.box.x0), l.box.x1), ty = Math.min(Math.max(ay, l.box.y0), l.box.y1);
+        if (l.moved) lead += `<line x1="${r1(ax)}" y1="${r1(ay)}" x2="${r1(tx)}" y2="${r1(ty)}" stroke="${C.moss}" stroke-width="1.2" stroke-dasharray="3 2"/><circle cx="${r1(ax)}" cy="${r1(ay)}" r="3.5" fill="${C.moss}"/>`;
+        rows[i].sp.forEach((x, k) => { mk += marker(x.g, x.num, l.pos[k][0], l.pos[k][1], x.f); });
+        items.push({ text: names[rows[i].sid] ? names[rows[i].sid][li] : rows[i].sid, box: l.box, moved: l.moved, ax, ay, tx, ty });
+      });
+      const used = new Set(rows.map(r => r.sid));
+      const labels = placeLabels(items, typeof tpl.textBoxes === 'function' ? tpl.textBoxes(used) : tpl.textBoxes);
+      const svg = `<svg class="hx-svg" viewBox="0 0 1000 420" role="img" aria-labelledby="${uid}-t" xmlns="http://www.w3.org/2000/svg"><title id="${uid}-t">${esc(title)}</title><rect width="1000" height="420" fill="${C.paper}"/>${tpl.draw(uid, sec.variant, used)}${lead}${labels}${mk}</svg>`;
+      const li2 = (g, f, text) => `<span class="hx-li">${badge(g, null, f)}${text}</span>`;
+      const legend = `<span class="hx-lg">${li2('P', false, lab.P)} ${li2('A', false, lab.A)} ${li2('I', false, lab.I)} ${li2('A', true, lab.focal)}</span>`;
+      return `<div class="hx-block" id="${uid}"><figure class="hx-fig"><div class="hx-scroll">${svg}</div><figcaption><b>${esc(title)}</b>${sec.caption ? '　' + esc(sec.caption) : ''}<br>${legend}<span class="hx-sub">${lab.note}</span><span class="hx-swipe">${lab.swipe}</span></figcaption></figure>${table}</div>`;
+    }
+
+    const STYLE = `<style id="hx-style">
+.hx-wrap{margin:12px 0 20px}
+.hx-block{margin:0 0 22px}
+.hx-fig{margin:0 0 8px;padding:0;break-inside:avoid;page-break-inside:avoid}
+.hx-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #d4cdb8;border-radius:4px;background:#fffdf7}
+.hx-svg{display:block;width:100%;height:auto;min-width:680px}
+.hx-fig figcaption{font-family:'Noto Sans TC',sans-serif;font-size:12.5px;line-height:1.7;color:#2e2a22;margin-top:6px;font-style:normal}
+.hx-fig figcaption b{color:#456238}
+.hx-lg{display:inline;margin-right:10px;color:#2e2a22}
+.hx-li{white-space:nowrap;margin-right:10px}
+.hx-sub{display:inline-block;color:#456238;font-style:italic}
+.hx-b{display:inline-block;vertical-align:-5px;margin-right:3px}
+table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:'Noto Sans TC',sans-serif;font-size:12.5px;line-height:1.75;background:#ffffff;margin:0}
+.hx-key col.hx-c0{width:16%}
+.hx-key col.hx-c1{width:28%}
+.hx-key th,.hx-key td{border:1px solid #d4cdb8;padding:5px 7px;vertical-align:top;text-align:left;color:#2e2a22;background:#ffffff;overflow-wrap:break-word}
+.hx-key thead th{background:#ede4cc;color:#456238;font-weight:700}
+.hx-key tbody th{background:#fffdf7;color:#456238;font-weight:700}
+.hx-key tr{break-inside:avoid;page-break-inside:avoid}
+.hx-key thead{display:table-header-group}
+.hx-e{display:inline-block;max-width:100%;margin:0 8px 2px 0}
+.hx-n{white-space:nowrap}
+.hx-e b{color:#b8694a}
+.hx-e i{font-style:normal;color:#456238;font-size:11px;margin-left:3px}
+.hx-e i::before{content:'〔'}.hx-e i::after{content:'〕'}
+.hx-un td{color:#456238;font-style:italic}
+.hx-swipe{display:none;color:#456238}
+.hx-note{font-family:'Noto Sans TC',sans-serif;font-size:12.5px;color:#456238;border-left:3px solid #d4cdb8;padding-left:8px}
+@media (max-width:560px){
+ .hx-key colgroup{display:none}
+ .hx-key thead{display:none}
+ .hx-key,.hx-key tbody,.hx-key tr,.hx-key th,.hx-key td{display:block;width:auto}
+ .hx-key tr{border-bottom:1px solid #d4cdb8}
+ .hx-key th,.hx-key td{border:0;padding:3px 6px}
+ .hx-key td[data-l]::before{content:attr(data-l) '：';color:#456238;font-weight:700}
+ .hx-key td.hx-0{display:none}
+ .hx-swipe{display:inline}
+}
+@media print{
+ .hx-scroll{overflow:visible;border-color:#d4cdb8}
+ .hx-svg{min-width:0}
+ .hx-block{break-inside:avoid;page-break-inside:avoid}
+ .hx-fig{break-after:avoid;page-break-after:avoid}
+ .hx-fig figcaption{font-size:8.5pt;line-height:1.55}
+ table.hx-key{font-size:8.5pt;line-height:1.5}
+ .hx-e i{font-size:7.5pt}
+}
+</style>`;
+
+    const BLOCK_RE = /<script\b[^>]*\bclass\s*=\s*(["'])(?:[^"']*\s)?heals-xsec(?:\s[^"']*)?\1[^>]*>([\s\S]*?)<\/script\s*>/gi;
+    const OPEN_RE = /<script\b[^>]*\bclass\s*=\s*(["'])(?:[^"']*\s)?heals-xsec(?:\s[^"']*)?\1[^>]*>/i;
+
+    function docLangOf(html) {
+      const m = String(html).match(/<html\b[^>]*\blang\s*=\s*["']?([a-zA-Z-]+)/i);
+      if (!m) return null;
+      return /^en/i.test(m[1]) ? 'en' : (/^zh/i.test(m[1]) ? 'zh' : null);
+    }
+
+    // 主函式：把資料區塊換成剖面圖＋對照表；任何錯誤都回傳原文
+    function render(html, uiLang) {
+      if (!html || typeof html !== 'string') return html;
+      const hasBlock = html.indexOf('heals-xsec') >= 0;
+      const hasPre = !hasBlock && /(?:"|&quot;)tpl(?:"|&quot;)/.test(html) && /<(?:pre|code)\b/i.test(html);
+      if (!hasBlock && !hasPre) return html;
+      try {
+        const docLang = docLangOf(html);
+        const fallbackLang = docLang || (uiLang === 'en' ? 'en' : 'zh');
+        let n = 0, any = false;
+        const build = body => {
+          n++;
+          any = true;
+          const src = `<script type="application/json" data-hx-src="1">${String(body).replace(/</g, '\\u003c')}<\/script>`;
+          let data = null, partial = false;
+          if (String(body).length <= 20000) {
+            try { const parsed = parseLenient(body); partial = !!(parsed && parsed.__partial); data = normalise(parsed, docLang); } catch (_) { data = null; }
+          }
+          if (!data) return `<div class="hx-wrap" data-hx-done="1"><p class="hx-note">${LBL[fallbackLang].bad}</p>${src}</div>`;
+          let inner = '';
+          data.secs.forEach(sec => {
+            try { inner += renderSection(sec, data.lang, `hx${n}${sec.id}`); }
+            catch (e) { inner += `<p class="hx-note">${LBL[data.lang].bad}</p>`; }
+          });
+          if (partial) inner += `<p class="hx-note">${LBL[data.lang].partial}</p>`;
+          return `<div class="hx-wrap" data-hx-done="1">${inner}${src}</div>`;
+        };
+        let out = html;
+        if (hasBlock) {
+          const bodyAt = out.search(/<body[\s>]/i);
+          const moved = [];
+          out = out.replace(BLOCK_RE, (m, q, body, offset) => {
+            const r = build(body);
+            if (bodyAt > 0 && offset < bodyAt) { moved.push(r); return ''; } // 區塊誤放在 <body> 之前
+            return r;
+          });
+          // 截斷的報告：有開頭標籤卻沒有結尾標籤，從標籤到結尾改為提示，避免整頁被吞掉
+          const open = out.search(OPEN_RE);
+          if (open >= 0) { n++; any = true; out = out.slice(0, open) + `<div class="hx-wrap" data-hx-done="1"><p class="hx-note">${LBL[fallbackLang].bad}</p></div></body></html>`; }
+          if (moved.length) {
+            const blob = moved.join('');
+            const h3 = out.match(/<h3\b[^>]*>(?:(?!<\/h3>)[\s\S])*?(?:4\.2|剖面|cross-section)[\s\S]*?<\/h3>/i);
+            const h2s = out.match(/<h2\b[^>]*>\s*(?:<[^>]+>\s*)*5\b/);
+            if (h3) out = out.replace(h3[0], h3[0] + blob);
+            else if (h2s) out = out.replace(h2s[0], blob + h2s[0]);
+            else if (/<\/body>/i.test(out)) out = out.replace(/<\/body>/i, blob + '</body>');
+            else out += blob;
+          }
+        } else {
+          // 後備：模型把 JSON 放進 <pre>／<code>
+          out = out.replace(/<(pre|code)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi, (m, tag, body) => {
+            const txt = body.replace(/<[^>]*>/g, '');
+            if (!/"sections"|&quot;sections&quot;/.test(txt) || !/"tpl"|&quot;tpl&quot;/.test(txt)) return m;
+            return build(txt);
+          });
+        }
+        if (any && out.indexOf('id="hx-style"') < 0) out = /<\/head>/i.test(out) ? out.replace(/<\/head>/i, STYLE + '</head>') : STYLE + out;
+        return out;
+      } catch (e) {
+        console.warn('[xsec] render failed:', e);
+        return html;
+      }
+    }
+
+    // ---------- 提示詞端：依基地條件挑選 ≤3 個模板 ----------
+    const MATCH = {
+      forest: ['次生林', '原始闊葉林', '針葉林', '混合林', '竹林', '人工林', '相思樹林', '樟科殼斗科林', '喬木林', '林地'],
+      ravine: ['山溝', '瀑布', '湧泉'],
+      stream: ['溪流', '河川', '河岸', '河岸帶', '灘地'],
+      pond: ['湖泊', '濕地', '生態池'],
+      grassland: ['草原', '灌叢', '廢耕地'],
+      farmland: ['果園', '梯田', '水圳', '部落', '聚落', '農地'],
+      cliff: ['岩壁', '崩塌地', '岩塊裸露'],
+      coast: ['海岸林', '木麻黃林', '沙灘', '潮間帶', '岩岸'],
+      estuary: ['河口'],
+      urban: ['校園', '公園', '廟宇', '公園草地', '人工水池', '蜜源植物帶', '喬木列植'],
+    };
+    // 修飾型條件：只開啟某模板的特定棲位，本身不決定模板
+    const MODIFIER = { '步道': 'forest', '林道': 'forest', '產業道路': 'farmland', '橋梁': 'stream', '堤防': 'stream', '隧道': 'cliff', '稜線': 'cliff', '苔蘚': 'ravine', '自然保留區': null, '保護區': null, '國家公園': null };
+    const SPECIES_HINT = { '黑面琵鷺': 'estuary', '反嘴鴴': 'estuary', '招潮蟹': 'estuary', '玄燕鷗': 'coast', '台灣狗母魚': 'coast', '鉛色水鶇': 'ravine', '小剪尾': 'ravine', '台灣山椒魚': 'ravine', '翠鳥': 'stream', '夜鷺': 'stream', '台灣石鮒': 'stream', '水雉': 'pond', '小鸊鷉': 'pond' };
+    // 自訂（自由輸入）條件的關鍵字；依序比對，先中者優先。
+    // 英文用字詞邊界，避免 research→sea、parking→park 之類的誤判
+    // 描述詞（海拔、保護區身分）先從條件中拿掉再比對：本身不決定模板，但不能讓「低海拔闊葉林」整條被丟掉
+    const DESCRIPTOR_RE = /海拔|高程|國家(?:自然)?公園|保護區|保留區|\b(?:elevation|altitude|sea[- ]level|national parks?|reserves?)\b/gi;
+    const KEYWORDS = [
+      [/濕地公園|自然公園|wetland park/i, 'pond'],
+      [/河口|泥灘|紅樹|潮溝|estuar|mudflat|mangrove|tidal flat/i, 'estuary'],
+      [/瀑|山溝|溪溝|湧泉|\b(?:ravines?|gull(?:y|ies)|gorges?|waterfalls?|springs?|seeps?)\b/i, 'ravine'],
+      [/行道樹|校|公園|都市|城市|社區|屋頂|\b(?:street ?trees?|campus|school|parks?|urban|city|gardens?|roofs?)\b/i, 'urban'],
+      [/溪|河|\b(?:streams?|rivers?|creeks?|brooks?|riparian)\b/i, 'stream'],
+      [/池|塘|濕地|沼澤|濕生|湖|\b(?:ponds?|lakes?|wetlands?|marsh(?:es)?|swamps?)\b/i, 'pond'],
+      [/海(?!拔)|濱|沙灘|礁|\b(?:coast(?:al)?|beach(?:es)?|sea|seashore|seaside|shore(?:line)?|dunes?)\b/i, 'coast'],
+      [/田|農|果園|茶|檳榔|\b(?:farm(?:land)?s?|fields?|padd(?:y|ies)|orchards?|terraces?|rice|plantations?|tea)\b/i, 'farmland'],
+      [/岩|崖|崩|礫|\b(?:cliffs?|rocks?|rocky|landslides?|scree|boulders?|limestone|outcrops?|karst)\b/i, 'cliff'],
+      [/草|灌|荒|\b(?:grass(?:land)?s?|meadows?|shrubs?|shrubland|scrub)\b/i, 'grassland'],
+      [/林|樹|森|\b(?:forests?|woods?|woodlands?|groves?|trees?)\b/i, 'forest'],
+    ];
+
+    // conditions、species 須已轉為中文詞（英文膠囊先經 TERMS_REV 對照）
+    function pick(conditions, species) {
+      const conds = (conditions || []).map(c => String(c || '').trim()).filter(Boolean);
+      const has = c => conds.includes(c);
+      const estuaryMode = has('河口') && (has('濕地') || has('潮間帶'));
+      const score = {}, first = {};
+      const hitTpl = (tpl, i, w) => { score[tpl] = (score[tpl] || 0) + w; if (first[tpl] == null) first[tpl] = i; };
+      conds.forEach((c, i) => {
+        if (Object.prototype.hasOwnProperty.call(MODIFIER, c)) return;
+        if (estuaryMode && (c === '濕地' || c === '潮間帶')) { hitTpl('estuary', i, 1); return; }
+        const tpl = Object.keys(MATCH).find(k => MATCH[k].includes(c));
+        if (tpl) { hitTpl(tpl, i, 1); return; }
+        const rest = c.replace(DESCRIPTOR_RE, ' ');
+        const kw = KEYWORDS.find(([re]) => re.test(rest)); // 自由輸入的條件：權重較低，不擠掉膠囊選的棲地
+        if (kw) hitTpl(kw[1], i, 0.5);
+      });
+      // 同分時的依據：已勾選的修飾型條件（如 橋梁→溪流）與焦點物種（如 翠鳥→溪流），只加給已出現的模板
+      conds.forEach(c => { const t = MODIFIER[c]; if (t && score[t]) score[t] += 0.5; });
+      new Set((species || []).map(x => SPECIES_HINT[String(x).trim()]).filter(Boolean)).forEach(t => { if (score[t]) score[t] += 0.5; });
+      let ids = Object.keys(score).sort((a, b) => (score[b] - score[a]) || (first[a] - first[b])).slice(0, 3);
+      if (!ids.length) { // 只有修飾型條件 → 用它們所屬模板
+        conds.forEach(c => { const t = MODIFIER[c]; if (t && !ids.includes(t)) ids.push(t); });
+        ids = ids.slice(0, 3);
+      }
+      if (!ids.length) { // 依焦點物種推測
+        (species || []).forEach(s => { const t = SPECIES_HINT[String(s).trim()]; if (t && !ids.includes(t)) ids.push(t); });
+        ids = ids.slice(0, 3);
+      }
+      if (!ids.length) ids = ['generic'];
+      // 變體提示：竹林 → bamboo；針葉林、人工林 → conifer；木麻黃林 → casuarina
+      const variantsOf = tpl => {
+        const v = [];
+        if (tpl === 'forest') { if (has('竹林')) v.push('bamboo'); if (has('針葉林') || has('人工林')) v.push('conifer'); }
+        if (tpl === 'coast' && has('木麻黃林')) v.push('casuarina');
+        return v;
+      };
+      return ids.map(id => ({ id, variants: variantsOf(id), bridge: has('橋梁') }));
+    }
+
+    const VARIANT_HINT = {
+      bamboo: ['竹林剖面在該剖面物件加上 %', 'for a bamboo-grove section, add % to that section object'],
+      conifer: ['針葉林或人工林剖面在該剖面物件加上 %', 'for a conifer or plantation section, add % to that section object'],
+      casuarina: ['有木麻黃防風林時在該剖面物件加上 %', 'where a casuarina windbreak is present, add % to that section object'],
+    };
+    const slotsFor = p => Object.keys(T[p.id].slots).filter(s => !(p.id === 'stream' && s === 'bridge' && !p.bridge));
+    // 每個模板一行：「tpl 名稱：棲位代碼 名稱｜…」，代碼與 render() 接受的完全一致；變體提示另起一行
+    function promptLines(picked, lang) {
+      const en = lang === 'en';
+      return picked.map(p => {
+        const nm = NAMES[p.id];
+        const body = slotsFor(p).map(s => `${s} ${nm[2][s][en ? 1 : 0]}`).join(en ? ' | ' : '｜');
+        const v = (p.variants || []).map(x => (en ? VARIANT_HINT[x][1] : VARIANT_HINT[x][0]).replace('%', `"variant":"${x}"`)).join(en ? '; ' : '；');
+        return `${p.id} ${nm[en ? 1 : 0]}${en ? ': ' : '：'}${body}` + (v ? `\n  ${en ? 'variant: ' : '變體：'}${v}` : '');
+      }).join('\n');
+    }
+    // 4.2 的 JSON 格式範例：tpl 與棲位代碼取自第一個列出的模板，物種名稱為占位字
+    function example(picked, lang) {
+      const p = (picked && picked[0]) || { id: 'generic' }, sl = slotsFor(p), en = lang === 'en';
+      const sp = en
+        ? [['Plant name', 'P', 'fruit/shade'], ['Focal species name', 'A', 'breed', 1], ['Focal species name', 'A', 'forage', 1], ['Insect name', 'I', 'forage']]
+        : [['植物中名', 'P', '果實・遮蔭'], ['焦點物種中名', 'A', '繁殖', 1], ['焦點物種中名', 'A', '覓食', 1], ['昆蟲中名', 'I', '覓食']];
+      const e = ([n, g, act, f]) => Object.assign({ n, g, act }, f ? { f: 1 } : {});
+      return JSON.stringify({ v: 1, sections: [{ id: 'A', tpl: p.id, title: NAMES[p.id][en ? 1 : 0],
+        caption: en ? 'One configuration principle with a number or months' : '一句配置原則，附數值或月份',
+        slots: [{ s: sl[0], sp: [e(sp[0]), e(sp[1])] }, { s: sl[1], sp: [e(sp[2]), e(sp[3])] }] }] });
+    }
+
+    return { render, pick, promptLines, example, normalise, parseLenient };
+  })();
+
+  // 報告中的剖面資料區塊 → 剖面圖＋對照表（無區塊的舊報告原樣返回）
+  function renderCrossSections(html) {
+    return XSEC.render(html, LANG);
+  }
+
+  // 單一出口：新分析、手動貼上、歷史重開都經過這裡；下載／列印／新分頁都讀 analysisResult
   function showResult(html) {
-    html = withLayoutGuard(html);
+    html = renderCrossSections(html);
+    analysisNonce = makeNonce();
+    html = withLayoutGuard(html, analysisNonce);
     analysisResult = html;
     const frame = document.getElementById('resultFrame');
     frame.srcdoc = html;
     document.getElementById('resultDisplay').style.display = 'block';
+
+    // 報告可能不完整的提示：放在結果區（頁面上），不寫進報告本身
+    const notice = document.getElementById('resultNotice');
+    if (notice) {
+      if (isIncompleteReport(html)) {
+        notice.textContent = LANG === 'en'
+          ? '⚠️ This report may be incomplete: the output stopped before the end (length limit or interrupted response), so only the part that arrived is shown. Run the analysis again, or reduce the number of focal species or site conditions and retry.'
+          : '⚠️ 這份報告可能不完整：模型輸出在結尾前中止（達到長度上限或回應中斷），以下只顯示已收到的部分。建議重新分析，或減少焦點物種／基地條件後再試。';
+        notice.style.display = 'block';
+      } else {
+        notice.textContent = '';
+        notice.style.display = 'none';
+      }
+    }
 
     const meta = document.getElementById('resultMeta');
     if (analysisMeta) {
@@ -3251,8 +4517,9 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
   /* 隱藏列印不需要的互動元素（若報告中有）*/
   .no-print, button, nav { display: none !important; }
 }
-</style>
-<scr` + `ipt>
+</style>`;
+    // 列印腳本帶本次報告的 CSP nonce，緊接在文件最前面的版面防護之後（報告內容之前）
+    const printScript = `<scr` + `ipt nonce="${analysisNonce}">
   window.addEventListener('load', function() {
     var doPrint = function() {
       try { window.focus(); window.print(); } catch (e) { console.error(e); }
@@ -3266,7 +4533,11 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
   });
 </scr` + `ipt>`;
 
-    let modifiedHtml = analysisResult;
+    const guardTag = layoutGuardTag(analysisNonce);
+    const g = analysisResult.indexOf(guardTag);
+    let modifiedHtml = g >= 0
+      ? analysisResult.slice(0, g + guardTag.length) + printScript + analysisResult.slice(g + guardTag.length)
+      : analysisResult;
     if (modifiedHtml.match(/<\/head>/i)) {
       modifiedHtml = modifiedHtml.replace(/<\/head>/i, printAddon + '</head>');
     } else if (modifiedHtml.match(/<body[^>]*>/i)) {
@@ -3280,6 +4551,7 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
 
     // window.open 必須直接在 click handler 同步呼叫，否則彈窗會被擋
     const printWindow = window.open(url, '_blank');
+    if (printWindow) { try { printWindow.opener = null; } catch (_) {} }
 
     if (!printWindow) {
       URL.revokeObjectURL(url);
@@ -3297,7 +4569,8 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
     if (!analysisResult) return;
     const blob = new Blob([analysisResult], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
+    const w = window.open(url, '_blank');
+    if (w) { try { w.opener = null; } catch (_) {} }
   }
 
   async function copyResultSource() {
@@ -3315,13 +4588,24 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
   }
 
   function openPasteModal() {
+    const en = LANG === 'en';
     const modal = document.createElement('div');
     modal.className = 'paste-modal';
-    modal.innerHTML = `
+    modal.innerHTML = en ? `
+      <div class="paste-modal-content">
+        <h3>📋 Paste the Claude result</h3>
+        <p>Copy the report source from your Claude conversation — the <code>&lt;article&gt;…&lt;/article&gt;</code> block (older full HTML documents starting with <code>&lt;!DOCTYPE html&gt;</code> also work) — and paste it here. The report then appears below the form and can be downloaded.</p>
+        <textarea id="pasteTextarea" placeholder="<article>&#10;<h1>…</h1>&#10;..."></textarea>
+        <div class="paste-modal-actions">
+          <button class="btn btn-ghost" id="pasteCancelBtn">Cancel</button>
+          <button class="btn btn-primary" id="pasteSubmitBtn">Submit</button>
+        </div>
+      </div>
+    ` : `
       <div class="paste-modal-content">
         <h3>📋 貼上 Claude 結果</h3>
-        <p>從 Claude 對話複製整個 HTML 報告原始碼（含 <code>&lt;!DOCTYPE html&gt;</code>）貼入此處。送出後會顯示在表單下方並可下載。</p>
-        <textarea id="pasteTextarea" placeholder="<!DOCTYPE html>&#10;<html>&#10;..."></textarea>
+        <p>從 Claude 對話複製報告原始碼——<code>&lt;article&gt;…&lt;/article&gt;</code> 區塊（舊版以 <code>&lt;!DOCTYPE html&gt;</code> 開頭的完整 HTML 文件也可以）——貼入此處。送出後會顯示在表單下方並可下載。</p>
+        <textarea id="pasteTextarea" placeholder="<article>&#10;<h1>…</h1>&#10;..."></textarea>
         <div class="paste-modal-actions">
           <button class="btn btn-ghost" id="pasteCancelBtn">取消</button>
           <button class="btn btn-primary" id="pasteSubmitBtn">送出</button>
@@ -3332,10 +4616,34 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
 
     const close = () => modal.remove();
     modal.querySelector('#pasteCancelBtn').onclick = close;
-    modal.querySelector('#pasteSubmitBtn').onclick = () => {
+    const submitBtn = modal.querySelector('#pasteSubmitBtn');
+    submitBtn.onclick = async () => {
       const raw = modal.querySelector('#pasteTextarea').value.trim();
       if (!raw) { toast(t('⚠️ 請貼入 HTML 內容')); return; }
-      const html = neutralizeDarkColors(extractHTML(raw));
+      const extracted = extractHTML(raw);
+      if (!extracted) {
+        toast(en ? '⚠️ No report found — paste the <article>…</article> block or a full HTML document' : '⚠️ 找不到報告內容——請貼上 <article>…</article> 區塊或完整 HTML 文件');
+        return;
+      }
+      let html;
+      if (extracted.isArticle) {
+        // 新格式：與 API 路徑相同的包裝（固定樣式表、地圖、截斷標記）
+        submitBtn.disabled = true;
+        const mapDataUrl = await captureMapDataURL().catch(() => null);
+        // 報告語言依章節標題判斷（貼上的報告可能與目前介面語言不同）
+        const h2 = extracted.html.match(/<h2\b[^>]*>([\s\S]*?)<\/h2\s*>/i);
+        const repLang = h2 ? (/[\u4e00-\u9fff]/.test(h2[1]) ? 'zh' : 'en') : (en ? 'en' : 'zh');
+        html = wrapReport(extracted.html, {
+          lang: repLang,
+          site: { lat: state.lat, lon: state.lon, name: state.locationName },
+          mapDataUrl,
+          incomplete: !extracted.complete,
+        });
+      } else {
+        // 舊格式完整文件：照舊處理
+        html = neutralizeDarkColors(extracted.html);
+        if (!extracted.complete) html = markIncomplete(html);
+      }
       analysisMeta = null;
       showResult(html);
       saveToHistoryWithResult(html);
@@ -3564,12 +4872,12 @@ ${conditions}${habitatNeedsStr}${special}${osmContext}${inatContext}
 
   // ========== Toast ==========
   let toastTimer;
-  function toast(msg) {
+  function toast(msg, ms) {
     const el = document.getElementById('toast');
     el.textContent = msg;
     el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+    toastTimer = setTimeout(() => el.classList.remove('show'), ms || 2400);
   }
 
   // ========== Init ==========

@@ -92,7 +92,8 @@ export default async (request) => {
         max_tokens: MAX_TOKENS,
         stream: true,                     // 串流是關鍵：讓連線持續有資料流動，避開逾時
         messages: [{ role: 'user', content: prompt }],
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        // max_uses：限制搜尋次數，縮短生成時間、降低手機斷線風險（報告只需 ≤3 案例、≤15 筆文獻）
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 8 }],
       }),
     });
   } catch (e) {
