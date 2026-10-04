@@ -1,4 +1,4 @@
-# 棲共生 Qi-Coexistence v1.28
+# 棲共生 Qi-Coexistence v1.31
 
 景觀生態共存設計工作流工具 · eco4design.healsdesign.org
 國立臺灣大學 園藝暨景觀學系 · HEALS Design System
@@ -84,7 +84,7 @@ CC BY-NC-SA 4.0 · 張俊彥（Chang Chun-Yen）
 國立臺灣大學園藝暨景觀學系
 
 建議引用格式：
-> 張俊彥（2026）。棲共生 Qi-Coexistence v1.28：景觀生態共存設計工作流工具 [Web App]。國立臺灣大學園藝暨景觀學系。
+> 張俊彥（2026）。棲共生 Qi-Coexistence v1.31：景觀生態共存設計工作流工具 [Web App]。國立臺灣大學園藝暨景觀學系。
 
 ---
 

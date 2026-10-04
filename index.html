@@ -429,7 +429,7 @@
       <button type="button" id="langZh" class="lang-btn active">中文</button>
       <button type="button" id="langEn" class="lang-btn">EN</button>
     </div>
-    <div class="tag">🌿 Qi-Coexistence Workflow · v1.30</div>
+    <div class="tag">🌿 Qi-Coexistence Workflow · <span class="app-version">v1.31</span></div>
     <h1 class="title">棲<span class="dot">·</span>共生</h1>
     <p class="subtitle">
       生態基地分析工作流工具——選擇位置、設定焦點物種與基地條件，自動生成結構化提示詞送入 Claude 進行完整的生態共存設計分析。
@@ -741,7 +741,7 @@
       <span class="footer-sep">·</span>
       <button type="button" class="footer-link" id="feedbackBtn">💬 提供回饋</button>
       <span class="footer-sep">·</span>
-      <span class="footer-version">v1.9</span>
+      <span class="footer-version app-version">v1.31</span>
     </div>
     <div class="footer-text">
       棲共生 Qi-Coexistence · 景觀生態設計工作流 ·
@@ -761,12 +761,12 @@
   const SPECIES_COMBOS = [
     { name: '北部低海拔經典', en: 'N. Taiwan lowland', desc: '次生闊葉林', descEn: 'secondary broadleaf', items: ['藍腹鷴', '山羌', '白鼻心', '翡翠樹蛙'] },
     { name: '溪流—森林立體', en: 'Stream–forest strata', desc: '水域+樹冠', descEn: 'water + canopy', items: ['鉛色水鶇', '小剪尾', '翡翠樹蛙', '台灣獼猴'] },
-    { name: '平原都市公園', en: 'Urban park', desc: '中海拔以下', descEn: 'below mid-elevation', items: ['台灣藍鵲', '五色鳥', '貢德式赤蛙', '紅嘴黑鵯'] },
+    { name: '平原都市公園', en: 'Urban park', desc: '中海拔以下', descEn: 'below mid-elevation', items: ['台灣藍鵲', '五色鳥', '貢德氏赤蛙', '紅嘴黑鵯'] },
     { name: '低海拔山溝敏感', en: 'Sensitive ravine', desc: '需嚴格保育', descEn: 'strict conservation', items: ['八色鳥', '領角鴞', '白鼻心'] },
     { name: '中海拔混合林', en: 'Mid-elevation mixed', desc: '海拔 1500-2500', descEn: 'elev. 1500–2500 m', items: ['帝雉', '藍腹鷴', '台灣獼猴', '山羌'] },
     { name: '河川中下游', en: 'Mid–lower river', desc: '河岸與灘地', descEn: 'banks & flats', items: ['翠鳥', '夜鷺', '貢德氏赤蛙', '台灣石鮒'] },
-    { name: '海岸林組合', en: 'Coastal forest', desc: '濱海風衝林', descEn: 'wind-swept littoral', items: ['黑鳶', '玄燕鷗', '台灣狗母魚', '招潮蟹'] },
-    { name: '濕地候鳥', en: 'Wetland migrants', desc: '冬季棲息', descEn: 'winter roosting', items: ['黑面琵鷺', '小鸊鷉', '反嘴鴴', '東方環頸鴴'] }
+    { name: '海岸林組合', en: 'Coastal forest', desc: '濱海風衝林', descEn: 'wind-swept littoral', items: ['凶狠圓軸蟹', '紫地蟹', '黃裳鳳蝶', '大冠鷲'] },
+    { name: '濕地候鳥', en: 'Wetland migrants', desc: '冬季棲息', descEn: 'winter roosting', items: ['黑面琵鷺', '琵嘴鴨', '反嘴鴴', '東方環頸鴴'] }
   ];
 
   const CONDITION_COMBOS = [
@@ -783,7 +783,7 @@
     species: {
       '鳥類': ['台灣藍鵲', '五色鳥', '紅嘴黑鵯', '白頭翁', '八色鳥', '領角鴞', '藍腹鷴', '帝雉',
               '繡眼畫眉', '台灣紫嘯鶇', '紅尾水鴝', '翠鳥', '夜鷺', '黑面琵鷺', '黃鸝',
-              '鉛色水鶇', '小剪尾', '紫嘯鶇', '黑鳶', '冠羽畫眉'],
+              '鉛色水鶇', '小剪尾', '黑鳶', '冠羽畫眉'],
       '哺乳': ['山羌', '台灣獼猴', '白鼻心', '穿山甲', '食蟹獴', '台灣黑熊', '石虎',
               '台灣野山羊', '水鹿', '長吻松鼠', '台灣鼴鼠', '台灣大蹄鼻蝠'],
       '兩爬': ['翡翠樹蛙', '台北樹蛙', '莫氏樹蛙', '面天樹蛙', '艾氏樹蛙', '橙腹樹蛙',
@@ -1042,6 +1042,9 @@
     '✅ 全部加入 ': '✅ Added all ',
     '🗑 移除 ': '🗑 Removed ',
     '🔄 全部已在條件中': '🔄 All already in conditions',
+    '⚠️ 瀏覽器無法儲存歷史紀錄（可能是無痕模式或已停用網站資料）': '⚠️ The browser cannot save history (private browsing or site data disabled?)',
+    '⚠️ 歷史紀錄空間已滿：已移除較舊報告中的地圖圖片以騰出空間': '⚠️ History storage is full: removed map images from older reports to free space',
+    '❌ 歷史紀錄空間已滿，這份報告未能存入。請先「下載 HTML」保存，並匯出或刪除舊紀錄。': '❌ History storage is full and this report was not saved. Use "Download HTML" now, then export or delete old records.',
     '✨ 自動帶入 ': '✨ Auto-filled ',
     ' 項基地條件': ' site conditions',
     '✅ 分析完成（': '✅ Analysis complete (',
@@ -1225,6 +1228,7 @@
     '台灣山椒魚': 'Taiwan Salamander', '攀木蜥蜴': 'Swinhoe\u2019s Tree Lizard', '蛇蜥': 'Glass Lizard',
     '雨傘節': 'Many-banded Krait', '龜殼花': 'Taiwan Habu',
     '台灣石鮒': 'Taiwan Bitterling', '台灣狗母魚': 'Lizardfish', '招潮蟹': 'Fiddler Crab',
+    '凶狠圓軸蟹': 'Brown Land Crab', '紫地蟹': 'Purple Land Crab', '黃裳鳳蝶': 'Golden Birdwing', '大冠鷲': 'Crested Serpent Eagle', '琵嘴鴨': 'Northern Shoveler',
     '中華珈蟌': 'Chinese Damselfly', '斑龜': 'Chinese Stripe-necked Turtle',
     // 林相 Forest
     '次生林': 'Secondary forest', '原始闊葉林': 'Primary broadleaf forest', '針葉林': 'Coniferous forest',
@@ -2496,9 +2500,26 @@ ${REPORT_RULES_ZH}`;
     } catch (e) { return []; }
   }
 
+  // 存檔空間（localStorage 約 5 MB）滿了：先拿掉舊紀錄裡內嵌的地圖圖片，再由最舊的開始移除報告內容；
+  // 每一步都明確告知使用者，不再默默失敗
+  const isQuotaError = e => e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014);
   function saveHistoryArray(arr) {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); }
-    catch (e) { console.warn('localStorage 不可用:', e); }
+    const put = a => localStorage.setItem(STORAGE_KEY, JSON.stringify(a));
+    try { put(arr); return true; }
+    catch (e) {
+      if (!isQuotaError(e)) { console.warn('localStorage 不可用:', e); toast(t('⚠️ 瀏覽器無法儲存歷史紀錄（可能是無痕模式或已停用網站資料）')); return false; }
+    }
+    const DATA_IMG = /(<img\b[^>]*\ssrc\s*=\s*["'])data:image\/[^"']+(["'])/gi;
+    let a = arr.map((x, i) => (i > 0 && x.htmlResult) ? Object.assign({}, x, { htmlResult: x.htmlResult.replace(DATA_IMG, '$1$2') }) : x);
+    try { put(a); toast(t('⚠️ 歷史紀錄空間已滿：已移除較舊報告中的地圖圖片以騰出空間')); return true; } catch (_) {}
+    let dropped = 0;
+    for (let i = a.length - 1; i > 0; i--) {
+      if (!a[i].htmlResult) continue;
+      a[i] = Object.assign({}, a[i]); delete a[i].htmlResult; dropped++;
+      try { put(a); toast(LANG === 'en' ? `⚠️ History storage is full: removed the report content of the ${dropped} oldest record(s) (form inputs kept). Export JSON to keep a backup.` : `⚠️ 歷史紀錄空間已滿：已移除最舊 ${dropped} 筆紀錄的報告內容（保留表單條件）。建議「匯出 JSON」備份。`, 7000); return true; } catch (_) {}
+    }
+    toast(t('❌ 歷史紀錄空間已滿，這份報告未能存入。請先「下載 HTML」保存，並匯出或刪除舊紀錄。'), 8000);
+    return false;
   }
 
   function saveToHistory() {
@@ -2517,6 +2538,7 @@ ${REPORT_RULES_ZH}`;
     arr.unshift(entry);
     saveHistoryArray(arr.slice(0, 100));
     renderHistory();
+    return entry.ts;
   }
 
   function renderHistory() {
@@ -2532,15 +2554,15 @@ ${REPORT_RULES_ZH}`;
       item.className = 'history-item' + (e.htmlResult ? ' has-result' : '');
       const date = new Date(e.ts);
       const dateStr = `${date.getMonth()+1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;
-      const resultBadge = e.htmlResult ? '<span class="history-result-badge">📄 含結果</span>' : '';
+      const resultBadge = e.htmlResult ? `<span class="history-result-badge">${e.partial ? '📄 部分結果' : '📄 含結果'}</span>` : '';
       item.innerHTML = `
         <div class="history-head">
-          <span class="history-loc">${e.name || `(${e.lat}, ${e.lon})`}${resultBadge}</span>
+          <span class="history-loc">${escapeHtml(e.name || `(${e.lat}, ${e.lon})`)}${resultBadge}</span>
           <span class="history-date">${dateStr}</span>
         </div>
         <div class="history-sub">
-          🎯 ${e.species.join('、') || '—'}<br>
-          🌳 ${e.conditions.join('、') || '—'}${e.special ? '<br>⚠️ ' + e.special : ''}
+          🎯 ${escapeHtml(e.species.join('、')) || '—'}<br>
+          🌳 ${escapeHtml(e.conditions.join('、')) || '—'}${e.special ? '<br>⚠️ ' + escapeHtml(e.special) : ''}
         </div>
         <div class="history-actions">
           <button data-idx="${idx}" class="load-btn">↻ 載入到表單</button>
@@ -2613,8 +2635,19 @@ ${REPORT_RULES_ZH}`;
       try {
         const data = JSON.parse(ev.target.result);
         if (!Array.isArray(data)) throw new Error('JSON 必須是陣列');
+        // 只收格式正確的紀錄（別人分享的檔案可能被改過）：欄位型別不對的整筆略過
+        const strArr = v => Array.isArray(v) && v.every(x => typeof x === 'string');
+        const num = v => v == null || (typeof v === 'number' && isFinite(v));
+        const valid = data.filter(x => x && typeof x === 'object' && typeof x.ts === 'string' && !isNaN(Date.parse(x.ts)) &&
+          num(x.lat) && num(x.lon) && strArr(x.species) && strArr(x.conditions) &&
+          (x.habitatNeeds == null || strArr(x.habitatNeeds)) && (x.name == null || typeof x.name === 'string') &&
+          (x.special == null || typeof x.special === 'string') && (x.htmlResult == null || typeof x.htmlResult === 'string'))
+          .map(x => ({ ts: x.ts, lat: x.lat, lon: x.lon, name: x.name || '', species: x.species, conditions: x.conditions,
+            habitatNeeds: x.habitatNeeds || [], special: x.special || '', ...(x.htmlResult ? { htmlResult: x.htmlResult, htmlSavedAt: typeof x.htmlSavedAt === 'string' ? x.htmlSavedAt : x.ts } : {}),
+            ...(x.partial === true ? { partial: true } : {}) }));
+        const skipped = data.length - valid.length;
         const arr = loadHistory();
-        const merged = [...data, ...arr];
+        const merged = [...valid, ...arr];
         const seen = new Set();
         const unique = merged.filter(x => {
           if (!x.ts || seen.has(x.ts)) return false;
@@ -2624,7 +2657,8 @@ ${REPORT_RULES_ZH}`;
         unique.sort((a,b) => b.ts.localeCompare(a.ts));
         saveHistoryArray(unique.slice(0, 200));
         renderHistory();
-        toast(LANG==='en' ? `✅ Imported ${data.length} (merged total ${unique.length})` : `✅ 已匯入 ${data.length} 筆（合併後共 ${unique.length} 筆）`);
+        toast((LANG==='en' ? `✅ Imported ${valid.length} (merged total ${unique.length})` : `✅ 已匯入 ${valid.length} 筆（合併後共 ${unique.length} 筆）`) +
+          (skipped ? (LANG==='en' ? ` · skipped ${skipped} malformed` : `・略過 ${skipped} 筆格式不符`) : ''));
       } catch (err) {
         toast('❌ 匯入失敗：' + err.message);
       }
@@ -2815,6 +2849,9 @@ body.heals-doc{margin:0;background:#faf6ea;color:#2e2a22;font-family:'Noto Serif
 .heals-doc tbody th{background:#fffdf7;color:#456238;font-weight:700}
 .heals-doc ul.refs{list-style:none;padding:0;font-size:13px;line-height:1.65}
 .heals-doc ul.refs li{padding-left:2em;text-indent:-2em;margin-bottom:6px;overflow-wrap:anywhere}
+.heals-doc .src-flag{color:#b8694a;font-family:'Noto Sans TC',sans-serif;font-size:11px;margin-left:4px;white-space:nowrap}
+.heals-doc footer.provenance{margin-top:18px;padding-top:8px;border-top:1px dashed #d4cdb8;font-family:'Noto Sans TC',sans-serif;font-size:11px;line-height:1.6;color:#6b6e6a}
+.heals-doc footer.provenance p{margin:2px 0}
 .heals-doc .note{margin-top:26px;padding-top:10px;border-top:1px solid #d4cdb8;font-family:'Noto Sans TC',sans-serif;font-size:12px;color:#456238}
 .heals-doc figure.heals-map{margin:4px 0 22px;text-align:center}
 .heals-doc figure.heals-map img{display:block;box-sizing:border-box;max-width:100%;height:auto;margin:0 auto;border:1px solid #d4cdb8;border-radius:3px;background:#fffdf7}
@@ -2980,6 +3017,11 @@ body.heals-doc{margin:0;background:#faf6ea;color:#2e2a22;font-family:'Noto Serif
       else a = a.replace(/<article\b[^>]*>/i, m => m + fig);
     }
 
+    // 引用比對與 AI 產出聲明（頁尾）
+    const check = checkCitations(a, opts.sources, en);
+    a = check.html;
+    a = a.replace(/<\/article\s*>\s*$/i, () => buildProvenance(opts.provenance, check, en) + '</article>');
+
     const h1 = a.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i);
     const title = (h1 ? h1[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim() : '') ||
       (en ? 'Qi-Coexistence design analysis' : '棲共生 生態共存設計分析');
@@ -3000,6 +3042,54 @@ ${a}
 </body>
 </html>
 `;
+  }
+
+  // ---------- 引用比對 ----------
+  // API 路徑會收到模型實際搜尋到的網址（web_search_tool_result）。參考文獻每一筆若有網址或 DOI，
+  // 只比對「網域」與「DOI」；都對不上本次搜尋結果的，加註［未見於本次搜尋］。這不是查證，只是讓看不見的落差看得見。
+  const hostOf = u => { try { return new URL(u).hostname.replace(/^www\./i, '').toLowerCase(); } catch (_) { return ''; } };
+  const DOI_RE = /\b10\.\d{4,9}\/[^\s"<>]+/gi;
+  function checkCitations(article, sources, en) {
+    const res = { html: article, sources: Array.isArray(sources) ? sources.length : null, refs: 0, linked: 0, unmatched: 0 };
+    if (!Array.isArray(sources)) return res;                       // 手動路徑：沒有搜尋紀錄，不比對
+    const hosts = new Set(sources.map(hostOf).filter(Boolean));
+    const srcText = sources.join(' ').toLowerCase();
+    try {
+      const doc = new DOMParser().parseFromString(article, 'text/html');
+      const items = doc.querySelectorAll('ul.refs > li, ol.refs > li');
+      items.forEach(li => {
+        res.refs++;
+        const text = li.textContent || '';
+        const urls = [...li.querySelectorAll('a[href]')].map(x => x.getAttribute('href')).concat(text.match(/https?:\/\/[^\s<>"）)]+/gi) || []);
+        const dois = (text.match(DOI_RE) || []).concat(urls.join(' ').match(DOI_RE) || []).map(d => d.replace(/[.,;)\]]+$/, '').toLowerCase());
+        if (!urls.length && !dois.length) return;                  // 書籍等沒有網址的文獻：不比對
+        res.linked++;
+        const hit = urls.some(u => hosts.has(hostOf(u))) || dois.some(d => srcText.includes(d));
+        if (!hit) {
+          res.unmatched++;
+          const flag = doc.createElement('span');
+          flag.className = 'src-flag';
+          flag.textContent = en ? ' [not among this run\u2019s search results]' : '［未見於本次搜尋］';
+          li.appendChild(flag);
+        }
+      });
+      if (res.unmatched) res.html = doc.body.innerHTML;
+    } catch (_) {}
+    return res;
+  }
+  // 頁尾：AI 產出聲明＋可追溯資訊（模型、時間、搜尋次數、引用比對結果、工具版本）
+  function buildProvenance(pv, check, en) {
+    pv = pv || {};
+    const parts = [];
+    const when = pv.timestamp ? new Date(pv.timestamp) : new Date();
+    const ds = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`;
+    parts.push(en ? `Generated by AI (${pv.model ? escapeHtml(pv.model) : 'Claude'}) on ${ds}` : `本報告由 AI（${pv.model ? escapeHtml(pv.model) : 'Claude'}）於 ${ds} 產生`);
+    if (pv.route === 'manual') parts.push(en ? 'manual Claude.ai route (search activity not recorded)' : '手動 Claude.ai 路徑（無搜尋紀錄）');
+    else if (pv.searchCalls != null) parts.push(en ? `${pv.searchCalls} web searches, ${check.sources != null ? check.sources : 0} source URLs received` : `網路搜尋 ${pv.searchCalls} 次、取得 ${check.sources != null ? check.sources : 0} 個來源網址`);
+    if (check.sources != null && check.linked) parts.push(en ? `${check.unmatched} of ${check.linked} linked references not found among the search results` : `參考文獻中有網址者 ${check.linked} 筆，其中 ${check.unmatched} 筆未見於本次搜尋`);
+    parts.push(en ? `Tool: Qi-Coexistence ${APP_VERSION}` : `工具：棲共生 Qi-Coexistence ${APP_VERSION}`);
+    const warn = en ? 'AI-generated content may contain errors; verify every citation and field-check before use in design or coursework.' : 'AI 產出內容可能有誤；用於設計或課業前，請逐筆查證引用並現地確認。';
+    return `<footer class="provenance"><p>${parts.join(en ? ' · ' : '｜')}</p><p>${warn}</p></footer>`;
   }
 
   // 舊格式（完整文件）被截斷時也加上標記，讓結果區顯示「可能不完整」提示
@@ -3148,16 +3238,25 @@ ${a}
     }
 
     const startTime = Date.now();
-    // 供 catch 使用：紀錄中斷時已完成多少，才能給出具體的失敗說明
+    // 供 catch 使用：紀錄中斷時已完成多少，才能給出具體的失敗說明，並保留已收到的部分報告
     let progressChars = 0;
     let progressSearches = 0;
     let streamStarted = false;
+    let fullText = '';
+    let searchCalls = 0;
+    const sources = [];           // 模型實際搜尋到的網址（web_search_tool_result），供引用比對
+    // 送出前先把表單存進歷史：就算之後斷線，輸入條件也不會遺失；完成或中斷時再把結果補進同一筆
+    const runTs = saveToHistory();
+    const ctl = new AbortController();
+    const STALL_MS = 90000;       // 90 秒完全沒有收到資料 → 視為卡住，主動中止
+    let stalled = false;
     try {
       // 送到本站 Edge Function 代理（金鑰在伺服器端，前端看不到）
       const response = await fetch(API_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passcode, model, prompt: fullPrompt })
+        body: JSON.stringify({ passcode, model, prompt: fullPrompt }),
+        signal: ctl.signal,
       });
 
       if (!response.ok) {
@@ -3203,8 +3302,6 @@ ${a}
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let fullText = '';
-      let searchCalls = 0;
       let usage = {};
       let streamError = null;
       let stopReason = '';   // end_turn / max_tokens / pause_turn…；用來判斷報告是否被截斷
@@ -3212,7 +3309,11 @@ ${a}
       const subtextEl = document.getElementById('loadingProgress');
 
       while (true) {
-        const { done, value } = await reader.read();
+        let stallTimer;
+        const stall = new Promise((_, rej) => { stallTimer = setTimeout(() => { stalled = true; ctl.abort(); rej(new Error('stalled')); }, STALL_MS); });
+        let chunk;
+        try { chunk = await Promise.race([reader.read(), stall]); } finally { clearTimeout(stallTimer); }
+        const { done, value } = chunk;
         if (done) break;
         streamStarted = true;
         buffer += decoder.decode(value, { stream: true });
@@ -3232,6 +3333,8 @@ ${a}
             if (ev.content_block.type === 'server_tool_use') {
               searchCalls++;
               if (subtextEl) subtextEl.textContent = `🔍 已進行 ${searchCalls} 次網路搜尋…`;
+            } else if (ev.content_block.type === 'web_search_tool_result' && Array.isArray(ev.content_block.content)) {
+              ev.content_block.content.forEach(r => { if (r && typeof r.url === 'string' && !sources.includes(r.url)) sources.push(r.url); });
             }
           } else if (ev.type === 'message_delta') {
             if (ev.usage) usage = Object.assign(usage, ev.usage);
@@ -3268,7 +3371,8 @@ ${a}
 
       if (extracted.isArticle) {
         // 新格式：包成完整文件，套固定樣式表並插入地圖
-        html = wrapReport(html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated });
+        html = wrapReport(html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources,
+          provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
       } else {
         // 舊格式（模型仍輸出完整文件）：沿用原本的後處理
         // 把 Claude 寫的 staticmap.openstreetmap.de URL 換成我們本機截的地圖
@@ -3299,24 +3403,41 @@ ${a}
         usage: usage || {},
         searchCalls: searchCalls,
         stopReason: stopReason,
+        sources: sources.slice(0, 80),
       };
 
       showResult(html);
-      // 歷史紀錄存「繪製剖面圖之前」的版本（JSON 約 2–4 KB，而非每幅約 25 KB 的 SVG）；重開時會重新繪製
-      saveToHistoryWithResult(html);
       if (truncated) {
         toast(LANG==='en' ? `⚠️ Analysis finished (${elapsed}s) — the report may be incomplete` : `⚠️ 分析結束（${elapsed} 秒）——報告可能不完整`);
       } else {
         toast(LANG==='en' ? `✅ Analysis complete (${elapsed}s)` : `✅ 分析完成（${elapsed} 秒）`);
       }
+      // 歷史紀錄存「繪製剖面圖之前」的版本；放在完成提示之後，存檔空間不足的警告才不會被蓋掉
+      saveToHistoryWithResult(html, runTs, { sources: analysisMeta.sources });
     } catch (e) {
-      const rawMsg = e.message || String(e);
+      const rawMsg = stalled ? 'stalled' : (e.message || String(e));
       const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+
+      // 已收到部分報告：照樣顯示並存入歷史（標為不完整），3–6 分鐘的等待不會全部歸零
+      let partialShown = false;
+      if (!e.healsNoReport && fullText.trim()) {
+        try {
+          const ex = extractHTML(fullText);
+          if (ex && ex.isArticle) {
+            const ph = wrapReport(ex.html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: true, sources,
+              provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
+            analysisMeta = { model, elapsed: elapsedSec, timestamp: new Date().toISOString(), usage: {}, searchCalls, stopReason: 'interrupted', sources: sources.slice(0, 80) };
+            showResult(ph);
+            saveToHistoryWithResult(ph, runTs, { sources: analysisMeta.sources, partial: true });
+            partialShown = true;
+          }
+        } catch (_) {}
+      }
 
       // Safari 的 "Load failed" 與 Chrome 的 "Failed to fetch" 都是連線中斷的通用訊息，
       // 本身不說明原因。這裡依「跑了多久、串流是否已開始、分頁是否曾被切到背景」
       // 推斷最可能的原因並給出具體處理方式。
-      const isNetworkDrop = !e.healsNoReport && /Load failed|Failed to fetch|NetworkError|network connection was lost|The Internet connection appears to be offline|terminated|aborted/i.test(rawMsg);
+      const isNetworkDrop = !e.healsNoReport && (stalled || /Load failed|Failed to fetch|NetworkError|network error|network connection was lost|The Internet connection appears to be offline|terminated|aborted/i.test(rawMsg));
 
       let finalMsg;
       if (isNetworkDrop) {
@@ -3375,6 +3496,12 @@ ${a}
         finalMsg = rawMsg;
       }
 
+      if (stalled) finalMsg = (LANG === 'en'
+        ? `No data was received for ${STALL_MS / 1000} seconds, so the request was stopped.\n\n`
+        : `連續 ${STALL_MS / 1000} 秒沒有收到任何資料，已自動中止。\n\n`) + finalMsg;
+      if (partialShown) finalMsg = (LANG === 'en'
+        ? 'The part of the report received before the interruption is shown below and saved to history (marked incomplete).\n\n'
+        : '中斷前已收到的部分報告顯示在下方，並已存入歷史紀錄（標示為不完整）。\n\n') + finalMsg;
       showError(finalMsg);
       console.error('Claude API error:', e, {
         elapsedSec, streamStarted, progressChars, progressSearches, wentBackground,
@@ -4333,7 +4460,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     };
     // 修飾型條件：只開啟某模板的特定棲位，本身不決定模板
     const MODIFIER = { '步道': 'forest', '林道': 'forest', '產業道路': 'farmland', '橋梁': 'stream', '堤防': 'stream', '隧道': 'cliff', '稜線': 'cliff', '苔蘚': 'ravine', '自然保留區': null, '保護區': null, '國家公園': null };
-    const SPECIES_HINT = { '黑面琵鷺': 'estuary', '反嘴鴴': 'estuary', '招潮蟹': 'estuary', '玄燕鷗': 'coast', '台灣狗母魚': 'coast', '鉛色水鶇': 'ravine', '小剪尾': 'ravine', '台灣山椒魚': 'ravine', '翠鳥': 'stream', '夜鷺': 'stream', '台灣石鮒': 'stream', '水雉': 'pond', '小鸊鷉': 'pond' };
+    const SPECIES_HINT = { '黑面琵鷺': 'estuary', '反嘴鴴': 'estuary', '招潮蟹': 'estuary', '玄燕鷗': 'coast', '台灣狗母魚': 'coast', '凶狠圓軸蟹': 'coast', '紫地蟹': 'coast', '琵嘴鴨': 'estuary', '鉛色水鶇': 'ravine', '小剪尾': 'ravine', '台灣山椒魚': 'ravine', '翠鳥': 'stream', '夜鷺': 'stream', '台灣石鮒': 'stream', '水雉': 'pond', '小鸊鷉': 'pond' };
     // 自訂（自由輸入）條件的關鍵字；依序比對，先中者優先。
     // 英文用字詞邊界，避免 research→sea、parking→park 之類的誤判
     // 描述詞（海拔、保護區身分）先從條件中拿掉再比對：本身不決定模板，但不能讓「低海拔闊葉林」整條被丟掉
@@ -4638,6 +4765,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
           site: { lat: state.lat, lon: state.lon, name: state.locationName },
           mapDataUrl,
           incomplete: !extracted.complete,
+          provenance: { route: 'manual', timestamp: new Date().toISOString() },
         });
       } else {
         // 舊格式完整文件：照舊處理
@@ -4654,17 +4782,20 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     setTimeout(() => modal.querySelector('#pasteTextarea').focus(), 100);
   }
 
-  function saveToHistoryWithResult(html) {
-    if (state.lat == null) return;
+  function saveToHistoryWithResult(html, runTs, extra) {
+    if (state.lat == null && !runTs) return;
+    extra = extra || {};
     const arr = loadHistory();
     const now = new Date().toISOString();
-    const recent = arr[0];
-    // 1 分鐘內、同位置 → 更新；否則新增
-    if (recent &&
-        Date.now() - new Date(recent.ts).getTime() < 60000 &&
-        recent.lat === state.lat && recent.lon === state.lon) {
+    // 分析開始時已存的那一筆（依 ts 對應）→ 補上結果；否則 1 分鐘內、同位置 → 更新；再不然新增
+    const own = runTs ? arr.find(x => x.ts === runTs) : null;
+    const recent = own || (arr[0] && Date.now() - new Date(arr[0].ts).getTime() < 60000 &&
+        arr[0].lat === state.lat && arr[0].lon === state.lon ? arr[0] : null);
+    if (recent) {
       recent.htmlResult = html;
       recent.htmlSavedAt = now;
+      if (extra.sources) recent.sources = extra.sources;
+      if (extra.partial) recent.partial = true; else delete recent.partial;
       saveHistoryArray(arr);
     } else {
       const entry = {
@@ -4677,6 +4808,8 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
         special: state.specialNotes,
         htmlResult: html,
         htmlSavedAt: now,
+        ...(extra.sources ? { sources: extra.sources } : {}),
+        ...(extra.partial ? { partial: true } : {}),
       };
       arr.unshift(entry);
       saveHistoryArray(arr.slice(0, 100));
@@ -4687,7 +4820,8 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
   // ========== About & Feedback ==========
   // 將此處 email 改成您自己的（接收回饋用）
   const FEEDBACK_EMAIL = 'cycland@ntu.edu.tw';
-  const APP_VERSION = 'v1.9';
+  const APP_VERSION = 'v1.31'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
+  document.querySelectorAll('.app-version').forEach(el => { el.textContent = APP_VERSION; });
 
   function openAboutModal() {
     const modal = document.createElement('div');
