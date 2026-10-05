@@ -162,8 +162,8 @@
   .history-loc { font-family: var(--display); font-weight: 500; color: var(--moss); }
   .history-date { font-size: 11px; color: var(--moss-light); font-style: italic; }
   .history-sub { font-size: 12px; color: var(--ink-soft); margin-top: 3px; font-family: var(--serif); line-height: 1.5; }
-  .history-actions { margin-top: 6px; display: flex; gap: 8px; }
-  .history-actions button { font-size: 11px; padding: 3px 8px; background: none; border: 1px solid var(--border); border-radius: 3px; cursor: pointer; color: var(--ink-soft); font-family: var(--serif); }
+  .history-actions { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .history-actions button { white-space: nowrap; font-size: 11px; padding: 3px 8px; background: none; border: 1px solid var(--border); border-radius: 3px; cursor: pointer; color: var(--ink-soft); font-family: var(--serif); }
   .history-actions button:hover { background: var(--clay-pale); color: var(--clay); border-color: var(--clay); }
   .history-actions button.danger:hover { background: #f4dcdc; color: #a02828; border-color: #a02828; }
 
@@ -1057,6 +1057,12 @@
     '🗑 已清除本機通行碼': '🗑 Passcode cleared from this browser',
     '🗑 表單已重設': '🗑 Form reset',
     '✅ 已載入到表單': '✅ Loaded into the form',
+    '📜 原始版面': '📜 Original layout',
+    '查證前的原始文件（舊版版面，不含查證標記）': 'The document as it was before verification (old layout, no verification marks)',
+    'ℹ️ 這是查證前的原始文件（舊版版面，不含本工具的查證標記）；查證結果在同一筆的「📄 顯示結果」中。': 'ℹ️ This is the document as it was before verification (old layout, without this tool’s verification marks); the verified version opens from the same record’s “📄” result button.',
+    'ℹ️ 這份報告不是由本工具目前的版本組裝，為防止原文件的樣式偽造查證結果，已改用本工具的版面重新排版後再查證（文字與基地地圖保留，原文件的樣式與向量圖形不保留）；查證前的原始版面已另存於歷史紀錄，可按該筆的「📜 原始版面」檢視。': 'ℹ️ This report was not assembled by the current version of this tool, so it was re-laid-out in this tool’s own layout before verification, to stop the document’s own styling from faking the results (text and the site map are kept; the document’s own styling and vector graphics are not). The original layout is kept in the history record: use its “📜 Original layout” button.',
+    'ℹ️ 這份報告不是由本工具目前的版本組裝，為防止原文件的樣式偽造查證結果，已改用本工具的版面重新排版後再查證（文字與基地地圖保留，原文件的樣式與向量圖形不保留）。': 'ℹ️ This report was not assembled by the current version of this tool, so it was re-laid-out in this tool’s own layout before verification, to stop the document’s own styling from faking the results (text and the site map are kept; the document’s own styling and vector graphics are not).',
+    '⚠️ 歷史紀錄空間已滿：已移除舊報告查證前的原始版面備份（查證後的報告保留）。建議「匯出 JSON」備份。': '⚠️ History storage is full: removed the pre-verification backups of old reports (the verified reports are kept). Export JSON to keep a backup.',
     '📋 已複製提示詞': '📋 Prompt copied',
     '❌ 複製失敗': '❌ Copy failed',
     '⬇ 已下載 HTML': '⬇ HTML downloaded',
@@ -2580,6 +2586,11 @@ ${REPORT_RULES_ZH}`;
     };
     let a = arr.map((x, i) => (i > 0 ? slim(x, false) : x));
     try { put(a); return true; } catch (_) {}
+    // 舊報告查證前的原始版面備份（查證後的版本已保留文字與地圖）：先於地圖與報告內容移除
+    if (a.some(x => x.htmlOriginal)) {
+      a = a.map(x => { if (!x.htmlOriginal) return x; const y = Object.assign({}, x); delete y.htmlOriginal; return y; });
+      try { put(a); toast(t('⚠️ 歷史紀錄空間已滿：已移除舊報告查證前的原始版面備份（查證後的報告保留）。建議「匯出 JSON」備份。'), 7000); return true; } catch (_) {}
+    }
     const DATA_IMG = /(<img\b[^>]*\ssrc\s*=\s*["'])data:image\/[^"']+(["'])/gi;
     a = a.map((x, i) => (i > 0 && x.htmlResult) ? Object.assign({}, x, { htmlResult: x.htmlResult.replace(DATA_IMG, '$1$2') }) : x);
     try { put(a); toast(t('⚠️ 歷史紀錄空間已滿：已移除較舊報告中的地圖圖片以騰出空間')); return true; } catch (_) {}
@@ -2641,6 +2652,7 @@ ${REPORT_RULES_ZH}`;
         <div class="history-actions">
           <button data-idx="${idx}" class="load-btn">↻ 載入到表單</button>
           ${e.htmlResult ? `<button data-idx="${idx}" class="show-result-btn">📄 顯示結果</button>` : ''}
+          ${e.htmlOriginal ? `<button data-idx="${idx}" class="show-orig-btn" title="${escapeHtml(t('查證前的原始文件（舊版版面，不含查證標記）'))}">${escapeHtml(t('📜 原始版面'))}</button>` : ''}
           <button data-idx="${idx}" class="del-btn danger">✕ 刪除</button>
         </div>
       `;
@@ -2666,6 +2678,21 @@ ${REPORT_RULES_ZH}`;
           // 尚未查核的舊報告：提示可查核（不自動送出）
           if (!/<section\b[^>]*class="verification"/.test(shown)) setVerifyStatus(t('ℹ️ 這份報告的參考文獻尚未經本工具查核：按「🔎 查證文獻」即可查核。'), 'warn');
         }
+      };
+    });
+    // 查證前的原始文件：與舊紀錄相同的顯示方式（帶舊查證標記者先重建，避免作者自帶的樣式偽造結果）
+    list.querySelectorAll('.show-orig-btn').forEach(btn => {
+      btn.onclick = () => {
+        const entry = arr[+btn.dataset.idx];
+        if (!entry || typeof entry.htmlOriginal !== 'string') return;
+        analysisMeta = null;
+        let shown = entry.htmlOriginal, trusted = false;
+        if (/\bvf-prov\b|class="verification"|class="vf\b/.test(shown)) {
+          const rb = rebuildUntrusted(shown, reportLangOf(shown));
+          if (rb) { shown = rb; trusted = true; }
+        }
+        showResult(shown, { ts: entry.ts, meta: entry.meta ? compactMeta(entry.meta) : legacyMeta(entry), trusted });
+        setVerifyStatus(t('ℹ️ 這是查證前的原始文件（舊版版面，不含本工具的查證標記）；查證結果在同一筆的「📄 顯示結果」中。'), 'warn');
       };
     });
     list.querySelectorAll('.del-btn').forEach(btn => {
@@ -2714,10 +2741,13 @@ ${REPORT_RULES_ZH}`;
 
   // 匯入的報告內容一律重建（只保留內容、套本工具樣式表、移除舊的查證標記）：
   // 別人分享的檔案可能夾帶樣式表偽造查證結果，因此匯入後須重新查核（查證紀錄不沿用）
+  // 舊版匯出檔（本功能之前，沒有 clean 標記）或已有備份的紀錄：重建會失去原文件的樣式與向量圖形，原始文件另存為 htmlOriginal
   function importedHtml(x) {
     let h = null;
     try { h = rebuildUntrusted(x.htmlResult, reportLangOf(x.htmlResult)); } catch (e) { console.warn('[import] rebuild failed', e); }
-    return h ? { htmlResult: h, htmlSavedAt: typeof x.htmlSavedAt === 'string' ? x.htmlSavedAt : x.ts, clean: true } : {};
+    if (!h) return {};
+    const orig = typeof x.htmlOriginal === 'string' && x.htmlOriginal ? x.htmlOriginal : (x.clean !== true && h !== x.htmlResult ? x.htmlResult : null);
+    return { htmlResult: h, htmlSavedAt: typeof x.htmlSavedAt === 'string' ? x.htmlSavedAt : x.ts, clean: true, ...(orig ? { htmlOriginal: orig } : {}) };
   }
   function importJSON(file) {
     const reader = new FileReader();
@@ -3175,7 +3205,7 @@ ${VF_CSS}</style>`;
     }
 
     // 引用比對與 AI 產出聲明（頁尾）
-    const check = checkCitations(a, opts.sources, en);
+    const check = checkCitations(a, opts.sources, en, opts.datasets);
     a = check.html;
     a = a.replace(/<\/article\s*>\s*$/i, () => buildProvenance(opts.provenance, check, en) + '</article>');
 
@@ -3230,12 +3260,18 @@ ${a}
       w.replaceWith(sc);
     });
     // 地圖：只接受本工具產生的圖片來源格式；圖說只留文字。原位置以地圖標記保留
+    // 本功能之前的報告（v1.28–v1.31）地圖是 <figure style=…><img src="data:image/png…">、沒有 heals-map 類別：
+    // 取第一張來源格式相符的圖片當作地圖，不能在重建時遺失
     let mapHtml = '';
-    const fig = root.querySelector('figure.heals-map');
+    let fig = root.querySelector('figure.heals-map'), img = fig ? fig.querySelector('img') : null;
+    if (!fig) {
+      img = [...root.querySelectorAll('img')].find(im => MAP_SRC_RE.test((im.getAttribute('src') || '').trim())) || null;
+      const f = img && img.closest('figure');
+      fig = f && root.contains(f) ? f : img;
+    }
     if (fig) {
-      const img = fig.querySelector('img');
       const src = img ? (img.getAttribute('src') || '').trim() : '';
-      const cap = ((fig.querySelector('figcaption') || {}).textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      const cap = (((fig.tagName === 'FIGURE' && fig.querySelector('figcaption')) || {}).textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300);
       if (MAP_SRC_RE.test(src)) mapHtml = `\n<figure class="heals-map"><img src="${escapeHtml(src)}" alt="${en ? 'Site location map' : '基地位置地圖'}"><figcaption>${escapeHtml(cap)}</figcaption></figure>\n`;
       fig.replaceWith(doc.createComment('HEALS:MAP'));
     }
@@ -3265,10 +3301,13 @@ ${a}
     en: { text: ' [not from this run\u2019s searches]', title: 'This reference\u2019s URL or DOI is not among the sources the model retrieved in this run\u2019s web searches (it may be cited from memory). Whether the work exists is shown by the verification badge.' },
   };
   const hostOf = u => { try { return new URL(u).hostname.replace(/^www\./i, '').toLowerCase(); } catch (_) { return ''; } };
-  function checkCitations(article, sources, en) {
-    const res = { html: article, sources: Array.isArray(sources) ? sources.length : null, refs: 0, linked: 0, unmatched: 0 };
+  // ds：本次提示詞附上的 iNaturalist／OSM 資料（captureDatasets）。提示詞要求模型逐字照抄本工具提供的參考文獻，
+  // 這些網址本來就不會出現在搜尋結果中：不標示、也不計入「非本次搜尋取得」
+  function checkCitations(article, sources, en, ds) {
+    const res = { html: article, sources: Array.isArray(sources) ? sources.length : null, refs: 0, linked: 0, unmatched: 0, datasets: 0 };
     if (!Array.isArray(sources)) return res;                       // 手動路徑：沒有搜尋紀錄，不比對
     const hosts = new Set(sources.map(hostOf).filter(Boolean));
+    const dsHost = h => !!ds && !!((ds.inat && /(^|\.)inaturalist\.org$/.test(h)) || (ds.osm && /(^|\.)(openstreetmap\.org|overpass-api\.de)$/.test(h)));
     const srcText = sources.join(' ').toLowerCase();
     try {
       const doc = new DOMParser().parseFromString(article, 'text/html');
@@ -3277,6 +3316,7 @@ ${a}
         res.refs++;
         const { urls, dois } = refIdentifiers(li);                 // 與文獻查證相同的網址／DOI 解析
         if (!urls.length && !dois.length) return;                  // 書籍等沒有網址的文獻：不比對
+        if (!dois.length && urls.every(u => dsHost(hostOf(u)))) { res.datasets++; return; }   // 本工具提供的資料集
         res.linked++;
         const hit = urls.some(u => hosts.has(hostOf(u))) || dois.some(d => srcText.includes(d));
         if (!hit) {
@@ -3302,6 +3342,7 @@ ${a}
     if (pv.route === 'manual') parts.push(en ? 'manual Claude.ai route (search activity not recorded)' : '手動 Claude.ai 路徑（無搜尋紀錄）');
     else if (pv.searchCalls != null) parts.push(en ? `${pv.searchCalls} web searches, ${check.sources != null ? check.sources : 0} source URLs received` : `網路搜尋 ${pv.searchCalls} 次、取得 ${check.sources != null ? check.sources : 0} 個來源網址`);
     if (check.sources != null && check.linked) parts.push(en ? `${check.unmatched} of ${check.linked} linked references not from this run\u2019s searches` : `參考文獻中有網址者 ${check.linked} 筆，其中 ${check.unmatched} 筆非本次搜尋取得`);
+    if (check.sources != null && check.datasets) parts.push(en ? `${check.datasets} reference(s) to datasets supplied by this tool (iNaturalist/OSM; not compared with the searches)` : `另有本工具提供的資料集 ${check.datasets} 筆（iNaturalist／OSM，不與搜尋結果比對）`);
     parts.push(en ? `Tool: Qi-Coexistence ${APP_VERSION}` : `工具：棲共生 Qi-Coexistence ${APP_VERSION}`);
     const warn = en ? 'AI-generated content may contain errors; verify every citation and field-check before use in design or coursework.' : 'AI 產出內容可能有誤；用於設計或課業前，請逐筆查證引用並現地確認。';
     // 參考文獻查證摘要（查證完成後由 applyVerification() 以同一函式補上或更新）
@@ -3606,14 +3647,14 @@ ${a}
 
       if (extracted.isArticle) {
         // 新格式：包成完整文件，套固定樣式表並插入地圖
-        html = wrapReport(html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources,
+        html = wrapReport(html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources, datasets: runDatasets,
           provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
       } else {
         // 模型輸出了完整文件（未依格式）：模型自帶的樣式表不可信（可偽造或遮蔽查證標記），
         // 只取其內容，與新格式相同地包裝（固定樣式表、本工具地圖與頁尾）
         const d = new DOMParser().parseFromString(html, 'text/html');
         const root = d.querySelector('article') || d.body;
-        html = wrapReport('<article>' + (root ? root.innerHTML : '') + '</article>', { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources,
+        html = wrapReport('<article>' + (root ? root.innerHTML : '') + '</article>', { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources, datasets: runDatasets,
           provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
       }
 
@@ -3654,7 +3695,7 @@ ${a}
         try {
           const ex = extractHTML(fullText);
           if (ex && ex.isArticle) {
-            const ph = wrapReport(ex.html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: true, sources,
+            const ph = wrapReport(ex.html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: true, sources, datasets: runDatasets,
               provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
             const meta = runMeta();
             analysisMeta = { model, elapsed: elapsedSec, timestamp: new Date().toISOString(), usage: {}, searchCalls, stopReason: 'interrupted', sources: sources.slice(0, 80),
@@ -5083,6 +5124,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       if (extra.sources) recent.sources = extra.sources; else delete recent.sources;   // 來源紀錄屬於這份結果，不沿用前一份
       if (extra.meta) recent.meta = extra.meta; else delete recent.meta;
       delete recent.verification;          // 新報告：舊的查證紀錄不再適用
+      delete recent.htmlOriginal;          // 舊報告的原始版面備份也不再屬於這一筆
       if (extra.partial) recent.partial = true; else delete recent.partial;
       recent.clean = true;                 // 由本工具組裝（wrapReport／rebuildUntrusted），可直接加上查證標記
       savedTs = recent.ts;
@@ -5781,7 +5823,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       showResult(updated, { fromVerify: true, noScroll: true, keepScroll: true });
       setVerifyList({ refs, results });
     }
-    updateHistoryVerification(ts, rawHtml, updated, rec);
+    const hist = updateHistoryVerification(ts, rawHtml, updated, rec);
 
     const st = rec.stats, secs = Math.max(1, Math.round((Date.now() - t0) / 1000));
     const bad = st.mismatch + st.not_found;
@@ -5796,24 +5838,36 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
         ? `🔎 Reference check finished (${refs.length} references, ${secs}s): ${vfCountsText(st, 'en')}${itIssues ? ` · in-text citation issues: ${itIssues}` : ''}. Details are in the appendix "Reference check and data provenance" at the end of the report.`
         : `🔎 參考文獻查證完成（${refs.length} 筆，${secs} 秒）：${vfCountsText(st, 'zh')}${itIssues ? `・正文引用不一致 ${itIssues} 處` : ''}。詳見報告末附錄「參考文獻查核與資料來源說明」。`;
     }
-    setVerifyStatus(msg, failure || bad || itIssues ? 'warn' : 'ok');
+    // 舊報告（或來源不明的文件）已改用本工具的版面重建：明白告知，原始版面另存於歷史紀錄
+    if (!trusted) msg += ' ' + (hist.backedUp
+      ? t('ℹ️ 這份報告不是由本工具目前的版本組裝，為防止原文件的樣式偽造查證結果，已改用本工具的版面重新排版後再查證（文字與基地地圖保留，原文件的樣式與向量圖形不保留）；查證前的原始版面已另存於歷史紀錄，可按該筆的「📜 原始版面」檢視。')
+      : t('ℹ️ 這份報告不是由本工具目前的版本組裝，為防止原文件的樣式偽造查證結果，已改用本工具的版面重新排版後再查證（文字與基地地圖保留，原文件的樣式與向量圖形不保留）。'));
+    setVerifyStatus(msg, failure || bad || itIssues || !trusted ? 'warn' : 'ok');
     return rec;
   }
 
   function stripVerification(doc) {
     doc.querySelectorAll('section.verification, .vf, .vf-detail, .vf-x, p.vf-prov').forEach(n => n.remove());
   }
+  // 回傳 { saved, backedUp }：backedUp＝這次把查證前的原始文件另存為 htmlOriginal
   function updateHistoryVerification(ts, prevRaw, html, rec) {
     const arr = loadHistory();
     const e = (ts && arr.find(x => x.ts === ts)) || arr.find(x => x.htmlResult === prevRaw);
-    if (!e) return false;
+    if (!e) return { saved: false, backedUp: false };
+    // 本工具未組裝過的舊報告（clean 不為 true：本功能之前的版本存入）會改以本工具的版面重建後才加上查證標記，
+    // 原文件的樣式、向量圖等不會保留：原始文件另存一份，不覆蓋（只存第一次，之後重新查證不再重複備份）
+    let backedUp = false;
+    if (e.clean !== true && !e.htmlOriginal && typeof e.htmlResult === 'string' && e.htmlResult && e.htmlResult !== html) {
+      e.htmlOriginal = e.htmlResult;
+      backedUp = true;
+    }
     e.htmlResult = html;
     e.verification = rec;
     e.clean = true;
     const ok = saveHistoryArray(arr);
     renderHistory();
     if (currentReport && !currentReport.ts) currentReport.ts = e.ts;
-    return ok;
+    return { saved: ok, backedUp: backedUp && ok && loadHistory().some(x => x.ts === e.ts && typeof x.htmlOriginal === 'string') };
   }
   function fragment(doc, html) {
     const tpl = doc.createElement('template');
