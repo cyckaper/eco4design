@@ -2444,7 +2444,7 @@ ${o.xsecZh}
 規則：
 ① 每幅剖面代表基地實際存在的一種棲地類型。共 1–3 幅，依重要性排序，id 依序為 A、B、C，並與 4.1 分區表的剖面代號一致；基地只有一種棲地類型時畫 1 幅即可。
 ② 每幅使用 4–8 個棲位、10–18 筆物種。植物（g:"P"，含蕨類、苔蘚）、脊椎動物（g:"A"）、昆蟲與其他無脊椎動物（g:"I"）各至少 3 種（沒有把握的類群可減為 2 種）；每個棲位最多 4 種。
-③ 整個 JSON 區塊中，每個焦點物種至少出現一次並加上 "f":1，只放在其實際使用的剖面。伴生物種只列支撐焦點物種的關鍵者，例如蜜源植物、幼蟲食草、結果樹、獵物昆蟲、授粉者與水棲昆蟲；優先取自${o.hasInat ? '上方 iNaturalist 清單、' : ''}已引用的文獻或本地區常見的原生種。JSON 內的物種不需引用、也不必逐一搜尋，但只列確實分布於本地區與海拔帶的原生種，不得臆造；外來種不列。
+③ 整個 JSON 區塊中，每個焦點物種至少出現一次並加上 "f":1，只放在其實際使用的剖面。伴生物種只列支撐焦點物種的關鍵者，例如蜜源植物、幼蟲食草、結果樹、獵物昆蟲、授粉者與水棲昆蟲；伴生物種必須有依據：只能是${o.hasInat ? '上方 iNaturalist 清單中的物種，或' : ''}報告正文（第 2、3、5 節等附引用之處）已寫出名稱的物種；其他物種一律不列（本工具會自動刪除沒有依據的物種）。JSON 內不寫引用；外來種不列。
 ④ 同一物種若使用多個棲位，在各棲位各列一次（最多 3 處），並分別填寫 act。
 ⑤ act 只能使用下列詞彙，最多兩項，以「・」連接。動物與昆蟲：覓食、棲息、繁殖、通行、越冬；植物：蜜源、食草、果實、遮蔭、結構。
 ⑥ n 只寫中文俗名（≤8 字），不寫學名、說明、顏色或座標。title ≤12 字。caption 寫一句 ≤40 字的配置原則；數值或月份只可沿用前文已附引用者（如第 2 節的繁殖月份、4.1 的緩衝寬度），沒有則不寫數值。
@@ -2459,7 +2459,7 @@ ${o.xsecEn}
 Rules:
 1. Each section shows one habitat type that actually exists at the site. Give 1–3 sections, most important first, with id A, B, C in order, matching the cross-section IDs in the 4.1 zoning table. If the site has only one habitat type, give one section.
 2. Each section uses 4–8 slots and 10–18 species entries. Include at least 3 plants (g:"P", including ferns and mosses), 3 vertebrates (g:"A") and 3 insects or other invertebrates (g:"I"); a group you are unsure about may drop to 2. Put no more than 4 species in one slot.
-3. Across the whole JSON block, every focal species appears at least once, marked "f":1, and only in the sections where it actually occurs. Add only the supporting species that sustain the focal species, such as nectar plants, larval host plants, fruiting trees, prey insects, pollinators and aquatic insects. Prefer species from ${o.hasInat ? 'the iNaturalist list above, ' : ''}works you cite or common native species of the region. JSON entries need no citations and no species-by-species searches, but list only native species that genuinely occur in this region and elevation band; never invent species, and leave out non-native species.
+3. Across the whole JSON block, every focal species appears at least once, marked "f":1, and only in the sections where it actually occurs. Add only the supporting species that sustain the focal species, such as nectar plants, larval host plants, fruiting trees, prey insects, pollinators and aquatic insects. Supporting species must have a basis: use only species ${o.hasInat ? 'in the iNaturalist list above or ' : ''}already named in the cited report text (sections 2, 3, 5, etc.); list no other species (the tool removes species without a basis automatically). No citations inside the JSON; leave out non-native species.
 4. If a species uses several slots, list it once in each slot (3 slots at most), each with its own act.
 5. act uses only these words, at most two, joined by "/". Animals and insects: forage, roost, breed, move, overwinter. Plants: nectar, host plant, fruit, shade, structure.
 6. n is the English common name only (4 words or fewer); use the binomial only when no English name exists. Add no notes, colours or coordinates. title is 5 words or fewer. caption is one configuration principle of 25 words or fewer; reuse only numbers or months already cited above (e.g. breeding months in section 2, buffer widths in 4.1), otherwise give no number.
@@ -5709,7 +5709,9 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     const lat = +state.lat, lon = +state.lon;
     if (inatLastSummary) {
       ds.inat = { lat, lon, radius: +inatLastSummary.radius || null, quality: inatLastSummary.quality === 'research' ? 'research' : 'any',
-        taxon: String(inatLastSummary.taxon || ''), species: Math.min(15, (inatLastSummary.topSpecies || []).length), at: inatLastSummary.fetchedAt || null };
+        taxon: String(inatLastSummary.taxon || ''), species: Math.min(15, (inatLastSummary.topSpecies || []).length), at: inatLastSummary.fetchedAt || null,
+        // 提示詞所附的物種名單（剖面圖伴生物種的依據之一）
+        names: (inatLastSummary.topSpecies || []).slice(0, 15).flatMap(t => [t.name, t.sci]).filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 80)) };
     }
     const o = osmLastSummary;
     if (o && (o.protectedCount || o.waterCount || o.forestCount || o.settlementCount || o.trailCount || o.naturalCount)) {
@@ -6895,6 +6897,52 @@ ${block}`;
     return removed;
   }
   const xsecWrite = (sc, j) => { sc.textContent = JSON.stringify(j).replace(/</g, '\\u003c'); };
+  // ---------- 剖面圖物種只用有依據者（教授規則）：須出現在報告正文（正文皆須有引用並經過濾）或本次提示詞所附的 iNaturalist 名單 ----------
+  // 其餘物種自 4.2 的 JSON 刪除；整幅剖面沒有物種時刪除該幅，全部刪光時以說明文字取代。回傳被刪除的物種名稱
+  function groundXsecSpecies(doc, meta) {
+    const art = doc.querySelector('article');
+    const sc0 = art && art.querySelector('script.heals-xsec');
+    if (!sc0) return [];
+    const clone = art.cloneNode(true);
+    clone.querySelectorAll('script, ul.summary, .verification, footer, figure').forEach(x => x.remove());
+    const body = normKey(clone.textContent || '');
+    const inat = (meta && meta.ds && meta.ds.inat && Array.isArray(meta.ds.inat.names) ? meta.ds.inat.names : []).map(normKey).filter(Boolean);
+    const grounded = n => {
+      const k = normKey(n);
+      if (!k || k.length < (/[a-z0-9]/.test(k) ? 4 : 2)) return false;
+      return body.includes(k) || inat.some(x => x === k || x.startsWith(k) || k.startsWith(x));
+    };
+    const dropped = new Set();
+    art.querySelectorAll('script.heals-xsec').forEach(sc => {
+      let j;
+      try { j = JSON.parse(sc.textContent); } catch (_) { return; }
+      const secs = xsecSecs(j);
+      if (!secs) return;
+      let touched = false;
+      const keepSecs = secs.filter(sec => {
+        const all = xsecSlotLists(sec).flat();
+        const bad = all.filter(x => !grounded(xsecSpName(x)));
+        if (!bad.length) return true;
+        touched = true;
+        bad.forEach(x => dropped.add(xsecSpName(x)));
+        if (bad.length === all.length) return false;
+        xsecFilterSection(sec, n => grounded(n));
+        return true;
+      });
+      if (!touched) return;
+      if (!keepSecs.length) {
+        const p = doc.createElement('p');
+        p.textContent = /^en/i.test(doc.documentElement.lang || '')
+          ? 'Cross-sections: no species with a source in this report could be placed, so no diagram is drawn.'
+          : '棲地剖面：本報告沒有可依據的物種可標示，未繪製剖面圖。';
+        sc.replaceWith(p);
+        return;
+      }
+      if (Array.isArray(j)) j.splice(0, j.length, ...keepSecs); else j.sections = keepSecs;
+      xsecWrite(sc, j);
+    });
+    return [...dropped].filter(Boolean);
+  }
   // JSON 中的物種名稱是否就是物種需求表的某一列（表格常寫「中名・學名」或「中名 學名」）
   const spKeyMatch = (name, key) => { const a = normKey(name); return !!a && !!key && (a === key || (a.length >= (/[a-z0-9]/.test(a) ? 4 : 2) && key.startsWith(a))); };
   // ---------- 物種需求表中依據全被排除的物種：剖面 JSON 與資源利用矩陣也不再呈現 ----------
@@ -7806,12 +7854,12 @@ ${block}`;
       '<li><b>刪除：</b>查無此來源、DOI／網址指向其他著作、題名與引用不符，或無法確認存在的來源，以及正文中引用它們的句子、表格內容與案例列。</li>' +
       '<li><b>保留：</b>書目相符；來源存在但內容無法自動比對（PDF、動態網頁）或僅卷期頁碼有出入（⚠️，請自行核對）；查證未完成、但網址出現在本次網路搜尋結果中（🔍）；本工具提供的 iNaturalist／OSM 資料集（📡）。</li>' +
       '<li><b>更正後保留：</b>文獻存在，但年份或作者有誤者，依 DOI 註冊資料或書目紀錄更正正文與清單。</li>' +
-      '<li><b>限制：</b>本工具只確認來源存在與書目正確，不確認文中的數值或論述確實出自該來源；沒有引用、但間接依據被排除來源的內容由 AI 改寫刪除，無法逐句保證。第 4.2 節剖面圖的伴生物種與棲位為示意，未逐筆附來源（見下方「資料來源」）。</li></ul>',
+      '<li><b>限制：</b>本工具只確認來源存在與書目正確，不確認文中的數值或論述確實出自該來源；沒有引用、但間接依據被排除來源的內容由 AI 改寫刪除，無法逐句保證。第 4.2 節剖面圖只標示有依據的物種（出現在報告正文或本工具提供的 iNaturalist 名單者），棲位配置為示意。</li></ul>',
     en: '<strong>Exclusion policy</strong> (this tool’s data policy: material whose source does not exist or is incorrect is not discussed, so that the discussion does not rest on false information)<ul>' +
       '<li><b>Removed:</b> sources that cannot be found, whose DOI/URL points to another work, whose title does not match, or whose existence cannot be confirmed — together with every sentence, table entry and case row that cites them.</li>' +
       '<li><b>Kept:</b> matching records; sources that exist but could not be matched automatically (PDF, script-rendered page) or differ only in volume/pages (⚠️, check them yourself); unfinished checks whose URL appears in this run’s web-search results (🔍); the iNaturalist/OSM datasets supplied by this tool (📡).</li>' +
       '<li><b>Kept after correction:</b> works that exist but carry a wrong year or author, corrected from the DOI or bibliographic record in both the list and the text.</li>' +
-      '<li><b>Limits:</b> the tool confirms that a source exists and is cited correctly, not that the numbers or claims attributed to it are in it; content that relies on an excluded source without citing it is removed by the AI revision and cannot be guaranteed sentence by sentence. The supporting species and their placement in the 4.2 cross-sections are schematic and carry no individual sources (see “Data sources” below).</li></ul>',
+      '<li><b>Limits:</b> the tool confirms that a source exists and is cited correctly, not that the numbers or claims attributed to it are in it; content that relies on an excluded source without citing it is removed by the AI revision and cannot be guaranteed sentence by sentence. The 4.2 cross-sections show only species with a basis (named in the report text or in the iNaturalist list supplied by this tool); their placement is schematic.</li></ul>',
   };
   function excludedSectionHtml(f, en) {
     f = compactFilter(f);
@@ -8059,8 +8107,10 @@ ${block}`;
       intext: { orphans: it.orphans.length, uncited: it.uncited.length }, ...(interrupted ? { interrupted: true } : {}),
       ...(filter ? { filter: { status: filter.status, ex: filter.excluded.length, rep: filter.repaired.length } } : {}) });
     const finish = (finalDoc, fRefs, fResults, fIntext, fCases, caseRes, filter, rec, pre, extraCtx) => {
+      let xsecDropped = [];
+      try { xsecDropped = groundXsecSpecies(finalDoc, meta); } catch (e) { console.error('[verify] xsec grounding failed', e); }
       const updated = applyVerification(finalDoc, fRefs, fResults, fIntext, Object.assign({ lang, at, meta, rec, filter, cases: fCases, caseResults: caseRes, ev: searchEvidence(meta),
-        checked: { refs: refs.length, cases: cases.length } }, extraCtx || {}));
+        checked: { refs: refs.length, cases: cases.length }, xsecDropped }, extraCtx || {}));
       if (target === currentReport) {
         showResult(updated, { fromVerify: true, noScroll: true, keepScroll: true });
         currentReport.pre = pre || null;
@@ -8336,7 +8386,7 @@ ${block}`;
   }
 
   // 單元測試用（純函式；結果框沒有 allow-same-origin，報告內容無法存取本頁）
-  window.__qiExclusion = Object.freeze({ classifySource, searchEvidence, normUrlKey, parseCases, parseReferences, applyExclusionGuards, pruneCitations,
+  window.__qiExclusion = Object.freeze({ classifySource, groundXsecSpecies, searchEvidence, normUrlKey, parseCases, parseReferences, applyExclusionGuards, pruneCitations,
     makeExclusionPlan, matchOrigRef, refFingerprint, sentenceRanges, citationGroups, validateRevision, spliceRevised, buildRevisePrompt, articleForRevision,
     checkInTextCitations, compactFilter, filterProvenanceLine, FILTER_KEEP_REASONS, FILTER_REPAIR_REASONS,
     guardActivityTables, decorateActivityTables, finishActivityHtml, sanitizeArticle,
@@ -8539,6 +8589,10 @@ ${block}`;
     // 參考案例（網址查核）與排除紀錄
     h += caseCheckHtml(ctx.cases, ctx.caseResults || new Map(), en, ctx.ev);
     h += excludedSectionHtml(ctx.filter, en);
+    if (Array.isArray(ctx.xsecDropped) && ctx.xsecDropped.length) {
+      const names = ctx.xsecDropped.slice(0, 40).map(escapeHtml).join(en ? ', ' : '、');
+      h += `<p class="vf-sub">${en ? '<strong>Removed from the cross-sections</strong> (no basis in the report text or the iNaturalist list): ' : '<strong>自剖面圖刪除的物種</strong>（報告正文與 iNaturalist 名單中都沒有依據）：'}${names}</p>`;
+    }
     // 正文引用一致性
     h += `<h3>${en ? 'In-text citations vs. the reference list' : '正文引用與文獻清單對照'}</h3>`;
     h += `<p>${en
@@ -8651,8 +8705,8 @@ ${block}`;
     }
     if (doc.querySelector('script.heals-xsec')) {
       items.push(`<li><strong>${en ? 'Habitat cross-sections' : '棲地剖面圖'}</strong>${en
-        ? ': schematic diagrams drawn by this tool from the species data in section 4.2 (not surveyed profiles). The companion species and their placement were proposed by the AI without individual citations or searches; confirm them in the field or against a local species list before use.'
-        : '：由本工具依第 4.2 節的物種資料繪製的示意圖（非實測剖面）。圖中伴生物種與棲位配置由 AI 依區域常見原生種推定，未逐一搜尋或附引用；使用前請以現地調查或在地物種名錄確認。'}</li>`);
+        ? ': schematic diagrams drawn by this tool from the species data in section 4.2 (not surveyed profiles). Only species named in the cited report text or in the iNaturalist list supplied by this tool are shown; others are removed automatically. The placement within strata is schematic; confirm it in the field before use.'
+        : '：由本工具依第 4.2 節的物種資料繪製的示意圖（非實測剖面）。圖中只標示在報告正文（皆附引用）或本工具提供的 iNaturalist 名單中出現的物種，其餘自動刪除；棲位配置為示意，使用前請以現地調查確認。'}</li>`);
     }
     return items.join('');
   }
