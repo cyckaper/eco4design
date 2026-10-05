@@ -81,6 +81,11 @@
   .preset-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
   .preset-btn { padding: 6px 12px; background: rgba(255,255,255,0.4); border: 1px solid var(--border); border-radius: 999px; font-family: var(--serif); font-size: 12px; cursor: pointer; color: var(--ink-soft); transition: all 0.15s; }
   .preset-btn:hover { background: var(--gold-pale); color: var(--ink); border-color: var(--gold); }
+  .preset-fold { border: 1px solid var(--border-soft); border-radius: 3px; background: rgba(255,255,255,0.3); padding: 0 10px; margin: 10px 0 4px; }
+  .preset-fold > summary { font-family: var(--serif); font-size: 13px; color: var(--moss); cursor: pointer; padding: 8px 0; font-weight: 500; user-select: none; }
+  .preset-fold > summary:hover { color: var(--clay); }
+  .preset-fold[open] { padding-bottom: 8px; }
+  .preset-fold[open] > summary { border-bottom: 1px dashed var(--border-soft); margin-bottom: 4px; }
   .preset-btn .desc { display: block; font-size: 10px; color: var(--moss-light); margin-top: 1px; }
 
   /* Chip input */
@@ -546,9 +551,6 @@
       </p>
     </div>
 
-    <div class="preset-label">📦 預設組合（點選套用）</div>
-    <div class="preset-row" id="speciesCombos"></div>
-
     <div class="preset-label">🏷️ 已選物種</div>
     <div class="chip-container" id="speciesChips">
       <div class="chips"></div>
@@ -559,12 +561,17 @@
     </div>
     <div class="chip-hint">資料庫沒收錄的、或想額外指定的物種，可在此手動加入。支援多個輸入用頓號（、）或逗號分隔</div>
 
+    <details class="preset-fold">
+      <summary>📦 預設組合與常見物種（點開選擇）</summary>
+    <div class="preset-label">📦 預設組合（點選套用）</div>
+    <div class="preset-row" id="speciesCombos"></div>
     <div class="quick-cat">— 鳥類 · Birds —</div>
     <div class="quick-chips" data-cat="species" data-list="鳥類"></div>
     <div class="quick-cat">— 哺乳類 · Mammals —</div>
     <div class="quick-chips" data-cat="species" data-list="哺乳"></div>
     <div class="quick-cat">— 兩棲爬蟲 · Herpetofauna —</div>
     <div class="quick-chips" data-cat="species" data-list="兩爬"></div>
+    </details>
   </section>
 
   <!-- STEP 3: SITE CONDITIONS -->
@@ -598,9 +605,6 @@
       </p>
     </div>
 
-    <div class="preset-label">📦 預設條件組合（點選套用）</div>
-    <div class="preset-row" id="conditionCombos"></div>
-
     <div class="preset-label">🏷️ 已選條件</div>
     <div class="chip-container" id="conditionChips">
       <div class="chips"></div>
@@ -611,6 +615,10 @@
     </div>
     <div class="chip-hint">OSM 沒標到、或時效落差的環境特徵，可在此手動補充。支援多個輸入用頓號（、）或逗號分隔</div>
 
+    <details class="preset-fold">
+      <summary>📦 預設條件組合與常見條件（點開選擇）</summary>
+    <div class="preset-label">📦 預設條件組合（點選套用）</div>
+    <div class="preset-row" id="conditionCombos"></div>
     <div class="quick-cat">— 林相 · Forest —</div>
     <div class="quick-chips" data-cat="conditions" data-list="林相"></div>
     <div class="quick-cat">— 水體 · Water —</div>
@@ -619,6 +627,7 @@
     <div class="quick-chips" data-cat="conditions" data-list="地形"></div>
     <div class="quick-cat">— 人為設施 · Human Features —</div>
     <div class="quick-chips" data-cat="conditions" data-list="人為"></div>
+    </details>
 
     <div class="subsection-divider"></div>
     <div class="subsection-head">
@@ -635,6 +644,8 @@
     </div>
     <div class="chip-hint">描述物種存續所需的棲地資源（食、住、繁殖、空間）。與「基地條件」分開填，匯出時成為獨立的 habitatNeeds 欄位。</div>
 
+    <details class="preset-fold">
+      <summary>📦 常見棲地需求（點開選擇）</summary>
     <div class="quick-cat">— 食物 · Food —</div>
     <div class="quick-chips" data-cat="habitatNeeds" data-list="食物"></div>
     <div class="quick-cat">— 棲身 · Shelter —</div>
@@ -643,6 +654,7 @@
     <div class="quick-chips" data-cat="habitatNeeds" data-list="繁殖"></div>
     <div class="quick-cat">— 空間配置 · Spatial —</div>
     <div class="quick-chips" data-cat="habitatNeeds" data-list="空間"></div>
+    </details>
   </section>
 
   <!-- STEP 4: FUTURE HUMAN ACTIVITIES（選填；有選時報告增加「人類活動影響與使用建議」一節）-->
@@ -664,6 +676,8 @@
     </div>
     <div class="chip-hint">最多 10 項。有選擇時，報告會增加「人類活動影響與使用建議」一節：逐項評估對焦點物種與棲地的影響、敏感時段、可接受使用程度與管理建議，並列出活動 × 分區相容性矩陣。影響大小依基地與季節而定：溯溪、夜間生態觀察、生態攝影（播放鳴聲、誘餌）等也可能是高衝擊活動。</div>
 
+    <details class="preset-fold">
+      <summary>📦 常見活動（點開選擇）</summary>
     <div class="quick-cat">— 遊憩 · Recreation —</div>
     <div class="quick-chips" data-cat="activities" data-list="遊憩"></div>
     <div class="quick-cat">— 自然體驗 · Nature Experience —</div>
@@ -672,6 +686,7 @@
     <div class="quick-chips" data-cat="activities" data-list="療癒與社區"></div>
     <div class="quick-cat">— 常見高衝擊 · Commonly High Impact —</div>
     <div class="quick-chips" data-cat="activities" data-list="高衝擊"></div>
+    </details>
 
     <div class="name-row use-scale-row">
       <label for="useScale" class="name-label">預期使用規模（選填）</label>
@@ -997,6 +1012,10 @@
     '資料來源 © iNaturalist 貢獻者 · CC BY-NC · 點選圖片可開啟該物種頁面':
       'Data © iNaturalist contributors · CC BY-NC · Click a photo to open the species page',
     '📦 預設組合（點選套用）': '📦 Preset sets (click to apply)',
+    '📦 預設組合與常見物種（點開選擇）': '📦 Preset sets & common species (click to show)',
+    '📦 預設條件組合與常見條件（點開選擇）': '📦 Preset condition sets & common conditions (click to show)',
+    '📦 常見棲地需求（點開選擇）': '📦 Common habitat needs (click to show)',
+    '📦 常見活動（點開選擇）': '📦 Common activities (click to show)',
     '🏷️ 已選物種': '🏷️ Selected species',
     '自訂物種：輸入中文或學名後按 + 或 Enter': 'Custom species: type a name and press + or Enter',
     '資料庫沒收錄的、或想額外指定的物種，可在此手動加入。支援多個輸入用頓號（、）或逗號分隔':
