@@ -172,6 +172,7 @@ const MSG = {
   S_mis_url: ['網址的學術詮釋資料指向另一篇著作，與引用題名不符。', 'The page’s scholarly metadata describes a different work, not the cited title.'],
   S_part_url_mixed: ['其中一個網址內容相符，但另一個網址指向另一篇著作「{ft}」，請移除錯誤的網址。', 'One URL matches the citation, but another points to a different work (“{ft}”); remove the wrong URL.'],
   S_add_dead: ['另：引用中的其他網址無效（{why}）。', ' Note: another cited URL is invalid ({why}).'],
+  S_part_doi_mixed: ['其中一個 DOI 與引用相符，但另一個 DOI 指向另一篇著作「{ft}」，請移除錯誤的 DOI。', 'One DOI matches the citation, but another DOI points to a different work (“{ft}”); remove the wrong DOI.'],
   S_mis_doi_url_ok: ['網址內容與引用相符，但 DOI 指向另一篇著作，DOI 需更正。', 'The URL matches the citation, but the DOI points to a different work; the DOI must be corrected.'],
   S_part_doi_bad_src_ok: ['來源可開啟且題名相符，但引用的 DOI 未註冊，DOI 需更正。', 'The source opens and its title matches, but the cited DOI is not registered and must be corrected.'],
   S_part_exists_bad_id: ['{src} 查得此著作，但引用中的識別資訊有誤（{why}），請改用建議的 DOI／連結。', '{src} lists this work, but the cited identifier is wrong ({why}); use the suggested DOI/link instead.'],
@@ -217,6 +218,10 @@ const MSG = {
   S_unv_pre_noid: ['沒有 DOI 或網址；', 'No DOI or URL; '],
   S_unv_pre_neg: ['{neg}；', '{neg}; '],
   S_unv_nothing: ['沒有可檢核的資訊，需人工查證。', 'Nothing could be checked automatically; verify manually.'],
+  // 參考案例（kind: 'case'）：以案例名稱比對所列網頁，不做書目搜尋
+  S_case_nourl: ['案例沒有可查核的網址，無法確認來源。', 'The case lists no URL that could be checked, so its source cannot be confirmed.'],
+  S_case_dead: ['{neg}，也沒有內容相符的網際網路檔案館存檔：無法確認案例來源存在。', '{neg}, and no matching Internet Archive copy was found: the case source cannot be confirmed.'],
+  S_case_weak: ['{why}：所列網頁無法確認是這個案例的來源。', '{why}: the listed page cannot be confirmed as a source for this case.'],
   S_inconc: ['{why}，無法判定，請稍後重試或人工查證。', '{why}; no verdict could be reached. Retry later or verify manually.'],
   S_inconc_neg_search: ['{neg}，但書目搜尋無法完成，無法判定，請稍後重試或人工查證。', '{neg}, but the bibliographic search could not be completed; retry later or verify manually.'],
   S_deadline: ['已達本次查核的時間上限，這筆尚未查核，請重新查核。', 'This run’s time limit was reached before this reference was checked; run the check again.'],
@@ -622,6 +627,17 @@ function parseCitation(text) {
     }
   }
   return cite;
+}
+
+// 參考案例（kind: 'case'）：沒有作者、年份與書目；以案例名稱（title）比對所列網頁是否就是這個案例
+function caseCitation(ref) {
+  const clean = String(ref.text || '').normalize('NFKC').replace(URL_IN_TEXT_RE, ' ').replace(/\s+/g, ' ').trim();
+  let name = String(ref.title || '').normalize('NFKC').replace(URL_IN_TEXT_RE, ' ').replace(/\s+/g, ' ').trim();
+  for (let i = 0; i < 3; i++) name = name.replace(/\s*[(（][^()（）]{0,60}[)）]\s*$/, '').trim();   // （地點・年份）
+  name = tidyTitle(name.replace(/[\s,，、;；|｜・·-]*(?:1[89]|20)\d{2}\s*$/, '')) || null;
+  const compact = name ? norm(name).replace(/ /g, '') : '';
+  const titleSure = !!name && name.length <= 200 && [...compact].length >= (CJK_RE.test(compact) ? 3 : 6);
+  return { clean, title: name, titleSure, year: null, firstAuthor: null, authorIsOrg: true, tail: '', isCase: true };
 }
 
 // 中文姓氏 → 常見羅馬拼音（威妥瑪、漢語拼音、粵／閩拼法）：引用寫中文姓名、資料庫是拼音時仍可比對姓氏
@@ -1416,11 +1432,14 @@ function lightNorm(s) {
   return t;
 }
 
-function titlePattern(title, strict) {
+function titlePattern(title, strict, relaxed) {
   const words = lightNorm(title).toLowerCase().replace(/臺/g, '台').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   if (!words.length) return null;
   const compact = words.join('');
-  if (CJK_RE.test(compact)) {
+  if (relaxed) {
+    // 參考案例的名稱（Superkilen、大安森林公園）是專有名詞：較短也可當作「頁面講的是這個案例」的證據
+    if ([...compact].length < (CJK_RE.test(compact) ? 3 : 6)) return null;
+  } else if (CJK_RE.test(compact)) {
     // 題名太短（如「臺灣生物多樣性」）幾乎每個相關網站都會出現，不能當證據
     if ([...compact].length < (strict ? 10 : 8)) return null;
   } else if (words.join(' ').length < (strict ? 25 : 20) || words.length < (strict ? 5 : 4)) {
@@ -1468,8 +1487,8 @@ function compactForMatch(s, cjk) {
   // 拉丁：每段非字母數字換成單一空白；本來就是單一空格者跳過不替換（省 CPU）
   return cjk ? t.replace(/[^\p{L}\p{N}]+/gu, '') : ' ' + t.replace(/(?! [\p{L}\p{N}])[^\p{L}\p{N}]+/gu, ' ') + ' ';
 }
-function titleNeedle(title, strict) {
-  if (!titlePattern(title, strict)) return null;   // 沿用相同的「題名夠長才算證據」規則
+function titleNeedle(title, strict, relaxed) {
+  if (!titlePattern(title, strict, relaxed)) return null;   // 沿用相同的「題名夠長才算證據」規則
   const words = lightNorm(title).toLowerCase().replace(/臺/g, '台').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const cjk = CJK_RE.test(words.join(''));
   return { cjk, s: cjk ? words.join('') : ' ' + words.join(' ') + ' ' };
@@ -1477,9 +1496,10 @@ function titleNeedle(title, strict) {
 
 function pageHasTitle(an, cite, noUrl) {
   if (!cite.titleSure || !an.getText) return false;
-  const full = titleNeedle(cite.title, false);
+  const relax = !!cite.isCase;
+  const full = titleNeedle(cite.title, false, relax);
   const main = cite.title.split(/:|：| — | – /)[0];
-  const mainN = main !== cite.title ? titleNeedle(main, true) : null;
+  const mainN = main !== cite.title ? titleNeedle(main, true, relax) : null;
   const needles = [full, mainN].filter(Boolean);
   if (!needles.length) return false;                 // 題名太短：不必讀內文
   // 1) 快速排除：有鑑別度的片段不在 HTML 中 → 去標籤後也不可能出現（不複製整頁字串，省 CPU 與記憶體）
@@ -1508,7 +1528,8 @@ function pageHasTitle(an, cite, noUrl) {
 function urlEchoesTitle(urls, cite) {
   if (!cite.titleSure) return false;
   const main = cite.title.split(/:|：| — | – /)[0];
-  const needles = [titleNeedle(cite.title, false), main !== cite.title ? titleNeedle(main, true) : null].filter(Boolean);
+  const relax = !!cite.isCase;
+  const needles = [titleNeedle(cite.title, false, relax), main !== cite.title ? titleNeedle(main, true, relax) : null].filter(Boolean);
   if (!needles.length) return false;
   const dec = (x) => { try { return decodeURIComponent(x); } catch (_) { return x; } };
   for (const raw of urls) {
@@ -1525,7 +1546,7 @@ function urlEchoesTitle(urls, cite) {
 // 題名出現在網址路徑（slug）中
 function titleInUrlPath(urls, cite) {
   if (!cite.titleSure) return false;
-  const n = titleNeedle(cite.title, false);
+  const n = titleNeedle(cite.title, false, !!cite.isCase);
   if (!n) return false;
   return urls.some(raw => { try { return compactForMatch(lightNorm(decodeURIComponent(new URL(raw).pathname)), n.cjk).includes(n.s); } catch (_) { return false; } });
 }
@@ -1549,6 +1570,8 @@ function isRedirectHome(orig, final) {
 // 單項檢核：每項回傳 { kind, cls, reason, how, check }
 //   cls：match | partial | mismatch | negative（不存在）| error（無法判定）
 // ═══════════════════════════════════════════════════════════════
+// 本工具自身的限制造成的「未查核」（不是來源的問題）：時間上限、用戶端中止、運算預算、連線數上限、內部錯誤
+const TOOL_SIDE_CODES = new Set(['deadline', 'aborted', 'cpu_budget', 'upstream_budget', 'host_budget', 'internal_error']);
 const NEGATIVE_CODES = new Set(['dns_error', 'unsafe_url', 'invalid_url', 'http_404', 'http_410', 'soft_404', 'redirect_home', 'doi_not_registered', 'isbn_invalid']);
 
 function baseCheck(kind, target) {
@@ -1721,7 +1744,7 @@ function evaluatePage(check, an, cite, ctx, fr, origUrl) {
     if (kd.length) { check.note = msg(L, isDoi ? 'doi_terms' : 'url_terms', { c: kd[0].cited, f: kd[0].found }); return { ...ev, cls: 'partial', reason: 'terms', kc: kd[0].cited, kf: kd[0].found }; }
   }
   // 頁面本身有明確、不同的學術題名（citation_title），引用題名只出現在側欄或相關文章清單 → 網址指向另一篇
-  if (inPage && !titleOk && cite.titleSure) {
+  if (inPage && !titleOk && cite.titleSure && !cite.isCase) {
     const own = an.cands.filter(c => c.label === 'citation_title');
     if (own.length && !crossLanguage(cite, own.map(c => c.t)) && Math.max(...own.map(c => scoreTitle(cite, c.t, true))) < SCORE_MISMATCH) {
       check.foundTitle = own[0].t; check.note = msg(L, isDoi ? 'doi_wrong_work' : 'url_wrong_work');
@@ -2036,7 +2059,8 @@ async function searchBib(cite, ctx) {
   if (!full || ctx.expired()) {
     check.status = 'search_error';
     check.note = msg(L, 'search_error', { why: msg(L, ctx.expired() ? 'deadline' : 'internal_error') });
-    return { cls: 'error', code: ctx.expired() ? 'deadline' : 'internal_error', check };
+    // 沒有可搜尋的文字（重試也不會改變）≠ 本工具的限制：不標為未查核
+    return { cls: 'error', code: ctx.expired() ? 'deadline' : 'no_query', check };
   }
   const [cr, oa] = await Promise.all([crossrefSearch(full, ctx), openalexSearch(title, ctx)]);
   if (cr.state === 'error' && oa.state === 'error') {
@@ -2110,7 +2134,13 @@ function negShort(L, ev) {
 function decide(id, evs, search, ctx, cite) {
   const L = ctx.lang;
   const checks = evs.map(e => e.check).concat(search ? [search.check] : []);
-  const out = (verdict, method, summary, suggestion) => ({ id, verdict, method, checks, suggestion: suggestion || null, summary });
+  // reason（附加欄位）：verdict 為 partial 時的細分原因（pdf、year、terms…；見 evaluateMeta／evaluatePage），其餘為 null。
+  // 前端依此決定來源能否保留在報告中（排除政策），因此任何 partial 都必須帶有明確的 reason。
+  // unchecked（附加欄位，只在 true 時出現）：判為 inconclusive 的原因包含本工具自身的限制（時間上限、運算預算、連線數上限、內部錯誤），
+  // 而不是來源網站或書目服務的回應——前端應以較小批次重新查核，仍未查核時視同查證中斷（不得據以排除）
+  const toolSide = evs.some(e => e.cls === 'error' && TOOL_SIDE_CODES.has(e.reason)) || !!(search && search.cls === 'error' && TOOL_SIDE_CODES.has(search.code));
+  const out = (verdict, method, summary, suggestion, reason) => ({ id, verdict, method, reason: verdict === 'partial' ? (reason || 'unknown') : null, checks, suggestion: suggestion || null, summary,
+    ...(verdict === 'inconclusive' && toolSide ? { unchecked: true } : {}) });
   const match = evs.find(e => e.cls === 'match');
   const doiMis = evs.find(e => e.kind === 'doi' && e.cls === 'mismatch');
   const mis = doiMis || evs.find(e => e.cls === 'mismatch');
@@ -2130,9 +2160,11 @@ function decide(id, evs, search, ctx, cite) {
     : msg(L, 'srch_none');
 
   if (match) {
+    // 兩個 DOI：一個相符、另一個指向另一篇著作（常見於 AI 把兩筆文獻併成一筆）
+    if (doiMis && match.kind === 'doi') return out('partial', 'doi', msg(L, 'S_part_doi_mixed', { ft: doiMis.check.foundTitle || '?' }), null, 'url_mixed');
     if (doiMis) return out('mismatch', 'doi', msg(L, 'S_mis_doi_url_ok'), sug);
-    if (doiNeg) return out('partial', match.kind, msg(L, 'S_part_doi_bad_src_ok'), sug);
-    if (mis) return out('partial', match.kind, msg(L, 'S_part_url_mixed', { ft: mis.check.foundTitle || '?' }), null);
+    if (doiNeg) return out('partial', match.kind, msg(L, 'S_part_doi_bad_src_ok'), sug, 'doi_bad');
+    if (mis) return out('partial', match.kind, msg(L, 'S_part_url_mixed', { ft: mis.check.foundTitle || '?' }), null, 'url_mixed');
     const s = match.check.titleScore != null ? match.check.titleScore.toFixed(2) : '–';
     let summary;
     if (match.kind === 'doi') summary = match.how === 'landing' ? msg(L, 'S_ver_doi_landing') : msg(L, 'S_ver_doi', { src: match.check.source || 'Crossref', s });
@@ -2166,10 +2198,18 @@ function decide(id, evs, search, ctx, cite) {
       c: partial.kc, f: partial.kf, vol: partial.vol, pg: partial.pg, d: partial.d, why: partial.why, ft: partial.ft, x: partial.x, h: partial.h, h0: partial.h0,
     });
     if (doiNeg) summary += msg(L, 'S_add_doi_bad');
-    return out('partial', partial.kind, summary, sug);
+    // 引用中的 DOI 未註冊：無論其他識別碼查得什麼，這筆引用都含有錯誤的識別碼
+    return out('partial', partial.kind, summary, sug, doiNeg ? 'doi_bad' : partial.reason);
+  }
+  // 參考案例不做書目搜尋：網址失效、只連到首頁或無法判定時，直接依網址的結果判定
+  if (cite && cite.isCase) {
+    if (neg) return out('not_found', neg.kind, msg(L, 'S_case_dead', { neg: neg.check.note }));
+    if (err) return out('inconclusive', err.kind, msg(L, 'S_inconc', { why: err.check.note }));
+    if (weak) return out('unverifiable', weak.kind, msg(L, 'S_case_weak', { why: weak.check.note }));
+    return out('unverifiable', 'none', msg(L, 'S_case_nourl'));
   }
   if (sCls === 'strong') {
-    if (neg) return out('partial', 'search', msg(L, 'S_part_exists_bad_id', { src: search.check.source, why: negShort(L, neg) }), sug);
+    if (neg) return out('partial', 'search', msg(L, 'S_part_exists_bad_id', { src: search.check.source, why: negShort(L, neg) }), sug, 'bad_id');
     const s = search.suggestion;
     const summary = msg(L, 'S_ver_search', {
       pre: err ? msg(L, 'S_pre_err') : evs.length ? '' : msg(L, 'S_pre_noid'),
@@ -2229,27 +2269,25 @@ function isbnInvalid(text) {
 
 async function verifyRef(ref, ctx) {
   if (ctx.expired()) {
-    return { id: ref.id, verdict: 'inconclusive', method: 'none', checks: [], suggestion: null, summary: msg(ctx.lang, 'S_deadline') };
+    return { id: ref.id, verdict: 'inconclusive', method: 'none', reason: null, checks: [], suggestion: null, summary: msg(ctx.lang, 'S_deadline'), unchecked: true };
   }
-  const cite = timed(ctx, () => parseCitation(ref.text));
+  const isCase = ref.kind === 'case';
+  const cite = timed(ctx, () => (isCase ? caseCitation(ref) : parseCitation(ref.text)));
   const { dois, urls } = timed(ctx, () => collectIdentifiers(ref));
   const evs = [];
-  // 1. DOI（最權威）；相符即停止
-  for (const doi of dois) {
-    const ev = await checkDoi(doi, cite, ctx);
-    evs.push(ev);
-    if (ev.cls === 'match') break;
-  }
+  // 1. DOI（最權威）：每一個都查（AI 常把兩筆文獻併成一筆：第一個 DOI 相符，不代表第二個也是這篇）
+  for (const doi of dois) evs.push(await checkDoi(doi, cite, ctx));
   const doiMatched = evs.some(e => e.kind === 'doi' && e.cls === 'match');
-  // 2. 網址；DOI 已相符時仍檢查其他網址是否失效（只記錄失效，不影響已查證）
+  // 2. 網址：每一個都查；已有相符的識別碼後，其他網址只記錄失效或指向另一篇著作（不影響相符本身，但會標示）
+  let matched = doiMatched;
   for (const u of urls) {
     const ev = await checkUrl(u, cite, ctx);
-    if (doiMatched) { if (ev.cls === 'negative') evs.push(ev); continue; }
+    if (matched) { if (ev.cls === 'negative' || ev.cls === 'mismatch') evs.push(ev); continue; }
     evs.push(ev);
-    if (ev.cls === 'match') break;
+    if (ev.cls === 'match') matched = true;
   }
   // ISBN 檢查碼：捏造的 ISBN 常常檢查碼錯誤
-  const isbn = isbnInvalid(ref.text);
+  const isbn = isCase ? null : isbnInvalid(ref.text);
   if (isbn) {
     const check = baseCheck('search', 'ISBN ' + isbn);
     check.status = 'isbn_invalid';
@@ -2262,7 +2300,8 @@ async function verifyRef(ref, ctx) {
   // DOI 已確認是這篇著作（題名相符，只是年份或作者不符）→ 搜尋只會找到同一筆，省下查詢額度
   const doiIdentified = evs.some(e => e.kind === 'doi' && e.cls === 'partial' && (e.reason === 'year' || e.reason === 'author'));
   let search = null;
-  if (!doiMatched && !doiIdentified && (!urlMatched || doiFlawed)) search = await searchBib(cite, ctx);
+  // 參考案例：書目資料庫不收錄案例，搜尋案例名稱只會找到不相干的論文 → 只依所列網址判定
+  if (!isCase && !doiMatched && !doiIdentified && (!urlMatched || doiFlawed)) search = await searchBib(cite, ctx);
   return decide(ref.id, evs, search, ctx, cite);
 }
 
@@ -2305,8 +2344,13 @@ function validateRefs(refs, L) {
       if (r[k] == null) continue;
       if (!Array.isArray(r[k]) || r[k].length > MAX_LIST_ITEMS || r[k].some(x => typeof x !== 'string' || x.length > MAX_URL_CHARS)) return bad(k);
     }
+    // 選填：kind 'ref'（預設，APA 文獻）或 'case'（參考案例表的一列；title 為案例名稱）
+    if (r.kind != null && r.kind !== 'ref' && r.kind !== 'case') return bad('kind');
+    if (r.title != null && (typeof r.title !== 'string' || r.title.length > MAX_FOUND_TITLE)) return bad('title');
     out.push({
       id: r.id,
+      kind: r.kind === 'case' ? 'case' : 'ref',
+      title: r.kind === 'case' && typeof r.title === 'string' ? r.title.trim() : '',
       text: r.text.trim().slice(0, MAX_TEXT_CHARS),
       urls: (r.urls || []).slice(0, MAX_URLS_PER_REF),
       // 超長的 DOI 字串不可能是合法 DOI：直接捨棄，不進入任何解析
@@ -2406,10 +2450,13 @@ export default async (request, context) => {
           const ref = v.refs[i];
           let res;
           try { res = await verifyRef(ref, ctx); } catch (_) {
-            res = { id: ref.id, verdict: 'inconclusive', method: 'none', checks: [], suggestion: null, summary: msg(L, 'S_internal') };
+            res = { id: ref.id, verdict: 'inconclusive', method: 'none', reason: null, checks: [], suggestion: null, summary: msg(L, 'S_internal'), unchecked: true };
           }
           if (ctx.cancelled) return;
-          if (!VERDICTS.includes(res.verdict)) res.verdict = 'inconclusive';
+          if (!VERDICTS.includes(res.verdict)) { res.verdict = 'inconclusive'; res.unchecked = true; }
+          if (res.verdict !== 'inconclusive') delete res.unchecked;
+          if (res.verdict !== 'partial') res.reason = null;
+          else if (typeof res.reason !== 'string' || !res.reason) res.reason = 'unknown';
           stats[res.verdict]++;
           emit(res);
         }
