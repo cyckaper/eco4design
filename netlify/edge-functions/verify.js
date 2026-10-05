@@ -11,6 +11,8 @@
 //   5. 直接開啟引用的網址：讀 <title>、citation_title、dc.title、og:title，或在內文找引用題名；PDF 讀中繼資料
 //   6. Crossref（query.bibliographic）＋ OpenAlex（search）書目搜尋：
 //      沒有 DOI／網址的書籍與報告，或 DOI 指錯著作時，找出實際存在的版本
+//   7. 網際網路檔案館 Wayback availability API（archive.org/wayback/available）：
+//      網址失效時確認「是否曾經存在」（政府機關改組後舊網址大量失效；捏造的路徑幾乎不會被存檔）
 //
 // 請求（POST JSON）：{ passcode, lang: 'zh'|'en', refs: [{ id, text, urls[], dois[] }] }（最多 25 筆）
 // 回應：application/x-ndjson 串流；每查完一筆送出一行，最後一行 {"done":true,"stats":{…}}。
@@ -22,7 +24,8 @@
 //   unverifiable 無法查證：沒有 DOI／網址且搜尋不到（常見於紙本書、政府出版品）——需人工查證
 //   inconclusive 未能判定：逾時、403、429 等網路問題
 //
-// 環境變數：QI_PASSCODE（與 analyze 共用）、VERIFY_MAILTO（選填，Crossref／OpenAlex 禮貌池聯絡信箱）、
+// 環境變數：QI_PASSCODE（必填，與 analyze 共用；未設定時本端點回 503，不開放）、
+//   VERIFY_MAILTO（建議設定，Crossref／OpenAlex 禮貌池聯絡信箱，只會送給這兩個服務）、
 //   VERIFY_OPENALEX_KEY（選填，OpenAlex API 金鑰）、
 //   VERIFY_UPSTREAM_TIMEOUT_MS／VERIFY_TOTAL_TIMEOUT_MS／VERIFY_CPU_BUDGET_MS（選填，調校與測試用）
 
@@ -40,6 +43,9 @@ const MAX_ERROR_BYTES = 64 * 1024;    // 錯誤回應只讀一小段
 const MAX_REDIRECTS = 8;              // 手動追蹤轉址，每一跳都重新檢查安全性
 const MAX_FOUND_TITLE = 300;
 const REF_CONCURRENCY = 5;            // 同時查核筆數
+const MAX_HOST_FETCHES = 24;          // 同一次請求對同一網站（非書目 API）最多連線次數（含轉址）
+const UPSTREAM_BASE = 40, UPSTREAM_PER_REF = 14, UPSTREAM_MAX = 300;   // 同一次請求的對外連線總數上限：min(300, 40 + 14 × 筆數)
+const RATE_WINDOW_MS = 5 * 60 * 1000, RATE_MAX = 100;                // 同一來源 IP 每 5 分鐘最多 100 次請求（單一執行個體內）
 const CPU_BUDGET_MS = 40;             // 頁面解析的運算時間預算（Netlify Edge 每次請求 CPU 上限 50 ms；等待網路不計）
 const UPSTREAM_TIMEOUT_MS = 8000;     // 每個上游請求
 const TOTAL_TIMEOUT_MS = 35000;       // 整體上限（headers 立即回傳，結果逐行串流）
@@ -62,6 +68,9 @@ const MSG = {
   body_too_large: ['請求內容過大', 'Request body too large'],
   bad_json: ['請求格式錯誤（非合法 JSON）', 'Malformed request (invalid JSON)'],
   bad_body: ['請求格式錯誤（應為 JSON 物件）', 'Malformed request (expected a JSON object)'],
+  bad_ctype: ['請求格式錯誤（Content-Type 應為 application/json）', 'Malformed request (Content-Type must be application/json)'],
+  not_configured: ['文獻查證服務尚未設定通行碼（QI_PASSCODE），暫不開放', 'The reference-verification service has no passcode configured (QI_PASSCODE), so it is disabled'],
+  rate_limited_req: ['查證請求過於頻繁，請稍後再試', 'Too many verification requests; please try again shortly'],
   passcode_required: ['需要通行碼', 'Passcode required'],
   passcode_invalid: ['通行碼不正確', 'Incorrect passcode'],
   no_refs: ['沒有要查核的參考文獻（refs 應為非空陣列）', 'No references to check (refs must be a non-empty array)'],
@@ -99,12 +108,12 @@ const MSG = {
   url_grey: ['網頁可開啟，但頁面題名與引用僅部分相似', 'Page opens, but its title only partly resembles the citation'],
   url_not_in_page: ['網頁可開啟，但頁面未見引用題名（可能為首頁、搜尋頁或題名不同）', 'Page opens, but the cited title was not found on it (it may be a home page, a search page, or titled differently)'],
   url_js_only: ['網頁可開啟，但內容由程式動態載入，無法自動比對', 'Page opens, but its content is rendered by JavaScript and cannot be matched automatically'],
-  url_wrong_work: ['網頁的學術中繼資料指向另一篇著作', 'The page’s scholarly metadata describes a different work'],
+  url_wrong_work: ['網頁的學術詮釋資料指向另一篇著作', 'The page’s scholarly metadata describes a different work'],
   url_year: ['頁面題名相符，但出版年不同（引用 {cy}，頁面 {fy}）', 'Page title matches, but the year differs (cited {cy}, page {fy})'],
   url_author: ['頁面題名相符，但作者與頁面資料不符', 'Page title matches, but the authors differ from the page metadata'],
-  pdf_match: ['PDF 可開啟，檔案中繼資料題名與引用相符', 'PDF opens and its embedded title matches the citation'],
+  pdf_match: ['PDF 可開啟，檔案詮釋資料題名與引用相符', 'PDF opens and its embedded title matches the citation'],
   pdf_nometa: ['PDF 可開啟，但沒有可比對的題名資料', 'PDF opens, but has no usable title metadata'],
-  pdf_title_differs: ['PDF 可開啟，但檔案中繼資料題名與引用不同（中繼資料常不可靠）', 'PDF opens, but its embedded title differs (embedded metadata is often unreliable)'],
+  pdf_title_differs: ['PDF 可開啟，但檔案詮釋資料題名與引用不同（詮釋資料常不可靠）', 'PDF opens, but its embedded title differs (embedded metadata is often unreliable)'],
   filetype: ['檔案可開啟（{type}），無法自動比對內容', 'File opens ({type}) but its content cannot be matched automatically'],
   http_404: ['網址不存在（HTTP 404）', 'URL does not exist (HTTP 404)'],
   http_410: ['網址已移除（HTTP 410）', 'URL has been removed (HTTP 410)'],
@@ -123,6 +132,8 @@ const MSG = {
   rate_limited: ['查詢過於頻繁，被暫時限制（HTTP 429）', 'Rate-limited (HTTP 429)'],
   http_error: ['伺服器回應錯誤（HTTP {code}）', 'Server responded with an error (HTTP {code})'],
   timeout: ['連線逾時', 'Connection timed out'],
+  upstream_budget: ['本次查核的對外連線數已達上限，未檢查（可分批重新查核）', 'This run’s limit on outgoing requests was reached, so it was not checked (re-check in smaller batches)'],
+  host_budget: ['本次查核對同一網站的連線數已達上限，未檢查（可分批重新查核）', 'This run’s limit on requests to the same site was reached, so it was not checked (re-check in smaller batches)'],
   deadline: ['已達本次查核的時間上限，未完成', 'Stopped at this run’s time limit'],
   cpu_budget: ['網頁可開啟，但本次查核的運算量已達上限，未比對內容（可分批重新查核）', 'The page opens, but this run’s processing budget was used up before its content could be compared (re-check in smaller batches)'],
   tls_error: ['安全連線（TLS）失敗', 'Secure connection (TLS) failed'],
@@ -148,19 +159,16 @@ const MSG = {
   S_ver_doi_landing: ['DOI 可解析，導向頁面的題名與引用相符。', 'The DOI resolves and its landing page title matches the citation.'],
   S_ver_url_meta: ['網址可開啟，頁面題名與引用相符（題名相似度 {s}）。', 'The URL opens and the page title matches the citation (title similarity {s}).'],
   S_ver_url_text: ['網址可開啟，頁面內文含有引用題名。', 'The URL opens and the page text contains the cited title.'],
-  S_ver_url_pdf: ['網址可開啟（PDF），檔案中繼資料題名與引用相符。', 'The URL opens (PDF) and its embedded title matches the citation.'],
-  S_ver_search: ['{pre}{src} 查得相符著作（題名相似度 {s}{yr}）。{add}', '{pre}{src} lists a matching work (title similarity {s}{yr}).{add}'],
+  S_ver_url_pdf: ['網址可開啟（PDF），檔案詮釋資料題名與引用相符。', 'The URL opens (PDF) and its embedded title matches the citation.'],
+  S_ver_search: ['{pre}{src} 查得相符著作（題名相似度 {s}{yr}）。', '{pre}{src} lists a matching work (title similarity {s}{yr}).'],
   S_pre_noid: ['未附 DOI 或網址；', 'No DOI or URL was given; '],
   S_pre_err: ['引用的 DOI／網址無法連線檢查；', 'The cited DOI/URL could not be checked; '],
-  S_add_doi: ['建議補上 DOI：{doi}', ' Consider adding the DOI {doi}'],
-  S_mis_doi: ['DOI 指向另一篇著作：「{ft}」{fy}，與引用題名不符。', 'The DOI points to a different work: “{ft}”{fy}, not the cited title.'],
-  S_mis_url: ['網址的學術中繼資料指向另一篇著作：「{ft}」{fy}，與引用題名不符。', 'The page’s scholarly metadata describes a different work: “{ft}”{fy}, not the cited title.'],
+  S_mis_doi: ['DOI 已註冊，但指向另一篇著作，與引用題名不符（常見的「真 DOI、錯文獻」）。', 'The DOI is registered but points to a different work, not the cited title (a common “real DOI, wrong work” error).'],
+  S_mis_doi_xlang: ['DOI 已註冊，但登記資料為另一種語言，且年份或卷期頁碼也不符：指向另一篇著作。', 'The DOI is registered, but its record is in another language and the year or volume/pages also differ: it points to a different work.'],
+  S_mis_url: ['網址的學術詮釋資料指向另一篇著作，與引用題名不符。', 'The page’s scholarly metadata describes a different work, not the cited title.'],
   S_part_url_mixed: ['其中一個網址內容相符，但另一個網址指向另一篇著作「{ft}」，請移除錯誤的網址。', 'One URL matches the citation, but another points to a different work (“{ft}”); remove the wrong URL.'],
   S_add_dead: ['另：引用中的其他網址無效（{why}）。', ' Note: another cited URL is invalid ({why}).'],
-  S_mis_doi_url_ok: ['網址內容與引用相符，但 DOI 指向另一篇著作「{ft}」，DOI 需更正。', 'The URL matches the citation, but the DOI points to a different work (“{ft}”); the DOI must be corrected.'],
-  // 建議項目一律放在句尾、後面不接標點，避免網址被標點黏住
-  S_sug: ['書目搜尋找到可能正確的著作：{what}', ' Bibliographic search found a likely correct record: {what}'],
-  S_sug_possible: ['書目搜尋找到相近著作，請人工比對：{what}', ' Bibliographic search found a similar record to compare manually: {what}'],
+  S_mis_doi_url_ok: ['網址內容與引用相符，但 DOI 指向另一篇著作，DOI 需更正。', 'The URL matches the citation, but the DOI points to a different work; the DOI must be corrected.'],
   S_part_doi_bad_src_ok: ['來源可開啟且題名相符，但引用的 DOI 未註冊，DOI 需更正。', 'The source opens and its title matches, but the cited DOI is not registered and must be corrected.'],
   S_part_exists_bad_id: ['{src} 查得此著作，但引用中的識別資訊有誤（{why}），請改用建議的 DOI／連結。', '{src} lists this work, but the cited identifier is wrong ({why}); use the suggested DOI/link instead.'],
   neg_doi_not_registered: ['DOI 未註冊', 'DOI not registered'],
@@ -176,7 +184,7 @@ const MSG = {
   S_part_biblio: ['題名相符，但卷期與頁碼都與登記資料不符（登記：第 {vol} 卷，第 {pg} 頁起），請確認期刊、卷期與頁碼。', 'The title matches, but neither the volume nor the pages match the record (record: vol. {vol}, p. {pg}); check the journal, volume and pages.'],
   S_part_archived: ['原網址已失效（{why}），但網際網路檔案館 {d} 的存檔與引用相符：文獻存在，請更新網址。', 'The link is dead ({why}), but the Internet Archive copy from {d} matches the citation: the document exists; update the URL.'],
   S_unv_archived: ['原網址已失效（{why}），但網際網路檔案館曾於 {d} 存檔此網址：應為連結失效而非虛構文獻，請人工確認並更新網址。', 'The link is dead ({why}), but the Internet Archive captured this URL on {d}: the link has rotted rather than the source being fictitious; verify manually and update the URL.'],
-  S_unv_home: ['網址只是網站首頁（無法指認文獻本身），Crossref 與 OpenAlex 也查無此著作，需人工查證；請改引用文獻本身的網址。', 'The URL is only a site home page (it does not identify the document), and neither Crossref nor OpenAlex lists the work; verify manually and cite the document’s own URL.'],
+  S_unv_home: ['網址只是網站首頁（無法指認文獻本身），且 {srch}，需人工查證；請改引用文獻本身的網址。', 'The URL is only a site home page (it does not identify the document), and {srch}; verify manually and cite the document’s own URL.'],
   S_unv_similar_terms: ['{pre}書目資料庫有題名相近的著作，但關鍵詞不同（引用「{c}」／資料庫「{f}」）：可能是改寫自另一篇文獻，請人工比對建議項目。', '{pre}the bibliographic databases list a similar title with different key terms (cited “{c}” / database “{f}”): it may be an altered version of another work; compare the suggestion manually.'],
   S_unv_similar_generic: ['{pre}書目資料庫有同名著作，但題名過於一般、作者無法確認，不能據以查證，需人工查證。', '{pre}the bibliographic databases list a work with this title, but the title is too generic and the authors could not be confirmed; verify manually.'],
   neg_isbn_invalid: ['ISBN 檢查碼錯誤', 'invalid ISBN check digit'],
@@ -186,7 +194,7 @@ const MSG = {
   S_part_grey: ['來源存在，但題名僅部分相似（題名相似度 {s}），請人工確認是否為同一著作。', 'The source exists, but its title only partly resembles the citation (title similarity {s}); check manually that it is the same work.'],
   S_part_title_unsure: ['來源存在，但無法從引用文字辨識題名以自動比對，請人工確認。', 'The source exists, but the cited title could not be identified for automatic comparison; check manually.'],
   S_part_cross_lang: ['來源存在，但登記題名與引用題名語言不同，無法自動比對，請人工確認。', 'The source exists, but its registered title is in a different language from the citation; check manually.'],
-  S_part_pdf: ['PDF 可開啟，但無法以中繼資料比對題名，請人工確認內容。', 'The PDF opens, but its title could not be matched from metadata; check its content manually.'],
+  S_part_pdf: ['PDF 可開啟，但無法以詮釋資料比對題名，請人工確認內容。', 'The PDF opens, but its title could not be matched from metadata; check its content manually.'],
   S_part_js_only: ['網頁可開啟，但內容由程式動態載入，無法自動比對，請人工確認。', 'The page opens, but its content is rendered by JavaScript and cannot be matched automatically; check manually.'],
   S_part_not_in_page: ['網頁可開啟，但頁面中未見引用題名，請人工確認是否為正確頁面。', 'The page opens, but the cited title does not appear on it; check manually that it is the right page.'],
   S_part_no_metadata: ['DOI 已註冊，但查無可比對的書目資料，請人工確認。', 'The DOI is registered, but no metadata was available to compare; check manually.'],
@@ -194,9 +202,11 @@ const MSG = {
   S_part_moved: ['網址被導回網站首頁；首頁雖提到引用題名，但原連結已失效，請更新為正確網址。', 'The URL redirects to the site’s home page; the home page mentions the cited title, but the original link is dead. Update the URL.'],
   S_part_filetype: ['檔案可開啟，但無法自動比對內容，請人工確認。', 'The file opens, but its content cannot be matched automatically; check manually.'],
   S_add_doi_bad: ['另：引用的 DOI 未註冊。', ' Also, the cited DOI is not registered.'],
-  S_nf: ['{neg}，且 Crossref 與 OpenAlex 查無相近著作：可能是不存在的文獻，或連結已失效，請人工確認。', '{neg}, and neither Crossref nor OpenAlex returned a similar work: the reference may not exist, or its link is dead; check manually.'],
+  S_nf: ['{neg}，且 {srch}：可能是不存在的文獻，或連結已失效，請人工確認。', '{neg}, and {srch}: the reference may not exist, or its link is dead; check manually.'],
+  srch_none: ['Crossref 與 OpenAlex 均查無相近著作', 'neither Crossref nor OpenAlex returned a similar work'],
+  srch_none_half: ['{ok} 查無相近著作（{bad} 無法連線，未能查詢）', '{ok} returned no similar work ({bad} could not be reached)'],
   S_nf_nosearch: ['DOI 未註冊，且書目搜尋無法完成：此 DOI 不存在，請人工查證此文獻。', 'The DOI is not registered and the bibliographic search could not be completed: this DOI does not exist; verify the reference manually.'],
-  S_unv_none: ['沒有 DOI 或網址可檢核，Crossref 與 OpenAlex 也查無此著作，需人工查證（常見於紙本書、政府出版品）。', 'No DOI or URL to check, and neither Crossref nor OpenAlex lists this work; verify manually (common for printed books and government publications).'],
+  S_unv_none: ['沒有 DOI 或網址可檢核，且 {srch}，需人工查證（常見於紙本書、政府出版品）。', 'No DOI or URL to check, and {srch}; verify manually (common for printed books and government publications).'],
   S_unv_similar: ['{pre}書目資料庫找到相近但無法確認的著作（題名相似度 {s}），請人工比對建議項目。', '{pre}the bibliographic databases returned a similar but unconfirmed work (title similarity {s}); compare the suggestion manually.'],
   S_unv_similar_author: ['{pre}書目資料庫有題名相符的著作，但作者不同（資料庫：{fa}），可能是作者誤植，請人工比對建議項目。', '{pre}the bibliographic databases list a work with this title but different authors ({fa}); the authors may be misattributed. Compare the suggestion manually.'],
   S_unv_similar_year: ['{pre}書目資料庫有題名相符的著作，但出版年不同（資料庫：{fy}），請人工比對建議項目。', '{pre}the bibliographic databases list a work with this title but a different year ({fy}); compare the suggestion manually.'],
@@ -216,14 +226,24 @@ function msg(L, key, p) {
   return s;
 }
 
-function json(status, obj) {
+// 只供本站前端同源呼叫：不送 CORS 標頭（其他網站的頁面無法讀取回應，也無法通過 JSON 請求的預檢）
+function json(status, obj, extra) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      'access-control-allow-origin': '*',
-    },
+    headers: { 'content-type': 'application/json; charset=utf-8', 'x-content-type-options': 'nosniff', ...(extra || {}) },
   });
+}
+
+// 簡易頻率限制（每個執行個體各自計數；同一校園網路可能共用一個 IP，上限因此放寬）
+const rateHits = new Map();
+function rateLimited(ip) {
+  if (!ip) return false;
+  const now = Date.now();
+  if (rateHits.size > 5000) for (const [k, v] of rateHits) if (now - v[v.length - 1] > RATE_WINDOW_MS) rateHits.delete(k);
+  const arr = (rateHits.get(ip) || []).filter(t => now - t < RATE_WINDOW_MS);
+  arr.push(now);
+  rateHits.set(ip, arr.slice(-RATE_MAX - 1));
+  return arr.length > RATE_MAX;
 }
 
 function envInt(name, def, min, max) {
@@ -403,7 +423,9 @@ function keyTermDiff(cited, found) {
     f = f.filter(y => !bc.some(x => ktNear(x, y)));
     if (c.length && f.length) out.push({ cited: join(c, A), found: join(f, B) });
   }
-  return out.map(d => ({ cited: cleanText(d.cited, 60), found: cleanText(d.found, 60) }));
+  // 比對時把「臺」視為「台」；顯示時還原各自原文的寫法，引號內的字詞須與原文一致
+  const orig = (t, src) => (/臺/.test(src) && !/台/.test(src) ? t.replace(/台/g, '臺') : t);
+  return out.map(d => ({ cited: cleanText(orig(d.cited, cited), 60), found: cleanText(orig(d.found, String(found || '')), 60) }));
 }
 
 // 題名是否有足夠鑑別度（短而一般的題名如 Urban ecology、Nature-based solutions、都市生態學 有大量同名著作）
@@ -809,13 +831,41 @@ async function fetchHop(url, ctx, headers, maxBytes) {
   }
 }
 
-// 手動追蹤轉址（最多 4 次），每一跳都重新檢查目標是否安全
-async function safeFetch(rawUrl, ctx, headers, maxBytes) {
+// 手動追蹤轉址（最多 MAX_REDIRECTS 次），每一跳都重新檢查目標是否安全。
+// 同一次請求內：相同網址（與相同 Accept）只實際連線一次；對外連線總數與「每個網站」的連線數都有上限，
+// 避免一次請求被放大成對單一網站的大量請求（每一跳都計數）。
+const MAILTO_HOSTS = new Set(['api.crossref.org', 'api.openalex.org']);   // 只有這兩個服務會收到聯絡信箱
+
+function safeFetch(rawUrl, ctx, headers, maxBytes, fresh) {
+  if (fresh) return safeFetchUncached(rawUrl, ctx, headers, maxBytes);    // 重試（例如 429 後）不可用快取
+  const key = rawUrl + '\n' + (headers.accept || '') + '\n' + maxBytes;
+  let p = ctx.fetchCache.get(key);
+  if (!p) { p = safeFetchUncached(rawUrl, ctx, headers, maxBytes); ctx.fetchCache.set(key, p); }
+  return p;
+}
+
+function takeFetchBudget(ctx, host) {
+  if (ctx.upstream >= ctx.maxUpstream) return 'upstream_budget';
+  if (!TRUSTED_API_HOSTS.has(host)) {
+    const n = ctx.hostHits.get(host) || 0;
+    if (n >= MAX_HOST_FETCHES) return 'host_budget';
+    ctx.hostHits.set(host, n + 1);
+  }
+  ctx.upstream++;
+  return null;
+}
+
+async function safeFetchUncached(rawUrl, ctx, headers, maxBytes) {
   let url = rawUrl;
   for (let hop = 0; ; hop++) {
     const safe = await checkTarget(url);
     if (!safe.ok) return { error: hop === 0 || /^dns_/.test(safe.code) ? safe.code : 'unsafe_redirect', url, hops: hop };
-    const r = await fetchHop(safe.href, ctx, headers, maxBytes);
+    const host = hostOf(safe.href);
+    const over = takeFetchBudget(ctx, host);
+    if (over) return { error: over, url: safe.href, hops: hop };
+    // 轉址離開 Crossref／OpenAlex 後，不再送出含聯絡信箱的 User-Agent
+    const h = MAILTO_HOSTS.has(host) ? headers : { ...headers, 'user-agent': UA };
+    const r = await fetchHop(safe.href, ctx, h, maxBytes);
     if (r.error) return { ...r, url: safe.href, hops: hop };
     if (r.redirect) {
       if (!r.location) return { error: 'bad_redirect', httpStatus: r.status, url: safe.href, hops: hop };
@@ -842,10 +892,10 @@ function parseJsonBytes(bytes) {
   try { return JSON.parse(new TextDecoder().decode(bytes)); } catch (_) { return null; }
 }
 
-async function apiJson(url, ctx, accept) {
+async function apiJson(url, ctx, accept, fresh) {
   const headers = apiHeaders(ctx);
   if (accept) headers.accept = accept;
-  const r = await safeFetch(url, ctx, headers, MAX_API_BYTES);
+  const r = await safeFetch(url, ctx, headers, MAX_API_BYTES, fresh);
   if (r.error) return r;
   const t0 = performance.now();
   const parsed = parseJsonBytes(r.bytes);
@@ -868,7 +918,7 @@ function crossrefCall(url, ctx) {
     if (r.status === 429 && !ctx.expired()) {
       const wait = Math.min(2000, Math.max(300, (parseFloat(r.retryAfter) || 1) * 1000));
       await new Promise(res => setTimeout(res, Math.min(wait, Math.max(0, ctx.deadline - Date.now()))));
-      r = await apiJson(url, ctx);
+      r = await apiJson(url, ctx, null, true);
     }
     return r;
   });
@@ -1084,7 +1134,8 @@ function stripToText(html) {
     blockRe.lastIndex = end;
   }
   if (pos < html.length) kept.push(html.slice(pos));
-  return decodeEntities(kept.join(' ').replace(/<[a-zA-Z\/!?][^>]*>?/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 200000);
+  // 空白正規化只改「兩個以上的空白」與非一般空白字元：單一空格不必替換（大頁面上快一個數量級）
+  return decodeEntities(kept.join(' ').replace(/<[a-zA-Z\/!?][^>]*>?/g, ' ')).replace(/\s{2,}|[^\S ]/g, ' ').trim().slice(0, 200000);
 }
 
 function analyzeHtml(html) {
@@ -1286,7 +1337,8 @@ function titleAnchors(title) {
 const MAX_TITLE_SCAN = 200000;
 function compactForMatch(s, cjk) {
   const t = String(s).slice(0, MAX_TITLE_SCAN).toLowerCase().replace(/臺/g, '台');
-  return cjk ? t.replace(/[^\p{L}\p{N}]+/gu, '') : ' ' + t.replace(/[^\p{L}\p{N}]+/gu, ' ') + ' ';
+  // 拉丁：每段非字母數字換成單一空白；本來就是單一空格者跳過不替換（省 CPU）
+  return cjk ? t.replace(/[^\p{L}\p{N}]+/gu, '') : ' ' + t.replace(/(?! [\p{L}\p{N}])[^\p{L}\p{N}]+/gu, ' ') + ' ';
 }
 function titleNeedle(title, strict) {
   if (!titlePattern(title, strict)) return null;   // 沿用相同的「題名夠長才算證據」規則
@@ -1367,8 +1419,8 @@ function shortErr(L, code) {
   if (/^http_\d+$/.test(code)) return 'HTTP ' + code.slice(5);
   if (code === 'rate_limited') return 'HTTP 429';
   if (code === 'blocked_403') return 'HTTP 403';
-  const zh = { timeout: '逾時', deadline: '達時間上限', aborted: '已中止', dns_error: 'DNS', tls_error: 'TLS', bad_metadata: '回應格式異常' };
-  const en = { timeout: 'timeout', deadline: 'time limit', aborted: 'aborted', dns_error: 'DNS', tls_error: 'TLS', bad_metadata: 'bad response' };
+  const zh = { timeout: '逾時', deadline: '達時間上限', aborted: '已中止', dns_error: 'DNS', tls_error: 'TLS', bad_metadata: '回應格式異常', upstream_budget: '連線數達上限' };
+  const en = { timeout: 'timeout', deadline: 'time limit', aborted: 'aborted', dns_error: 'DNS', tls_error: 'TLS', bad_metadata: 'bad response', upstream_budget: 'request limit reached' };
   return (L === 'en' ? en : zh)[code] || (L === 'en' ? 'network error' : '連線失敗');
 }
 
@@ -1426,7 +1478,7 @@ function evaluateMeta(check, meta, cite, ctx, src) {
     const bib = biblioAgrees(cite, meta), yd = yearDiff(cite, meta);
     if (bib === false || (yd != null && yd > YEAR_TOLERANCE && bib !== true)) {
       check.note = msg(L, 'doi_cross_lang_mis');
-      return { ...ev, cls: 'mismatch' };
+      return { ...ev, cls: 'mismatch', reason: 'cross_lang' };
     }
     check.note = msg(L, 'doi_cross_lang'); return { ...ev, cls: 'partial', reason: 'cross_lang' };
   }
@@ -1687,17 +1739,26 @@ async function checkUrl(url, cite, ctx) {
 // 網際網路檔案館曾存檔此網址 → 網址確實存在過（捏造的路徑幾乎不可能被存檔）；存檔內容與引用相符 → 文獻存在。
 async function waybackCheck(url, cite, ctx, ev) {
   if (ctx.expired()) return ev;
-  const r = await apiJson(`https://archive.org/wayback/available?url=${encodeURIComponent(url)}`, ctx);
-  const c = !r.error && r.json && r.json.archived_snapshots && r.json.archived_snapshots.closest;
-  if (!c || c.available !== true || String(c.status) !== '200' || !/^\d{14}$/.test(String(c.timestamp || ''))) return ev;
+  const ask = async (ts) => {
+    const r = await apiJson(`https://archive.org/wayback/available?url=${encodeURIComponent(url)}${ts ? '&timestamp=' + ts : ''}`, ctx);
+    return (!r.error && r.json && r.json.archived_snapshots && r.json.archived_snapshots.closest) || null;
+  };
+  const okSnap = (x) => x && x.available === true && String(x.status) === '200' && /^\d{14}$/.test(String(x.timestamp || ''));
+  let c = await ask(null);
+  // 最近一次存檔若已是轉址或錯誤頁（例如機關改組後），改找最接近引用年份的存檔
+  if (c && !okSnap(c) && cite.year && !ctx.expired()) c = await ask(`${cite.year}0701`);
+  if (!okSnap(c)) return ev;
   const ts = String(c.timestamp);
   const d = `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}`;
   let matched = false;
   const fr = await safeFetch(`https://web.archive.org/web/${ts}id_/${url}`, ctx, pageHeaders(), MAX_PAGE_BYTES);
   if (!fr.error && fr.ok && ctx.cpuMs < ctx.cpuBudgetMs) {
     const t0 = performance.now();
-    try { matched = evaluatePage(baseCheck('url', url), analyzeFetched(fr), cite, ctx, fr, null).cls === 'match'; } catch (_) { /* 存檔無法解析：只算「曾存在」 */ }
+    let cls = null;
+    try { cls = evaluatePage(baseCheck('url', url), analyzeFetched(fr), cite, ctx, fr, url).cls; } catch (_) { /* 存檔無法解析：只算「曾存在」 */ }
     ctx.cpuMs += performance.now() - t0;
+    if (cls === 'negative') return ev;     // 存檔本身就是「找不到」頁面：不能當作曾經存在的證據
+    matched = cls === 'match';
   }
   const L = ctx.lang;
   const check = { ...ev.check, archived: `https://web.archive.org/web/${ts}/${url}`,
@@ -1783,7 +1844,7 @@ async function searchBib(cite, ctx) {
     check.note = failed
       ? msg(L, 'search_none_half', { ok: failed === 'Crossref' ? 'OpenAlex' : 'Crossref', bad: failed })
       : msg(L, 'search_none');
-    return { cls: 'none', check };
+    return { cls: 'none', check, half: failed };
   }
   check.source = top.src;
   check.foundTitle = top.best.t;
@@ -1802,8 +1863,9 @@ async function searchBib(cite, ctx) {
     check.note = msg(L, 'search_match', { src: top.src });
     return { cls: 'strong', check, suggestion, score: top.best.score };
   }
-  check.status = 'search_similar';
-  check.note = msg(L, { author: 'search_similar_author', year: 'search_similar_year', terms: 'search_similar_terms', generic: 'search_similar_generic' }[top.why] || 'search_similar', { src: top.src });
+  const simKey = { author: 'search_similar_author', year: 'search_similar_year', terms: 'search_similar_terms', generic: 'search_similar_generic' }[top.why] || 'search_similar';
+  check.status = simKey;     // search_similar 或細分：_author（同名、作者不同：疑作者誤植）、_year、_terms、_generic
+  check.note = msg(L, simKey, { src: top.src });
   return { cls: 'similar', check, suggestion, score: top.best.score, why: top.why, kd: top.kd };
 }
 
@@ -1831,18 +1893,15 @@ function decide(id, evs, search, ctx) {
   // 識別碼已證實有誤，而搜尋只找到「同名但題名過於一般」的著作 → 不足以推翻，判查無
   if (sCls === 'similar' && search.why === 'generic' && neg) return out('not_found', neg.kind, msg(L, 'S_nf_generic', { neg: neg.check.note, ft: search.check.foundTitle || '?' }));
   const citedDois = new Set(evs.filter(e => e.kind === 'doi').map(e => e.check.target));
+  // 建議書目只放在結構化的 suggestion（摘要保持一句話，不重複題名與連結）
   const sug = (sCls === 'strong' || sCls === 'similar') && !(search.suggestion.doi && citedDois.has(search.suggestion.doi)) ? search.suggestion : null;
-  const sugWhat = (s) => {
-    const head = L === 'en' ? `“${s.title}”${s.year ? ` (${s.year})` : ''}` : `「${s.title}」${s.year ? `（${s.year}）` : ''}`;
-    const link = s.doi ? 'https://doi.org/' + s.doi : s.url;
-    return link ? `${head}${L === 'en' ? ', ' : '，'}${link}` : head;
-  };
-  const sugText = sug ? msg(L, sCls === 'strong' ? 'S_sug' : 'S_sug_possible', { what: sugWhat(sug) }) : '';
-  const fyText = (y) => (y ? (L === 'en' ? ` (${y})` : `（${y}）`) : '');
+  const srch = sCls === 'none' && search.half
+    ? msg(L, 'srch_none_half', { ok: search.half === 'Crossref' ? 'OpenAlex' : 'Crossref', bad: search.half })
+    : msg(L, 'srch_none');
 
   if (match) {
-    if (doiMis) return out('mismatch', 'doi', msg(L, 'S_mis_doi_url_ok', { ft: doiMis.check.foundTitle || '?' }) + sugText, sug);
-    if (doiNeg) return out('partial', match.kind, msg(L, 'S_part_doi_bad_src_ok') + sugText, sug);
+    if (doiMis) return out('mismatch', 'doi', msg(L, 'S_mis_doi_url_ok'), sug);
+    if (doiNeg) return out('partial', match.kind, msg(L, 'S_part_doi_bad_src_ok'), sug);
     if (mis) return out('partial', match.kind, msg(L, 'S_part_url_mixed', { ft: mis.check.foundTitle || '?' }), null);
     const s = match.check.titleScore != null ? match.check.titleScore.toFixed(2) : '–';
     let summary;
@@ -1856,8 +1915,8 @@ function decide(id, evs, search, ctx) {
     return out('verified', match.kind, summary, pageSug);
   }
   if (mis) {
-    const key = mis.kind === 'doi' ? 'S_mis_doi' : 'S_mis_url';
-    return out('mismatch', mis.kind, msg(L, key, { ft: mis.check.foundTitle || '?', fy: fyText(mis.check.foundYear) }) + sugText, sug);
+    const key = mis.kind === 'doi' ? (mis.reason === 'cross_lang' ? 'S_mis_doi_xlang' : 'S_mis_doi') : 'S_mis_url';
+    return out('mismatch', mis.kind, msg(L, key), sug);
   }
   if (partial) {
     const p = partial.check;
@@ -1872,7 +1931,7 @@ function decide(id, evs, search, ctx) {
       c: partial.kc, f: partial.kf, vol: partial.vol, pg: partial.pg, d: partial.d, why: partial.why, ft: partial.ft,
     });
     if (doiNeg) summary += msg(L, 'S_add_doi_bad');
-    return out('partial', partial.kind, summary + sugText, sug);
+    return out('partial', partial.kind, summary, sug);
   }
   if (sCls === 'strong') {
     if (neg) return out('partial', 'search', msg(L, 'S_part_exists_bad_id', { src: search.check.source, why: negShort(L, neg) }), sug);
@@ -1882,13 +1941,12 @@ function decide(id, evs, search, ctx) {
       src: search.check.source,
       s: search.score.toFixed(2),
       yr: s.year ? (L === 'en' ? `, ${s.year}` : `、${s.year} 年`) : '',
-      add: s.doi ? msg(L, 'S_add_doi', { doi: 'https://doi.org/' + s.doi }) : '',
     });
     return out('verified', 'search', summary, sug);
   }
   if (sCls === 'similar') {
     const s = search.score.toFixed(2);
-    if (err && !neg) return out('inconclusive', err.kind, msg(L, 'S_inconc', { why: err.check.note }) + sugText, sug);
+    if (err && !neg) return out('inconclusive', err.kind, msg(L, 'S_inconc', { why: err.check.note }), sug);
     const pre = neg ? msg(L, 'S_unv_pre_neg', { neg: negShort(L, neg) }) : evs.length ? '' : msg(L, 'S_unv_pre_noid');
     const key = { author: 'S_unv_similar_author', year: 'S_unv_similar_year', terms: 'S_unv_similar_terms', generic: 'S_unv_similar_generic' }[search.why] || 'S_unv_similar';
     const kd0 = search.kd && search.kd[0];
@@ -1896,16 +1954,16 @@ function decide(id, evs, search, ctx) {
       search.why === 'generic' ? null : sug);
   }
   if (neg) {
-    if (sCls === 'none') return out('not_found', neg.kind, msg(L, 'S_nf', { neg: neg.check.note }));
+    if (sCls === 'none') return out('not_found', neg.kind, msg(L, 'S_nf', { neg: neg.check.note, srch }));
     if (doiNeg) return out('not_found', 'doi', msg(L, 'S_nf_nosearch'));
     return out('inconclusive', neg.kind, msg(L, 'S_inconc_neg_search', { neg: neg.check.note }));
   }
   if (weak) {
     if (weak.reason === 'archived') return out('unverifiable', 'url', msg(L, 'S_unv_archived', { why: weak.why, d: weak.d }));
-    if (!err) return out('unverifiable', 'url', msg(L, 'S_unv_home'));
+    if (!err && sCls === 'none') return out('unverifiable', 'url', msg(L, 'S_unv_home', { srch }));
   }
   if (err) return out('inconclusive', err.kind, msg(L, 'S_inconc', { why: err.check.note }));
-  if (sCls === 'none') return out('unverifiable', 'search', msg(L, 'S_unv_none'));
+  if (sCls === 'none') return out('unverifiable', 'search', msg(L, 'S_unv_none', { srch }));
   if (sCls === 'error') return out('inconclusive', 'search', msg(L, 'S_inconc', { why: search.check.note }));
   return out('unverifiable', 'none', msg(L, 'S_unv_nothing'));
 }
@@ -2013,7 +2071,7 @@ function validateRefs(refs, L) {
   return { refs: out };
 }
 
-function makeCtx(lang) {
+function makeCtx(lang, nRefs) {
   const mailtoRaw = (Deno.env.get('VERIFY_MAILTO') || '').trim();
   const mailto = /^[^\s@<>()"]+@[^\s@<>()"]+\.[^\s@<>()"]+$/.test(mailtoRaw) ? mailtoRaw : '';
   const totalMs = envInt('VERIFY_TOTAL_TIMEOUT_MS', TOTAL_TIMEOUT_MS, 200, TOTAL_TIMEOUT_MS);
@@ -2029,6 +2087,10 @@ function makeCtx(lang) {
     reason: null,
     cancelled: false,
     crossref: semaphore(mailto ? 3 : 2),
+    fetchCache: new Map(),       // 同一請求內相同網址只連線一次
+    hostHits: new Map(),         // 每個網站的連線次數
+    upstream: 0,
+    maxUpstream: Math.min(UPSTREAM_MAX, UPSTREAM_BASE + UPSTREAM_PER_REF * (nRefs || 1)),
     cpuMs: 0,
     cpuBudgetMs: envInt('VERIFY_CPU_BUDGET_MS', CPU_BUDGET_MS, 0, 1000),
     cancel(reason) {
@@ -2043,21 +2105,21 @@ function makeCtx(lang) {
   return ctx;
 }
 
-export default async (request) => {
-  if (request.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        'access-control-allow-origin': '*',
-        'access-control-allow-methods': 'POST, OPTIONS',
-        'access-control-allow-headers': 'content-type',
-      },
-    });
-  }
-  if (request.method !== 'POST') return json(405, { error: msg('zh', 'bad_method'), code: 'METHOD_NOT_ALLOWED' });
+export default async (request, context) => {
+  if (request.method !== 'POST') return json(405, { error: msg('zh', 'bad_method'), code: 'METHOD_NOT_ALLOWED' }, { allow: 'POST' });
 
+  // 未設定通行碼時不開放：本端點會代為連線任意網址，沒有 API 費用可當煞車（與 analyze 不同）
   const PASSCODE = Deno.env.get('QI_PASSCODE');
+  if (!PASSCODE) return json(503, { error: msg('zh', 'not_configured'), code: 'NOT_CONFIGURED' });
 
+  const ip = (context && typeof context.ip === 'string' && context.ip) ||
+    request.headers.get('x-nf-client-connection-ip') || (request.headers.get('x-forwarded-for') || '').split(',')[0].trim();
+  if (rateLimited(ip)) return json(429, { error: msg('zh', 'rate_limited_req'), code: 'RATE_LIMITED' }, { 'retry-after': '60' });
+
+  // 只接受 JSON：跨站的 text/plain 表單請求不會被處理
+  if (!/^application\/json\b/i.test(request.headers.get('content-type') || '')) {
+    return json(415, { error: msg('zh', 'bad_ctype'), code: 'BAD_CONTENT_TYPE' });
+  }
   const declared = Number(request.headers.get('content-length') || 0);
   if (declared > MAX_BODY_BYTES) return json(413, { error: msg('zh', 'body_too_large'), code: 'BODY_TOO_LARGE' });
   let raw;
@@ -2068,18 +2130,16 @@ export default async (request) => {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return json(400, { error: msg('zh', 'bad_body'), code: 'BAD_BODY' });
   const L = body.lang === 'en' ? 'en' : 'zh';
 
-  // ── 通行碼驗證（與 analyze 相同）──
-  if (PASSCODE) {
-    const given = String(body.passcode || '').trim();
-    if (!given) return json(401, { error: msg(L, 'passcode_required'), code: 'PASSCODE_REQUIRED' });
-    if (given !== PASSCODE) return json(401, { error: msg(L, 'passcode_invalid'), code: 'PASSCODE_INVALID' });
-  }
+  // ── 通行碼驗證（與 analyze 相同；非字串一律視為未提供）──
+  const given = typeof body.passcode === 'string' ? body.passcode.trim() : '';
+  if (!given) return json(401, { error: msg(L, 'passcode_required'), code: 'PASSCODE_REQUIRED' });
+  if (given !== PASSCODE) return json(401, { error: msg(L, 'passcode_invalid'), code: 'PASSCODE_INVALID' });
 
   const v = validateRefs(body.refs, L);
   if (v.error) return json(v.status, { error: v.error, code: v.code });
 
   const started = Date.now();
-  const ctx = makeCtx(L);
+  const ctx = makeCtx(L, v.refs.length);
   const enc = new TextEncoder();
   const stats = { verified: 0, partial: 0, mismatch: 0, not_found: 0, unverifiable: 0, inconclusive: 0 };
   if (request.signal && typeof request.signal.addEventListener === 'function') {
@@ -2113,7 +2173,8 @@ export default async (request) => {
       }).then(() => {
         clearTimeout(ctx.timer);
         if (ctx.cancelled) return;
-        emit({ done: true, stats: { ...stats, ms: Date.now() - started } });
+        // guard.dns：本次請求中 DNS 防護是否實際運作（部署後確認 Deno.resolveDns 可用性）
+        emit({ done: true, stats: { ...stats, ms: Date.now() - started }, guard: { dns: dnsGuard.state, upstream: ctx.upstream } });
         try { controller.close(); } catch (_) { /* 用戶端已斷線 */ }
       });
     },
@@ -2130,7 +2191,8 @@ export default async (request) => {
       'cache-control': 'no-cache, no-transform',
       'x-accel-buffering': 'no',
       'x-content-type-options': 'nosniff',
-      'access-control-allow-origin': '*',
+      // DNS 防護是否實際運作（on／off；unknown＝本次未查詢任何網站）：部署後可由此確認 Deno.resolveDns 是否可用
+      'x-verify-dns-guard': dnsGuard.state,
     },
   });
 };

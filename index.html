@@ -318,6 +318,14 @@
   .verify-status.is-warn { background: var(--gold-pale); border-color: var(--clay-light); border-left-color: var(--clay); color: #5a2810; }
   .verify-status.is-err { background: var(--clay-pale); border-color: var(--clay); border-left-color: var(--clay); color: #5a2810; }
   .verify-status.is-run::before { content: ''; display: inline-block; width: 11px; height: 11px; margin-right: 8px; vertical-align: -1px; border: 2px solid var(--border); border-top-color: var(--moss); border-radius: 50%; animation: qi-spin 0.8s linear infinite; }
+  /* 逐筆查核結果（主頁面上、報告框外）：由本工具以純文字產生，報告內容或樣式無法改變 */
+  .verify-list { margin: -4px 0 12px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 3px; background: var(--paper); font-family: var(--serif); font-size: 12.5px; line-height: 1.55; color: var(--ink); }
+  .verify-list > summary { cursor: pointer; color: var(--moss); font-weight: 600; }
+  .verify-list .vl-note { margin: 6px 0 0; font-size: 11.5px; color: var(--moss-light); }
+  .verify-list ol { margin: 6px 0 0; padding-left: 1.7em; }
+  .verify-list li { margin: 0 0 7px; overflow-wrap: anywhere; }
+  .verify-list .vl-badge { font-weight: 700; white-space: nowrap; }
+  .verify-list .vl-sum { display: block; color: #5a5f58; }
   .result-actions .btn[disabled] { opacity: 0.55; cursor: progress; }
 
   /* Paste-back modal */
@@ -715,6 +723,7 @@
         <button class="btn btn-ghost" id="closeResultBtn">✕ 收起預覽</button>
       </div>
       <div id="verifyStatus" class="verify-status" role="status" aria-live="polite" style="display:none;"></div>
+      <details id="verifyList" class="verify-list" style="display:none;"><summary></summary><p class="vl-note"></p><ol></ol></details>
       <div id="resultNotice" class="result-notice" role="status" style="display:none;"></div>
       <!-- 不給 allow-same-origin：報告在獨立的不透明來源中執行，讀不到本頁的通行碼與 localStorage -->
       <iframe id="resultFrame" class="result-frame" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
@@ -1332,7 +1341,7 @@
       if (typeof L === 'undefined') throw new Error('Leaflet 未載入');
       map = L.map('map', { worldCopyJump: true }).setView([23.97, 120.97], 7);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap',
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
         maxZoom: 18,
         noWrap: false,
         crossOrigin: 'anonymous'
@@ -2563,8 +2572,19 @@ ${REPORT_RULES_ZH}`;
     catch (e) {
       if (!isQuotaError(e)) { console.warn('localStorage 不可用:', e); toast(t('⚠️ 瀏覽器無法儲存歷史紀錄（可能是無痕模式或已停用網站資料）')); return false; }
     }
+    // 1) 較舊且已查核的紀錄：來源清單已寫進報告本身，meta 裡的副本可以移除（不損失資訊）
+    const slim = (x, all) => {
+      if (!x.meta || !(x.meta.src || x.meta.cited) || !(all || /class="verification"/.test(x.htmlResult || ''))) return x;
+      const m = Object.assign({}, x.meta); delete m.src; delete m.cited;
+      return Object.assign({}, x, { meta: m });
+    };
+    let a = arr.map((x, i) => (i > 0 ? slim(x, false) : x));
+    try { put(a); return true; } catch (_) {}
     const DATA_IMG = /(<img\b[^>]*\ssrc\s*=\s*["'])data:image\/[^"']+(["'])/gi;
-    let a = arr.map((x, i) => (i > 0 && x.htmlResult) ? Object.assign({}, x, { htmlResult: x.htmlResult.replace(DATA_IMG, '$1$2') }) : x);
+    a = a.map((x, i) => (i > 0 && x.htmlResult) ? Object.assign({}, x, { htmlResult: x.htmlResult.replace(DATA_IMG, '$1$2') }) : x);
+    try { put(a); toast(t('⚠️ 歷史紀錄空間已滿：已移除較舊報告中的地圖圖片以騰出空間')); return true; } catch (_) {}
+    // 2) 移除報告內容之前，先移除所有較舊紀錄的來源清單副本（重新查核時資料來源段落會註明未記錄）
+    a = a.map((x, i) => (i > 0 ? slim(x, true) : x));
     try { put(a); toast(t('⚠️ 歷史紀錄空間已滿：已移除較舊報告中的地圖圖片以騰出空間')); return true; } catch (_) {}
     let dropped = 0;
     for (let i = a.length - 1; i > 0; i--) {
@@ -2634,10 +2654,17 @@ ${REPORT_RULES_ZH}`;
         const entry = arr[+btn.dataset.idx];
         if (entry.htmlResult) {
           analysisMeta = null;
-          showResult(entry.htmlResult, { ts: entry.ts, meta: entry.meta ? compactMeta(entry.meta) : legacyMeta(entry) });
+          // 本功能之前存入（沒有 clean 標記）的紀錄可能是未經過濾的完整文件：若帶有查證標記，先重建再顯示，
+          // 避免作者自帶的樣式偽造查證結果（重建會移除舊的查證標記，需重新查核）
+          let shown = entry.htmlResult, trusted = entry.clean === true;
+          if (!trusted && /\bvf-prov\b|class="verification"|class="vf\b/.test(shown)) {
+            const rb = rebuildUntrusted(shown, reportLangOf(shown));
+            if (rb) { shown = rb; trusted = true; }
+          }
+          showResult(shown, { ts: entry.ts, meta: entry.meta ? compactMeta(entry.meta) : legacyMeta(entry), trusted });
           toast(t('📄 已載入歷史結果'));
           // 尚未查核的舊報告：提示可查核（不自動送出）
-          if (!/<section\b[^>]*class="verification"/.test(entry.htmlResult)) setVerifyStatus(t('ℹ️ 這份報告的參考文獻尚未經本工具查核：按「🔎 查證文獻」即可查核。'), 'warn');
+          if (!/<section\b[^>]*class="verification"/.test(shown)) setVerifyStatus(t('ℹ️ 這份報告的參考文獻尚未經本工具查核：按「🔎 查證文獻」即可查核。'), 'warn');
         }
       };
     });
@@ -2685,6 +2712,13 @@ ${REPORT_RULES_ZH}`;
     toast(LANG==='en' ? `✅ Exported ${arr.length} records` : `✅ 已匯出 ${arr.length} 筆紀錄`);
   }
 
+  // 匯入的報告內容一律重建（只保留內容、套本工具樣式表、移除舊的查證標記）：
+  // 別人分享的檔案可能夾帶樣式表偽造查證結果，因此匯入後須重新查核（查證紀錄不沿用）
+  function importedHtml(x) {
+    let h = null;
+    try { h = rebuildUntrusted(x.htmlResult, reportLangOf(x.htmlResult)); } catch (e) { console.warn('[import] rebuild failed', e); }
+    return h ? { htmlResult: h, htmlSavedAt: typeof x.htmlSavedAt === 'string' ? x.htmlSavedAt : x.ts, clean: true } : {};
+  }
   function importJSON(file) {
     const reader = new FileReader();
     reader.onload = ev => {
@@ -2699,10 +2733,9 @@ ${REPORT_RULES_ZH}`;
           (x.habitatNeeds == null || strArr(x.habitatNeeds)) && (x.name == null || typeof x.name === 'string') &&
           (x.special == null || typeof x.special === 'string') && (x.htmlResult == null || typeof x.htmlResult === 'string'))
           .map(x => ({ ts: x.ts, lat: x.lat, lon: x.lon, name: x.name || '', species: x.species, conditions: x.conditions,
-            habitatNeeds: x.habitatNeeds || [], special: x.special || '', ...(x.htmlResult ? { htmlResult: x.htmlResult, htmlSavedAt: typeof x.htmlSavedAt === 'string' ? x.htmlSavedAt : x.ts } : {}),
+            habitatNeeds: x.habitatNeeds || [], special: x.special || '', ...(x.htmlResult ? importedHtml(x) : {}),
             ...(x.partial === true ? { partial: true } : {}),
-            ...(x.meta && compactMeta(x.meta) ? { meta: compactMeta(x.meta) } : {}),
-            ...(x.verification && compactVerification(x.verification) ? { verification: compactVerification(x.verification) } : {}) }));
+            ...(x.meta && compactMeta(x.meta) ? { meta: compactMeta(x.meta) } : {}) }));
         const skipped = data.length - valid.length;
         const arr = loadHistory();
         const merged = [...valid, ...arr];
@@ -2916,9 +2949,17 @@ section.verification .vf-star{color:#456238;font-weight:700;font-size:11px;white
 section.verification ul.vf-q{list-style:none;margin:3px 0 0;padding:0 0 0 10px;border-left:2px solid #d4cdb8}
 section.verification ul.vf-q>li{margin:2px 0;font-size:11.5px;color:#6b6e6a;font-style:italic}
 @media (max-width:600px){
- .heals-doc section.verification table.vf-table td:first-child,.heals-doc section.verification table.vf-table th:first-child{min-width:0}
- .heals-doc section.verification table.vf-table td:nth-child(2){min-width:10em}
- .heals-doc section.verification table.vf-table td:nth-child(5){min-width:13em}
+ .heals-doc section.verification table.vf-table,.heals-doc section.verification table.vf-table tbody{display:block;overflow:visible;width:100%;border:0;background:transparent}
+ .heals-doc section.verification table.vf-table thead{display:none}
+ .heals-doc section.verification table.vf-table tr{display:flex;flex-direction:column;margin:0 0 10px;border:1px solid #d4cdb8;background:#ffffff}
+ .heals-doc section.verification table.vf-table td:nth-child(n){display:block;min-width:0;width:auto;border:0;border-top:1px dotted #e3dccb;padding:4px 9px;white-space:normal;text-align:left}
+ .heals-doc section.verification table.vf-table td:nth-child(1){order:0;border-top:0;font-weight:700;color:#456238}
+ .heals-doc section.verification table.vf-table td:nth-child(1)::before{content:'#'}
+ .heals-doc section.verification table.vf-table td:nth-child(2){order:1}
+ .heals-doc section.verification table.vf-table td:nth-child(4){order:2}
+ .heals-doc section.verification table.vf-table td:nth-child(5){order:3}
+ .heals-doc section.verification table.vf-table td:nth-child(3){order:4}
+ .heals-doc section.verification table.vf-table td[data-l]::before{content:attr(data-l);display:block;font-size:10.5px;font-weight:400;color:#6b6e6a}
 }
 @media print{
  .vf,.vf.vf-bad{border-width:1px}
@@ -3103,9 +3144,11 @@ ${VF_CSS}</style>`;
     const img = mapDataUrl
       ? `<img src="${mapDataUrl}" alt="${alt}">`
       : `<img src="https://staticmap.openstreetmap.de/staticmap.php?center=${la},${lo}&amp;zoom=15&amp;size=800x500&amp;maptype=mapnik&amp;markers=${la},${lo},red-pushpin" alt="${alt}">`; // 載入失敗時由版面防護腳本移除
+    // OSMF 署名規範：印刷品須印出 openstreetmap.org/copyright 網址（以可見文字列出）
+    const copy = `<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">openstreetmap.org/copyright</a>`;
     const cap = en
-      ? `Site location: ${latS}, ${lonS}${place} · Base map: © <a href="${osmUrl}" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors`
-      : `基地位置：${latS}, ${lonS}${place} · 底圖：© <a href="${osmUrl}" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> 貢獻者`;
+      ? `Site location: ${latS}, ${lonS}${place} · Base map: © <a href="${osmUrl}" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors, ODbL — ${copy}`
+      : `基地位置：${latS}, ${lonS}${place} · 底圖：© <a href="${osmUrl}" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> 貢獻者，ODbL——${copy}`;
     return `\n<figure class="heals-map">${img}<figcaption>${cap}</figcaption></figure>\n`;
   }
 
@@ -3136,6 +3179,10 @@ ${VF_CSS}</style>`;
     a = check.html;
     a = a.replace(/<\/article\s*>\s*$/i, () => buildProvenance(opts.provenance, check, en) + '</article>');
 
+    return reportShell(a, en, opts.incomplete);
+  }
+  // 完整文件外殼：固定樣式表、字型、語言與標題（wrapReport 與 rebuildUntrusted 共用）
+  function reportShell(a, en, incomplete) {
     const h1 = a.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i);
     const title = (h1 ? h1[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim() : '') ||
       (en ? 'Qi-Coexistence design analysis' : '棲共生 生態共存設計分析');
@@ -3145,7 +3192,7 @@ ${VF_CSS}</style>`;
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="generator" content="${REPORT_MARK}">
-${opts.incomplete ? INCOMPLETE_MARK + '\n' : ''}<title>${title.replace(/</g, '&lt;')}</title>
+${incomplete ? INCOMPLETE_MARK + '\n' : ''}<title>${title.replace(/</g, '&lt;')}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="${REPORT_FONTS}" rel="stylesheet">
@@ -3156,6 +3203,57 @@ ${a}
 </body>
 </html>
 `;
+  }
+
+  // ---------- 不可信的完整文件：只保留內容，重建為本工具的版面 ----------
+  // 貼上的完整 HTML（包括本工具下載或複製的報告）與匯入的歷史紀錄，可能夾帶作者自己的 <style>、style=、
+  // <link>、SVG 等：若直接在上面加查證標記，作者的樣式可以把「❌」顯示成「✅」、隱藏說明與查證段落。
+  // 因此一律：移除舊的查證標記 → 取出 <article>（沒有就用 <body>）→ 以 sanitizeArticle 白名單過濾 →
+  // 套上本工具的固定樣式表。本工具產生的地圖（驗證圖片來源格式）、剖面資料區塊與頁尾文字保留。
+  const MAP_SRC_RE = /^(?:data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+\/=]+|https:\/\/staticmap\.openstreetmap\.de\/staticmap\.php\?[\w.,=&;%:-]+)$/;
+  function rebuildUntrusted(html, fallbackLang) {
+    const raw = String(html || '');
+    const doc = new DOMParser().parseFromString(raw, 'text/html');
+    stripVerification(doc);
+    const root = doc.querySelector('article') || doc.body;
+    if (!root) return null;
+    const hl = (doc.documentElement.getAttribute('lang') || '').toLowerCase();
+    const en = hl ? /^en/.test(hl) : fallbackLang === 'en';
+    // 已繪製的剖面圖（下載的報告）：還原為資料區塊，顯示時由本工具重新繪製
+    root.querySelectorAll('div.hx-wrap').forEach(w => {
+      const src = w.querySelector('script[data-hx-src]');
+      if (!src) { w.remove(); return; }
+      const sc = doc.createElement('script');
+      sc.setAttribute('type', 'application/json');
+      sc.setAttribute('class', 'heals-xsec');
+      sc.textContent = src.textContent;
+      w.replaceWith(sc);
+    });
+    // 地圖：只接受本工具產生的圖片來源格式；圖說只留文字。原位置以地圖標記保留
+    let mapHtml = '';
+    const fig = root.querySelector('figure.heals-map');
+    if (fig) {
+      const img = fig.querySelector('img');
+      const src = img ? (img.getAttribute('src') || '').trim() : '';
+      const cap = ((fig.querySelector('figcaption') || {}).textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      if (MAP_SRC_RE.test(src)) mapHtml = `\n<figure class="heals-map"><img src="${escapeHtml(src)}" alt="${en ? 'Site location map' : '基地位置地圖'}"><figcaption>${escapeHtml(cap)}</figcaption></figure>\n`;
+      fig.replaceWith(doc.createComment('HEALS:MAP'));
+    }
+    // 頁尾來源聲明：只留文字，並標明是「原文件記載」（不是本次由本工具記錄）
+    const foot = doc.querySelector('footer.provenance');
+    const footTexts = foot ? [...foot.querySelectorAll('p')].map(p => (p.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 6) : [];
+    if (foot) foot.remove();
+    // 舊的「非本次搜尋取得」旗標：保留文字
+    root.querySelectorAll('.src-flag').forEach(f => f.replaceWith(doc.createTextNode(f.textContent || '')));
+    let a = sanitizeArticle('<article>' + root.innerHTML + '</article>');
+    let first = true;
+    a = a.replace(/<!--\s*HEALS:MAP\s*-->/gi, () => { const r = first ? mapHtml : ''; first = false; return r; });
+    const lead = en ? 'As recorded in the pasted or imported document: ' : '原文件記載：';
+    const footer = `<footer class="provenance">${footTexts.length
+      ? footTexts.map((t, i) => `<p>${i === 0 && !/^(?:原文件記載：|As recorded in the pasted or imported document: )/.test(t) ? escapeHtml(lead) : ''}${escapeHtml(t)}</p>`).join('')
+      : `<p>${en ? 'Pasted or imported document: its generation record was not kept.' : '貼上或匯入的文件：未保留產生紀錄。'}</p>`}${unverifiedProvenanceLine(en)}</footer>`;
+    a = /<\/article\s*>\s*$/i.test(a) ? a.replace(/<\/article\s*>\s*$/i, () => footer + '</article>') : a + footer;
+    return reportShell(a, en, isIncompleteReport(raw));
   }
 
   // ---------- 引用比對 ----------
@@ -3373,6 +3471,7 @@ ${a}
       route: 'api', model, searchCalls, at: new Date().toISOString(), ds: runDatasets,
       src: sources.slice(0, 80).map(u => ({ u, t: sourceTitles.get(u) || '' })),
       cited: [...citedMap].map(([u, e]) => ({ u, t: e.t || sourceTitles.get(u) || '', q: e.q })),
+      nSrc: sources.length, nCited: citedMap.size,   // 總數（清單只保留前幾筆，報告中註明「列出前 N 個（共 M 個）」）
     });
     // 送出前先把表單存進歷史：就算之後斷線，輸入條件也不會遺失；完成或中斷時再把結果補進同一筆
     const runTs = saveToHistory();
@@ -3510,24 +3609,12 @@ ${a}
         html = wrapReport(html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources,
           provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
       } else {
-        // 舊格式（模型仍輸出完整文件）：沿用原本的後處理
-        // 把 Claude 寫的 staticmap.openstreetmap.de URL 換成我們本機截的地圖
-        // 確保位置地圖一定能顯示（不受 staticmap 服務當機影響）
-        if (capturedMapDataUrl) {
-          const beforeCount = (html.match(/staticmap\.openstreetmap\.de/g) || []).length;
-          html = html.replace(
-            /(<img[^>]*\ssrc\s*=\s*["'])https:\/\/staticmap\.openstreetmap\.de\/[^"']+(["'])/gi,
-            `$1${capturedMapDataUrl}$2`
-          );
-          const afterCount = (html.match(/staticmap\.openstreetmap\.de/g) || []).length;
-          if (beforeCount > afterCount) {
-            console.info(`Replaced ${beforeCount - afterCount} staticmap URL(s) with captured map.`);
-          }
-        }
-
-        // 後處理：強制把深色背景改 cream、淺色文字改深色（防 Claude 自加深色 section）
-        html = neutralizeDarkColors(html);
-        if (truncated) html = markIncomplete(html);
+        // 模型輸出了完整文件（未依格式）：模型自帶的樣式表不可信（可偽造或遮蔽查證標記），
+        // 只取其內容，與新格式相同地包裝（固定樣式表、本工具地圖與頁尾）
+        const d = new DOMParser().parseFromString(html, 'text/html');
+        const root = d.querySelector('article') || d.body;
+        html = wrapReport('<article>' + (root ? root.innerHTML : '') + '</article>', { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources,
+          provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
       }
 
       const elapsed = Math.round((Date.now() - startTime) / 1000);
@@ -3546,7 +3633,7 @@ ${a}
         datasets: meta.ds,           // 提示詞附上的 iNaturalist／OSM 資料
       };
 
-      showResult(html, { meta });
+      showResult(html, { meta, trusted: true });
       if (truncated) {
         toast(LANG==='en' ? `⚠️ Analysis finished (${elapsed}s) — the report may be incomplete` : `⚠️ 分析結束（${elapsed} 秒）——報告可能不完整`);
       } else {
@@ -3556,7 +3643,7 @@ ${a}
       const savedTs = saveToHistoryWithResult(html, runTs, { sources: analysisMeta.sources, meta });
       if (currentReport && currentReport.raw === html) currentReport.ts = savedTs || null;
       // 自動查證參考文獻（不阻擋報告顯示；失敗只顯示說明）
-      verifyReferences(html, { auto: true, ts: savedTs || null, meta, lang: runLang });
+      verifyReferences(html, { auto: true, ts: savedTs || null, meta, lang: runLang, trusted: true });
     } catch (e) {
       const rawMsg = stalled ? 'stalled' : (e.message || String(e));
       const elapsedSec = Math.round((Date.now() - startTime) / 1000);
@@ -3572,11 +3659,11 @@ ${a}
             const meta = runMeta();
             analysisMeta = { model, elapsed: elapsedSec, timestamp: new Date().toISOString(), usage: {}, searchCalls, stopReason: 'interrupted', sources: sources.slice(0, 80),
               searchSources: meta.src, cited: meta.cited, datasets: meta.ds };
-            showResult(ph, { meta });
+            showResult(ph, { meta, trusted: true });
             const savedTs = saveToHistoryWithResult(ph, runTs, { sources: analysisMeta.sources, partial: true, meta });
             if (currentReport && currentReport.raw === ph) currentReport.ts = savedTs || null;
             partialShown = true;
-            verifyReferences(ph, { auto: true, ts: savedTs || null, meta, lang: runLang });
+            verifyReferences(ph, { auto: true, ts: savedTs || null, meta, lang: runLang, trusted: true });
           }
         } catch (_) {}
       }
@@ -4727,10 +4814,13 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     opts = opts || {};
     if (opts.fromVerify && currentReport) {
       currentReport.raw = html;
+      currentReport.trusted = true;          // 查證結果套在本工具組裝（或重建）的版本上
     } else {
       cancelVerification();
       setVerifyStatus('');
-      currentReport = { raw: html, ts: opts.ts || null, meta: opts.meta || null };
+      setVerifyList(null);
+      // trusted：由本工具組裝（wrapReport／rebuildUntrusted），沒有作者自帶的樣式；否則查證前先重建
+      currentReport = { raw: html, ts: opts.ts || null, meta: opts.meta || null, trusted: opts.trusted === true };
     }
     html = renderCrossSections(html);
     analysisNonce = makeNonce();
@@ -4955,21 +5045,23 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
           provenance: { route: 'manual', timestamp: new Date().toISOString() },
         });
       } else {
-        // 舊格式完整文件：照舊處理
-        html = neutralizeDarkColors(extracted.html);
+        // 完整文件（舊格式、或本工具下載／複製的報告）：作者的樣式表可能偽造或遮蔽查證結果，
+        // 一律只保留內容、重建為本工具的版面（見 rebuildUntrusted）
+        html = rebuildUntrusted(extracted.html, en ? 'en' : 'zh');
+        if (!html) { toast(en ? '⚠️ No report found in the pasted document' : '⚠️ 貼上的文件中找不到報告內容'); return; }
         if (!extracted.complete) html = markIncomplete(html);
       }
       analysisMeta = null;
       // 手動路徑沒有搜尋紀錄；提示詞若附了 iNaturalist／OSM，只能依貼上當下表單中載入的資料推定（報告中會註明）
       const ds = captureDatasets();
       const meta = compactMeta({ route: 'manual', at: new Date().toISOString(), ds, dsAtPaste: !!(ds.inat || ds.osm) });
-      showResult(html, { meta });
+      showResult(html, { meta, trusted: true });
       const savedTs = saveToHistoryWithResult(html, null, { meta });
       if (currentReport && currentReport.raw === html) currentReport.ts = savedTs || null;
       close();
       toast(t('✅ 已載入手動結果'));
       // 手動路徑也自動查核參考文獻（與 API 路徑一致）；沒有通行碼時由 verifyReferences 顯示如何查核
-      verifyReferences(html, { auto: true, ts: savedTs || null, meta, lang: reportLangOf(html) });
+      verifyReferences(html, { auto: true, ts: savedTs || null, meta, lang: reportLangOf(html), trusted: true });
     };
     modal.addEventListener('click', e => { if (e.target === modal) close(); });
     setTimeout(() => modal.querySelector('#pasteTextarea').focus(), 100);
@@ -4992,6 +5084,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       if (extra.meta) recent.meta = extra.meta; else delete recent.meta;
       delete recent.verification;          // 新報告：舊的查證紀錄不再適用
       if (extra.partial) recent.partial = true; else delete recent.partial;
+      recent.clean = true;                 // 由本工具組裝（wrapReport／rebuildUntrusted），可直接加上查證標記
       savedTs = recent.ts;
       saveHistoryArray(arr);
     } else {
@@ -5008,6 +5101,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
         ...(extra.sources ? { sources: extra.sources } : {}),
         ...(extra.meta ? { meta: extra.meta } : {}),
         ...(extra.partial ? { partial: true } : {}),
+        clean: true,
       };
       arr.unshift(entry);
       savedTs = entry.ts;
@@ -5024,7 +5118,9 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
   // 正文引用一致性（作者–年份對照）在瀏覽器端以固定規則比對，不經伺服器。
   // 原則：查證服務回傳的任何字串（標題、說明、網址）都視為不可信資料——一律跳脫，連結只收 http(s)。
   const VERIFY_ENDPOINT = '/api/verify';
-  const VERIFY_BATCH = 25;          // 與 verify.js 的單次上限一致；超過時分批送出
+  // 每批筆數：verify.js 上限 25 筆，但同一請求內 Crossref 只有 2–3 個並行名額、整體 35 秒上限；
+  // 上游回應慢（每次約 3 秒）時 25 筆會被時間上限截斷，故每批 12 筆、依序送出
+  const VERIFY_BATCH = 12;
   const VERIFY_STALL_MS = 45000;    // 連續 45 秒沒有任何結果 → 視為中斷
   const VF_VERDICTS = ['verified', 'partial', 'mismatch', 'not_found', 'unverifiable', 'inconclusive'];
   const VF_CLASS = { verified: 'vf-ok', partial: 'vf-warn', mismatch: 'vf-bad', not_found: 'vf-bad', unverifiable: 'vf-unk', inconclusive: 'vf-unk' };
@@ -5042,6 +5138,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
         inconclusive: '網站拒絕自動存取、逾時或服務中斷，未作判定。請稍後重新查證，或人工查證。',
       },
       srcFlagNote: '［非本次搜尋取得］：這筆的網址或 DOI 不在模型本次搜尋取得的來源中，可能憑記憶引用；即使書目相符，也更需要核對原文是否支持陳述。',
+      authorNote: '（疑作者誤植）：書目資料庫有題名相符的著作，但作者不同——常見於 AI 把真實文獻掛在錯誤的作者名下。請依資料庫紀錄更正作者，並確認原文確實支持陳述。',
       scoreNote: '題名相似度（0–1）為引用題名與登記題名的字詞重疊程度，僅供參考。',
       method: { doi: 'DOI', url: '網頁', search: '書目檢索', none: '—' },
       kind: { doi: 'DOI', url: '網頁', search: '書目檢索' },
@@ -5058,6 +5155,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
         inconclusive: 'The site refused automated access, timed out or the service was interrupted, so no verdict was reached. Run the check again later or verify by hand.',
       },
       srcFlagNote: '[not from this run’s searches]: the URL or DOI is not among the sources the model retrieved in this run, so it may be cited from memory; even if the record matches, check that the source supports the claim.',
+      authorNote: '(possibly misattributed author): a work with this title is in the bibliographic databases, but under different authors — a common AI error that attaches a real work to the wrong names. Correct the authors from the database record and confirm the source supports the claim.',
       scoreNote: 'Title similarity (0–1) is the word overlap between the cited and the registered title; it is indicative only.',
       method: { doi: 'DOI', url: 'Web page', search: 'Bibliographic search', none: '—' },
       kind: { doi: 'DOI', url: 'Web page', search: 'Search' },
@@ -5158,9 +5256,12 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     if (typeof m.model === 'string' && m.model) out.model = str(m.model, 60);
     if (numIn(m.searchCalls, 0, 1000)) out.searchCalls = Math.round(m.searchCalls);
     if (isoOrNull(m.at)) out.at = m.at;
-    if (Array.isArray(m.src)) out.src = m.src.filter(x => x && typeof x.u === 'string' && x.u.length <= 1000 && safeHref(x.u)).slice(0, 80).map(x => ({ u: x.u, t: str(x.t, 200) }));
-    if (Array.isArray(m.cited)) out.cited = m.cited.filter(x => x && typeof x.u === 'string' && x.u.length <= 1000 && safeHref(x.u)).slice(0, 120)
-      .map(x => ({ u: x.u, t: str(x.t, 200), q: Array.isArray(x.q) ? x.q.filter(s => typeof s === 'string' && s.trim()).slice(0, 3).map(s => str(s, 240)) : [] }));
+    // 上限（每筆歷史紀錄的大小）：網址 ≤ 600 字、標題 ≤ 160 字、搜尋來源 ≤ 80 筆、模型引用 ≤ 40 筆、每筆引用原文 ≤ 3 段 × 160 字
+    if (Array.isArray(m.src)) out.src = m.src.filter(x => x && typeof x.u === 'string' && x.u.length <= 600 && safeHref(x.u)).slice(0, 80).map(x => ({ u: x.u, t: str(x.t, 160) }));
+    if (Array.isArray(m.cited)) out.cited = m.cited.filter(x => x && typeof x.u === 'string' && x.u.length <= 600 && safeHref(x.u)).slice(0, 40)
+      .map(x => ({ u: x.u, t: str(x.t, 160), q: Array.isArray(x.q) ? x.q.filter(s => typeof s === 'string' && s.trim()).slice(0, 3).map(s => str(s, 160)) : [] }));
+    if (numIn(m.nSrc, 0, 1e5)) out.nSrc = Math.round(m.nSrc);
+    if (numIn(m.nCited, 0, 1e5)) out.nCited = Math.round(m.nCited);
     if (m.ds && typeof m.ds === 'object') {
       const ds = {}, i = m.ds.inat, o = m.ds.osm;
       if (i && numIn(i.lat, -90, 90) && numIn(i.lon, -180, 180)) {
@@ -5226,6 +5327,8 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
   }
   function cleanDoi(d) {
     d = trimUnbalanced(String(d || '').trim()).toLowerCase();
+    // 「.」「..」路徑段、反斜線與編碼後的 . / \ 會被網址解析折疊成另一個 DOI：不視為 DOI（與 verify.js 相同規則）
+    if (/(^|\/)\.{1,2}(\/|$)|\\|%2e|%2f|%5c/i.test(d)) return '';
     return /^10\.\d{4,9}\/\S+$/.test(d) ? d : '';
   }
   // doi.org 連結，或出版社網址中明確的 /doi/10.… 路徑
@@ -5429,23 +5532,26 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
   // ---------- 查證服務 ----------
   function sanitizeVerifyResult(o, batch) {
     if (!o || typeof o !== 'object' || typeof o.id !== 'string' || !batch.some(r => r.id === o.id)) return null;
-    const str = (v, n) => typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, n) : '';
+    // 截斷時加「…」，讀者看得出文字被截短（不會停在題名或 DOI 中間而像是完整句子）
+    const str = (v, n) => { if (typeof v !== 'string') return ''; const x = v.replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n - 1) + '…' : x; };
+    // 識別碼與狀態碼不截斷：過長就不採用（截短的 DOI／網址會變成另一個識別碼）
+    const ids = (v, n) => { if (typeof v !== 'string') return ''; const x = v.trim(); return x.length > n ? '' : x; };
     const int = v => (typeof v === 'number' && isFinite(v)) ? Math.round(v) : null;
     const checks = (Array.isArray(o.checks) ? o.checks : []).filter(c => c && typeof c === 'object').slice(0, 8).map(c => ({
       kind: ['doi', 'url', 'search'].includes(c.kind) ? c.kind : 'search',
-      target: str(c.target, 300), status: str(c.status, 40), httpStatus: int(c.httpStatus),
+      target: ids(c.target, 600), status: ids(c.status, 40), httpStatus: int(c.httpStatus),
       foundTitle: str(c.foundTitle, 300), foundYear: int(c.foundYear), foundAuthors: str(c.foundAuthors, 160),
       titleScore: numIn(c.titleScore, -1e9, 1e9) ? Math.max(0, Math.min(1, c.titleScore)) : null,
       note: str(c.note, 240),
     }));
     let suggestion = null;
     if (o.suggestion && typeof o.suggestion === 'object') {
-      const doi = cleanDoi(str(o.suggestion.doi, 200));
-      const s = { doi, title: str(o.suggestion.title, 300), year: int(o.suggestion.year), url: safeHref(str(o.suggestion.url, 600)) };
+      const doi = cleanDoi(ids(o.suggestion.doi, 200));
+      const s = { doi, title: str(o.suggestion.title, 300), year: int(o.suggestion.year), url: safeHref(ids(o.suggestion.url, 1000)) };
       if (s.doi || s.url) suggestion = s;
     }
     return { id: o.id, verdict: VF_VERDICTS.includes(o.verdict) ? o.verdict : 'inconclusive',
-      method: ['doi', 'url', 'search', 'none'].includes(o.method) ? o.method : 'none', checks, suggestion, summary: str(o.summary, 300) };
+      method: ['doi', 'url', 'search', 'none'].includes(o.method) ? o.method : 'none', checks, suggestion, summary: str(o.summary, 600) };
   }
   // 送出一批並逐行讀取 NDJSON；回傳 { error } 或 { done }
   async function streamVerify(batch, lang, passcode, signal, onResult) {
@@ -5515,6 +5621,9 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       if (f.status === 404) return t('ℹ️ 文獻查證服務尚未啟用（/api/verify 回應 404）。報告內容不受影響；請逐筆人工查證參考文獻。');
       if (f.status === 413) return t('⚠️ 參考文獻筆數超過查證服務上限（HTTP 413）。報告內容不受影響。');
       if (f.status === 429) return t('⚠️ 查證服務暫時忙碌（HTTP 429），請 1–2 分鐘後再按「🔎 查證文獻」。報告內容不受影響。');
+      if (f.status === 503 && f.code === 'NOT_CONFIGURED') return LANG === 'en'
+        ? 'ℹ️ The reference-verification service is not enabled on this site yet (the administrator must set QI_PASSCODE). The report itself is unaffected; check every reference by hand.'
+        : 'ℹ️ 本站尚未啟用文獻查證服務（管理者需設定 QI_PASSCODE）。報告內容不受影響；請逐筆人工查證參考文獻。';
       return LANG === 'en'
         ? `⚠️ The reference-verification service is temporarily unavailable (HTTP ${f.status}). The report itself is unaffected; press "🔎 Verify references" to try again later.`
         : `⚠️ 文獻查證服務暫時無法使用（HTTP ${f.status}）。報告內容不受影響；可稍後按「🔎 查證文獻」重試。`;
@@ -5527,6 +5636,37 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     el.textContent = msg || '';
     el.className = 'verify-status' + (kind ? ' is-' + kind : '');
     el.style.display = msg ? 'block' : 'none';
+  }
+  // 主頁面上的逐筆結果（報告框外、純文字）：報告檔案的內容或樣式無法改變這份清單，與報告內標示不一致時以此為準
+  function setVerifyList(data) {
+    const box = document.getElementById('verifyList');
+    if (!box) return;
+    const ol = box.querySelector('ol');
+    ol.textContent = '';
+    if (!data) { box.style.display = 'none'; box.open = false; return; }
+    const en = LANG === 'en', L = VF_TXT[en ? 'en' : 'zh'];
+    box.querySelector('summary').textContent = en ? `Per-reference results (${data.refs.length})` : `逐筆查核結果（${data.refs.length} 筆）`;
+    box.querySelector('.vl-note').textContent = en
+      ? 'Written directly by this tool on this page, from the verification service’s answers: the report file’s own content or styling cannot change this list. If the report shows something different, this list is authoritative.'
+      : '由本工具依查證服務的回覆直接寫在本頁：報告檔案本身的內容或樣式無法改變這份清單；若與報告內的標示不一致，以此為準。';
+    data.refs.forEach(r => {
+      const res = data.results.get(r.id);
+      if (!res) return;
+      const li = document.createElement('li');
+      const b = document.createElement('span');
+      b.className = 'vl-badge';
+      b.textContent = L.label[res.verdict] + (vfAuthorConflict(res) ? (en ? ' (possibly misattributed author)' : '（疑作者誤植）') : '');
+      li.append(b, ' ' + refShortLabel(r, en));
+      const sum = document.createElement('span');
+      sum.className = 'vl-sum';
+      const sg = res.suggestion;
+      sum.textContent = (res.summary || '') + (sg && res.verdict !== 'verified'
+        ? (en ? ` → Possible actual source: ${sg.title || ''}${sg.year ? ` (${sg.year})` : ''} ${sg.doi ? 'https://doi.org/' + sg.doi : sg.url || ''}` : ` → 可能的正確文獻：${sg.title || ''}${sg.year ? `（${sg.year}）` : ''} ${sg.doi ? 'https://doi.org/' + sg.doi : sg.url || ''}`)
+        : '');
+      li.append(sum);
+      ol.append(li);
+    });
+    box.style.display = 'block';
   }
   function setVerifyBusy(b) {
     verifyBusy = b;
@@ -5560,10 +5700,17 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     const lang = opts.lang || reportLangOf(rawHtml);
     const ts = opts.ts !== undefined ? opts.ts : (target ? target.ts : null);
     const meta = opts.meta !== undefined ? opts.meta : (target ? target.meta : null);
+    // 查證標記只加在本工具組裝的版本上：來源不明（舊紀錄、未過濾的完整文件）先重建，作者自帶的樣式無法偽造結果
+    const trusted = opts.trusted === true || !!(target && target.trusted && target.raw === rawHtml);
+    let baseHtml = rawHtml;
+    if (!trusted) {
+      try { baseHtml = rebuildUntrusted(rawHtml, lang); } catch (e) { console.error('[verify] rebuild failed', e); baseHtml = null; }
+      if (!baseHtml) { setVerifyStatus(t('⚠️ 報告中找不到參考文獻清單，無法查證'), 'warn'); return null; }
+    }
 
     let doc, refs;
     try {
-      doc = new DOMParser().parseFromString(String(rawHtml), 'text/html');
+      doc = new DOMParser().parseFromString(String(baseHtml), 'text/html');
       stripVerification(doc);
       refs = parseReferences(doc);
     } catch (e) { console.error('[verify] parse failed', e); refs = []; }
@@ -5592,6 +5739,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       ? `🔎 Verifying references ${results.size}/${refs.length}…`
       : `🔎 正在查證參考文獻 ${results.size}/${refs.length}…`, 'run');
     progress();
+    setVerifyList(null);
     let failure = null;
     for (let i = 0; i < refs.length && !failure; i += VERIFY_BATCH) {
       const batch = refs.slice(i, i + VERIFY_BATCH);
@@ -5629,7 +5777,10 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       setVerifyStatus(LANG === 'en' ? '⚠️ The verification results could not be added to the report.' : '⚠️ 查證結果無法寫入報告。', 'err');
       return null;
     }
-    if (target === currentReport) showResult(updated, { fromVerify: true, noScroll: true, keepScroll: true });
+    if (target === currentReport) {
+      showResult(updated, { fromVerify: true, noScroll: true, keepScroll: true });
+      setVerifyList({ refs, results });
+    }
     updateHistoryVerification(ts, rawHtml, updated, rec);
 
     const st = rec.stats, secs = Math.max(1, Math.round((Date.now() - t0) / 1000));
@@ -5658,6 +5809,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     if (!e) return false;
     e.htmlResult = html;
     e.verification = rec;
+    e.clean = true;
     const ok = saveHistoryArray(arr);
     renderHistory();
     if (currentReport && !currentReport.ts) currentReport.ts = e.ts;
@@ -5669,6 +5821,10 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     return tpl.content;
   }
 
+  // 模型依提示詞自加的「未查證」標籤
+  const MODEL_UNVERIFIED_RE = /［未查證］|\[unverified\]/i;
+  // 書目資料庫有同名著作、但作者不同（verify.js 的 search_similar_author）：最常見的 AI 作者誤植
+  const vfAuthorConflict = res => res.verdict !== 'verified' && res.checks.some(c => c.status === 'search_similar_author');
   // 參考文獻是否為本工具提供給模型的資料集（網址落在 iNaturalist／OSM，且這份報告確實附了該資料）
   function toolDataset(r, meta) {
     const ds = meta && meta.ds;
@@ -5709,9 +5865,19 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     refs.forEach((r, i) => {
       const res = results.get(r.id);
       let h = `<span class="vf ${VF_CLASS[res.verdict]}" title="${attrSafe(res.summary || L.label[res.verdict])}">${L.label[res.verdict]}</span>`;
+      if (vfAuthorConflict(res)) h += `<span class="vf-x">${en ? '(possibly misattributed author)' : '（疑作者誤植）'}</span>`;
       if (uncited.has(i)) h += `<span class="vf-x" title="${attrSafe(en ? 'This reference is not cited anywhere in the text (author–year check).' : '正文中找不到引用這筆文獻的（作者, 年）。')}">${en ? '(not cited in text)' : '（正文未引用）'}</span>`;
-      const lines = vfActualHtml(res, r, en);
-      if ((res.verdict === 'mismatch' || res.verdict === 'not_found') && !lines.length) lines.unshift(escapeHtml(res.summary || L.label[res.verdict]));
+      // 判定理由：「書目相符」以外一律寫在文獻下方（作者不符、年份不符等不能只藏在提示框或表格裡；手機上表格說明欄常在畫面外）
+      // 摘要只是一句判定說明；實際指向的著作與建議書目由下列結構化欄位各列一次，不重複
+      const lines = [];
+      if (res.verdict !== 'verified' && res.summary) lines.push(escapeHtml(res.summary));
+      if (res.verdict === 'verified' && MODEL_UNVERIFIED_RE.test(r.text)) {
+        const addId = !!(res.suggestion && !(res.suggestion.doi && r.allDois.includes(res.suggestion.doi)));
+        lines.push(escapeHtml(en
+          ? 'The model tagged this entry [unverified] while writing; this tool has since found a matching record' + (addId ? ' — add the identifier below to the reference.' : '.')
+          : '模型撰寫時標註［未查證］；本工具其後已查得相符書目' + (addId ? '，請將下列識別碼補入這筆文獻。' : '。')));
+      }
+      lines.push(...vfActualHtml(res, r, en));
       // 本工具提供給模型的資料集（iNaturalist／OSM 動態頁面無法自動比對）：指向報告末的資料來源說明
       if (toolDataset(r, ctx.meta)) lines.push(escapeHtml(en ? 'This is a dataset supplied by this tool; its query, date and licence are listed under “Data sources” in the appendix.' : '此為本工具提供給模型的資料集；查詢條件、擷取日期與授權見附錄「資料來源」。'));
       if (lines.length) h += `<span class="vf-detail">→ ${lines.join('<br>→ ')}</span>`;
@@ -5781,16 +5947,18 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       : '<strong>檢核了什麼：</strong>每筆文獻是否存在（DOI 已於 doi.org 註冊並取得 Crossref 或 DataCite 書目資料、所列網頁可開啟，或 Crossref／OpenAlex 書目資料庫有相符紀錄），以及題名是否與引用相符；年份與第一作者在雙方資料都可比對時一併檢核。<strong>沒有檢核：</strong>期刊名稱、卷期、頁碼與出版者；網頁內容在擷取後是否已變動；文獻內容是否支持報告中的具體陳述。引用前仍須逐筆閱讀原文。'}</p>`;
     // 圖例：結果代表什麼、讀者該做什麼
     h += `<ul class="vf-list vf-legend">${VF_VERDICTS.map(v => `<li><span class="vf ${VF_CLASS[v]}">${L.label[v]}</span> ${escapeHtml(L.legend[v])}</li>`).join('')}` +
-      `<li>${escapeHtml(L.srcFlagNote)}</li></ul><p class="vf-sub">${escapeHtml(L.scoreNote)}</p>`;
+      `<li>${escapeHtml(L.srcFlagNote)}</li><li>${escapeHtml(L.authorNote)}</li></ul><p class="vf-sub">${escapeHtml(L.scoreNote)}</p>`;
     // 文獻表
     h += `<table class="vf-table"><thead><tr><th>#</th><th>${en ? 'Reference' : '文獻'}</th><th>${en ? 'Checked via' : '查證方式'}</th><th>${en ? 'Result' : '結果'}</th><th>${en ? 'Notes / actual record' : '說明／實際書目'}</th></tr></thead><tbody>`;
     refs.forEach((r, i) => {
       const res = results.get(r.id);
       const checks = res.checks.map(c => `${L.kind[c.kind]}${en ? ': ' : '：'}${c.note || L.status[c.status] || c.status || '—'}`).join(en ? ' · ' : '｜');
       const actual = vfActualHtml(res, r, en);
-      h += `<tr><td>${r.n}</td><td>${escapeHtml(refShortLabel(r, en))}${uncited.has(i) ? `<span class="vf-sub">${en ? 'Not cited in the text' : '正文未引用'}</span>` : ''}</td>` +
-        `<td>${escapeHtml(L.method[res.method])}</td><td><span class="vf ${VF_CLASS[res.verdict]}">${L.label[res.verdict]}</span></td>` +
-        `<td>${escapeHtml(res.summary || '—')}${actual.length ? `<span class="vf-sub">${actual.join('<br>')}</span>` : ''}${checks ? `<span class="vf-sub">${escapeHtml(checks)}</span>` : ''}</td></tr>`;
+      // data-l：手機版（≤600px）把每列改成卡片時顯示的欄名
+      const dl = (zh, enT) => ` data-l="${en ? enT : zh}"`;
+      h += `<tr><td>${r.n}</td><td${dl('文獻', 'Reference')}>${escapeHtml(refShortLabel(r, en))}${uncited.has(i) ? `<span class="vf-sub">${en ? 'Not cited in the text' : '正文未引用'}</span>` : ''}</td>` +
+        `<td${dl('查證方式', 'Checked via')}>${escapeHtml(L.method[res.method])}</td><td${dl('結果', 'Result')}><span class="vf ${VF_CLASS[res.verdict]}">${L.label[res.verdict]}</span>${vfAuthorConflict(res) ? `<span class="vf-sub">${en ? 'Possibly misattributed author' : '疑作者誤植'}</span>` : ''}</td>` +
+        `<td${dl('說明／實際書目', 'Notes / actual record')}>${escapeHtml(res.summary || '—')}${actual.length ? `<span class="vf-sub">${actual.join('<br>')}</span>` : ''}${checks ? `<span class="vf-sub">${escapeHtml(checks)}</span>` : ''}</td></tr>`;
     });
     h += `</tbody></table>`;
     // 正文引用一致性
@@ -5864,13 +6032,19 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
         if (seen.has(s.u)) { const x = all.find(a => a.u === s.u); if (x && !x.t) x.t = s.t; return; }
         seen.add(s.u); all.push({ u: s.u, t: s.t, c: null });
       });
-      const nSrc = (meta.src || []).length, nCited = cited.size;
+      // 總數與清單筆數分開記錄：清單有上限，總數與頁尾一致
+      const listed = (meta.src || []).length;
+      const nSrc = meta.nSrc != null ? Math.max(meta.nSrc, listed) : listed;
+      const nCited = meta.nCited != null ? Math.max(meta.nCited, cited.size) : cited.size;
       const calls = meta.searchCalls != null ? meta.searchCalls : '?';
+      const capped = all.length < nSrc;
       let li = `<li><strong>${en ? 'Web search' : '網路搜尋'}</strong>${en
         ? ` (Claude web search tool): ${calls} searches returned ${nSrc} source URLs` + (meta.legacy ? '; which of them the model cited was not recorded for this report.' : `; ${nCited} of them carry the model’s own citation annotations from writing (★). The list records what the searches returned; it is not the reference list.`)
         : `（Claude 網路搜尋工具）：搜尋 ${calls} 次、取得 ${nSrc} 個來源網址` + (meta.legacy ? '；此報告產生時未記錄模型實際引用了哪些。' : `；其中 ${nCited} 個帶有模型撰寫時的引用標註（★）。此清單記錄搜尋結果，並非參考文獻清單。`)}`;
       if (all.length) {
-        li += `<details class="vf-sources"><summary>${en ? `Show all ${all.length} sources` : `展開全部 ${all.length} 個來源`}</summary><ol class="vf-src">`;
+        li += `<details class="vf-sources"><summary>${capped
+          ? (en ? `Show the first ${all.length} of ${nSrc} sources` : `展開前 ${all.length} 個來源（共 ${nSrc} 個）`)
+          : (en ? `Show all ${all.length} sources` : `展開全部 ${all.length} 個來源`)}</summary><ol class="vf-src">`;
         all.forEach(a => {
           const href = safeHref(a.u);
           if (!href) return;

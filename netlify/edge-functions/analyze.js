@@ -56,10 +56,13 @@ export default async (request) => {
   } catch (_) {
     return json(400, { error: '請求格式錯誤（非合法 JSON）' });
   }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return json(400, { error: '請求格式錯誤（應為 JSON 物件）' });
+  }
 
   // ── 通行碼驗證（唯一能區分「授權使用者」與「路過機器人」的機制）──
   if (PASSCODE) {
-    const given = String(body.passcode || '').trim();
+    const given = typeof body.passcode === 'string' ? body.passcode.trim() : '';   // 非字串（物件等）一律視為未提供，避免 String() 拋出例外
     if (!given) {
       return json(401, { error: '需要通行碼', code: 'PASSCODE_REQUIRED' });
     }
@@ -68,7 +71,7 @@ export default async (request) => {
     }
   }
 
-  const prompt = String(body.prompt || '');
+  const prompt = typeof body.prompt === 'string' ? body.prompt : '';
   if (!prompt.trim()) {
     return json(400, { error: '提示詞為空' });
   }
