@@ -1,0 +1,2077 @@
+// 棲共生 · 參考文獻真實性查核（Netlify Edge Function / Deno）
+// 目的：報告產出後，逐筆確認參考文獻「真的存在」且「DOI／網址確實指向所引用的著作」。
+// 學術嚴謹度的底線：捏造的文獻絕不可判為「已查證」；無法確定時寧可判「需人工查證」。
+//
+// 查核來源（皆為公開學術基礎設施，不需金鑰）：
+//   1. doi.org Handle API：DOI 是否已註冊（responseCode 1 = 存在、100 = 不存在）
+//   2. Crossref REST API（/works/{doi}）：DOI 的登記題名、年份、作者
+//   3. doi.org 內容協商（CSL-JSON）：非 Crossref 的 DOI（DataCite、Airiti、JaLC 等）
+//      註冊機構不支援內容協商時，doi.org 會導向落地頁面，改讀頁面的 citation_title
+//   4. OpenAlex（/works/doi:…）：Crossref 被限流或失敗時的備援
+//   5. 直接開啟引用的網址：讀 <title>、citation_title、dc.title、og:title，或在內文找引用題名；PDF 讀中繼資料
+//   6. Crossref（query.bibliographic）＋ OpenAlex（search）書目搜尋：
+//      沒有 DOI／網址的書籍與報告，或 DOI 指錯著作時，找出實際存在的版本
+//
+// 請求（POST JSON）：{ passcode, lang: 'zh'|'en', refs: [{ id, text, urls[], dois[] }] }（最多 25 筆）
+// 回應：application/x-ndjson 串流；每查完一筆送出一行，最後一行 {"done":true,"stats":{…}}。
+// 判定（verdict）：
+//   verified     已查證：DOI／網址可解析且題名相符（相似度 ≥ 0.6、年份 ±1），或書目搜尋強相符（≥ 0.85、年份 ±1、作者不衝突）
+//   partial      部分查證：來源存在，但內容無法自動比對（PDF 無中繼資料、動態網頁、題名 0.35–0.6、年份或作者不符）
+//   mismatch     不相符：DOI／學術中繼資料指向另一篇著作（題名相似度 < 0.35）——常見的 AI「真 DOI、錯論文」
+//   not_found    查無：DOI 未註冊、網址 404／410／網域不存在，且書目搜尋也找不到相近著作——疑為捏造或連結失效
+//   unverifiable 無法查證：沒有 DOI／網址且搜尋不到（常見於紙本書、政府出版品）——需人工查證
+//   inconclusive 未能判定：逾時、403、429 等網路問題
+//
+// 環境變數：QI_PASSCODE（與 analyze 共用）、VERIFY_MAILTO（選填，Crossref／OpenAlex 禮貌池聯絡信箱）、
+//   VERIFY_OPENALEX_KEY（選填，OpenAlex API 金鑰）、
+//   VERIFY_UPSTREAM_TIMEOUT_MS／VERIFY_TOTAL_TIMEOUT_MS／VERIFY_CPU_BUDGET_MS（選填，調校與測試用）
+
+const MAX_REFS = 25;                  // 每次最多查核筆數（超過回 413）
+const MAX_URLS_PER_REF = 3;
+const MAX_DOIS_PER_REF = 2;
+const MAX_TEXT_CHARS = 600;           // 每筆文獻文字上限（超過截斷）
+const HARD_TEXT_CHARS = 4000;         // 明顯異常的長度直接拒絕
+const MAX_LIST_ITEMS = 20;            // urls／dois 陣列的硬上限（超過視為格式錯誤）
+const MAX_URL_CHARS = 2048;
+const MAX_BODY_BYTES = 256 * 1024;    // 請求內容上限
+const MAX_PAGE_BYTES = 400 * 1024;    // 網頁／PDF 最多讀 400 KB
+const MAX_API_BYTES = 2 * 1024 * 1024; // API 回應上限（Crossref 單筆含引用清單時可能較大）
+const MAX_ERROR_BYTES = 64 * 1024;    // 錯誤回應只讀一小段
+const MAX_REDIRECTS = 8;              // 手動追蹤轉址，每一跳都重新檢查安全性
+const MAX_FOUND_TITLE = 300;
+const REF_CONCURRENCY = 5;            // 同時查核筆數
+const CPU_BUDGET_MS = 40;             // 頁面解析的運算時間預算（Netlify Edge 每次請求 CPU 上限 50 ms；等待網路不計）
+const UPSTREAM_TIMEOUT_MS = 8000;     // 每個上游請求
+const TOTAL_TIMEOUT_MS = 35000;       // 整體上限（headers 立即回傳，結果逐行串流）
+
+const UA = 'Qi-Coexistence-RefCheck/1.0 (+https://eco4design.healsdesign.org)';
+
+// ── 判定門檻（全部寫死，結果可重現）──
+const SCORE_MATCH = 0.6;              // 題名相符
+const SCORE_MISMATCH = 0.35;          // 低於此 → 指向另一篇著作
+const SCORE_SEARCH_STRONG = 0.85;     // 書目搜尋強相符
+const SCORE_SEARCH_NOYEAR = 0.92;     // 任一方沒有年份時，搜尋需更高相似度
+const YEAR_TOLERANCE = 1;             // 線上版／紙本版常差一年
+
+const VERDICTS = ['verified', 'partial', 'mismatch', 'not_found', 'unverifiable', 'inconclusive'];
+
+// ── 雙語訊息（繁體中文用台灣用語）──
+const MSG = {
+  // 請求錯誤
+  bad_method: ['只接受 POST', 'Method not allowed'],
+  body_too_large: ['請求內容過大', 'Request body too large'],
+  bad_json: ['請求格式錯誤（非合法 JSON）', 'Malformed request (invalid JSON)'],
+  bad_body: ['請求格式錯誤（應為 JSON 物件）', 'Malformed request (expected a JSON object)'],
+  passcode_required: ['需要通行碼', 'Passcode required'],
+  passcode_invalid: ['通行碼不正確', 'Incorrect passcode'],
+  no_refs: ['沒有要查核的參考文獻（refs 應為非空陣列）', 'No references to check (refs must be a non-empty array)'],
+  too_many_refs: ['參考文獻過多（{n} 筆，上限 {max} 筆）', 'Too many references ({n}; the limit is {max})'],
+  bad_ref: ['第 {i} 筆參考文獻格式錯誤：{why}', 'Reference #{i} is malformed: {why}'],
+
+  // DOI 檢核
+  doi_match: ['DOI 已註冊，{src} 書目資料的題名與引用相符', 'DOI is registered; the {src} record’s title matches the citation'],
+  doi_grey: ['DOI 已註冊，但登記題名與引用僅部分相似', 'DOI is registered, but its title only partly resembles the citation'],
+  doi_wrong_work: ['DOI 已註冊，但指向另一篇著作', 'DOI is registered but points to a different work'],
+  doi_title_unsure: ['DOI 已註冊，但無法從引用文字辨識題名，未能比對', 'DOI is registered, but the cited title could not be identified for comparison'],
+  doi_cross_lang: ['DOI 已註冊，但登記題名與引用題名語言不同，無法自動比對', 'DOI is registered, but its title is in a different language from the citation and cannot be compared automatically'],
+  doi_year: ['DOI 已註冊且題名相符，但出版年不同（引用 {cy}，登記 {fy}）', 'DOI is registered and the title matches, but the year differs (cited {cy}, registered {fy})'],
+  doi_author: ['DOI 已註冊且題名相符，但作者與登記資料不符', 'DOI is registered and the title matches, but the authors differ from the record'],
+  doi_no_metadata: ['DOI 已註冊，但查無可比對的書目資料', 'DOI is registered, but no metadata was available to compare'],
+  doi_not_registered: ['DOI 未註冊（doi.org 查無此號）', 'DOI is not registered (unknown to doi.org)'],
+  doi_landing_match: ['DOI 已註冊；導向頁面的題名與引用相符', 'DOI is registered; the landing page title matches the citation'],
+  doi_landing_unmatched: ['DOI 已註冊，但導向頁面未見引用題名', 'DOI is registered, but the cited title was not found on its landing page'],
+
+  // 題名關鍵詞／卷期（P1、P10）
+  doi_terms: ['DOI 已註冊，題名大致相似但關鍵詞不同（引用「{c}」／登記「{f}」）', 'DOI is registered and the title is similar, but key terms differ (cited “{c}” / registered “{f}”)'],
+  doi_notice: ['DOI 指向更正／撤稿等聲明（「{ft}」），而不是原著作', 'The DOI points to a notice (“{ft}”), not to the work itself'],
+  doi_biblio: ['DOI 已註冊且題名相符，但卷期與頁碼都與登記資料不符', 'DOI is registered and the title matches, but neither volume nor pages match the record'],
+  doi_cross_lang_mis: ['DOI 已註冊，但登記資料為另一種語言，且年份或卷期頁碼也不符，應為另一篇著作', 'DOI is registered, but its record is in another language and the year or volume/pages also differ: it is a different work'],
+  url_terms: ['頁面題名大致相似但關鍵詞不同（引用「{c}」／頁面「{f}」）', 'The page title is similar, but key terms differ (cited “{c}” / page “{f}”)'],
+  waf: ['網站防火牆攔截自動存取', 'The site’s firewall blocked automated access'],
+  home_only: ['網址是網站首頁，無法指認文獻本身', 'The URL is a site home page and does not identify the document'],
+  archived_match: ['網際網路檔案館 {d} 的存檔與引用相符', 'the Internet Archive copy from {d} matches the citation'],
+  archived_nomatch: ['網際網路檔案館有 {d} 的存檔，但未能確認內容', 'the Internet Archive has a copy from {d}, but its content could not be confirmed'],
+  isbn_invalid: ['ISBN 檢查碼錯誤（{isbn}），此 ISBN 不可能存在', 'Invalid ISBN check digit ({isbn}); no book can carry this ISBN'],
+
+  // 網址檢核
+  url_meta_match: ['網頁可開啟，頁面題名與引用相符', 'Page opens and its title matches the citation'],
+  url_in_page: ['網頁可開啟，頁面內文含有引用題名', 'Page opens and its text contains the cited title'],
+  url_grey: ['網頁可開啟，但頁面題名與引用僅部分相似', 'Page opens, but its title only partly resembles the citation'],
+  url_not_in_page: ['網頁可開啟，但頁面未見引用題名（可能為首頁、搜尋頁或題名不同）', 'Page opens, but the cited title was not found on it (it may be a home page, a search page, or titled differently)'],
+  url_js_only: ['網頁可開啟，但內容由程式動態載入，無法自動比對', 'Page opens, but its content is rendered by JavaScript and cannot be matched automatically'],
+  url_wrong_work: ['網頁的學術中繼資料指向另一篇著作', 'The page’s scholarly metadata describes a different work'],
+  url_year: ['頁面題名相符，但出版年不同（引用 {cy}，頁面 {fy}）', 'Page title matches, but the year differs (cited {cy}, page {fy})'],
+  url_author: ['頁面題名相符，但作者與頁面資料不符', 'Page title matches, but the authors differ from the page metadata'],
+  pdf_match: ['PDF 可開啟，檔案中繼資料題名與引用相符', 'PDF opens and its embedded title matches the citation'],
+  pdf_nometa: ['PDF 可開啟，但沒有可比對的題名資料', 'PDF opens, but has no usable title metadata'],
+  pdf_title_differs: ['PDF 可開啟，但檔案中繼資料題名與引用不同（中繼資料常不可靠）', 'PDF opens, but its embedded title differs (embedded metadata is often unreliable)'],
+  filetype: ['檔案可開啟（{type}），無法自動比對內容', 'File opens ({type}) but its content cannot be matched automatically'],
+  http_404: ['網址不存在（HTTP 404）', 'URL does not exist (HTTP 404)'],
+  http_410: ['網址已移除（HTTP 410）', 'URL has been removed (HTTP 410)'],
+  soft_404: ['網頁顯示「找不到頁面」', 'The page reports “not found”'],
+  redirect_home: ['網址被導回網站首頁，原頁面可能已不存在', 'The URL redirects to the site’s home page; the original page may no longer exist'],
+  home_mentions: ['網站首頁提到引用題名，但首頁不是文獻本身，請改引用該文獻的頁面', 'The home page mentions the cited title, but it is not the document itself; cite the document’s own page'],
+  moved_home_mentions: ['網址被導回網站首頁，首頁提到引用題名，但原連結已失效', 'The URL redirects to the home page, which mentions the cited title, but the original link is dead'],
+  dns_error: ['網域無法解析（查無此網域）', 'Domain does not resolve (no such domain)'],
+  unsafe_url: ['網址指向內部、保留或不允許的位址，未連線檢查', 'URL points to an internal, reserved or disallowed address; not fetched'],
+  invalid_url: ['網址格式無效', 'Malformed URL'],
+  unsafe_redirect: ['網址轉向內部或不允許的位址，已停止追蹤', 'URL redirects to an internal or disallowed address; stopped'],
+  too_many_redirects: ['轉址次數過多', 'Too many redirects'],
+  bad_redirect: ['轉址資訊無效', 'Invalid redirect'],
+  blocked_403: ['網站拒絕自動存取（HTTP {code}）', 'The site refused automated access (HTTP {code})'],
+  rate_limited: ['查詢過於頻繁，被暫時限制（HTTP 429）', 'Rate-limited (HTTP 429)'],
+  http_error: ['伺服器回應錯誤（HTTP {code}）', 'Server responded with an error (HTTP {code})'],
+  timeout: ['連線逾時', 'Connection timed out'],
+  deadline: ['已達本次查核的時間上限，未完成', 'Stopped at this run’s time limit'],
+  cpu_budget: ['網頁可開啟，但本次查核的運算量已達上限，未比對內容（可分批重新查核）', 'The page opens, but this run’s processing budget was used up before its content could be compared (re-check in smaller batches)'],
+  tls_error: ['安全連線（TLS）失敗', 'Secure connection (TLS) failed'],
+  connect_error: ['無法連線至伺服器', 'Could not connect to the server'],
+  network_error: ['網路連線失敗', 'Network error'],
+  bad_metadata: ['書目服務回應格式異常', 'Unexpected response from the bibliographic service'],
+  internal_error: ['查核程式發生錯誤', 'Internal error while checking'],
+
+  // 書目搜尋
+  search_match: ['{src} 查得相符著作', '{src} returned a matching work'],
+  search_similar: ['{src} 查得相近著作，但無法確認為同一筆', '{src} returned a similar work that could not be confirmed as the same one'],
+  search_similar_author: ['{src} 有題名相符的著作，但作者不同', '{src} lists a work with this title but different authors'],
+  search_similar_year: ['{src} 有題名相符的著作，但出版年不同', '{src} lists a work with this title but a different year'],
+  search_similar_terms: ['{src} 有題名相近的著作，但關鍵詞不同', '{src} lists a similar title with different key terms'],
+  search_similar_generic: ['{src} 有同名著作，但題名過於一般，且無法確認作者為同一人', '{src} lists a work with this title, but the title is too generic and the authors could not be confirmed'],
+  search_none: ['Crossref 與 OpenAlex 均查無相近著作', 'Neither Crossref nor OpenAlex returned a similar work'],
+  search_none_half: ['{ok} 查無相近著作（{bad} 無法連線）', '{ok} returned no similar work ({bad} could not be reached)'],
+  search_error: ['書目搜尋無法完成（{why}）', 'Bibliographic search could not be completed ({why})'],
+
+  // 每筆結論
+  S_ver_doi: ['DOI 可解析，{src} 書目資料的題名與引用相符（題名相似度 {s}）。', 'The DOI resolves and the title in its {src} record matches the citation (title similarity {s}).'],
+  S_ver_doi_landing: ['DOI 可解析，導向頁面的題名與引用相符。', 'The DOI resolves and its landing page title matches the citation.'],
+  S_ver_url_meta: ['網址可開啟，頁面題名與引用相符（題名相似度 {s}）。', 'The URL opens and the page title matches the citation (title similarity {s}).'],
+  S_ver_url_text: ['網址可開啟，頁面內文含有引用題名。', 'The URL opens and the page text contains the cited title.'],
+  S_ver_url_pdf: ['網址可開啟（PDF），檔案中繼資料題名與引用相符。', 'The URL opens (PDF) and its embedded title matches the citation.'],
+  S_ver_search: ['{pre}{src} 查得相符著作（題名相似度 {s}{yr}）。{add}', '{pre}{src} lists a matching work (title similarity {s}{yr}).{add}'],
+  S_pre_noid: ['未附 DOI 或網址；', 'No DOI or URL was given; '],
+  S_pre_err: ['引用的 DOI／網址無法連線檢查；', 'The cited DOI/URL could not be checked; '],
+  S_add_doi: ['建議補上 DOI：{doi}', ' Consider adding the DOI {doi}'],
+  S_mis_doi: ['DOI 指向另一篇著作：「{ft}」{fy}，與引用題名不符。', 'The DOI points to a different work: “{ft}”{fy}, not the cited title.'],
+  S_mis_url: ['網址的學術中繼資料指向另一篇著作：「{ft}」{fy}，與引用題名不符。', 'The page’s scholarly metadata describes a different work: “{ft}”{fy}, not the cited title.'],
+  S_part_url_mixed: ['其中一個網址內容相符，但另一個網址指向另一篇著作「{ft}」，請移除錯誤的網址。', 'One URL matches the citation, but another points to a different work (“{ft}”); remove the wrong URL.'],
+  S_add_dead: ['另：引用中的其他網址無效（{why}）。', ' Note: another cited URL is invalid ({why}).'],
+  S_mis_doi_url_ok: ['網址內容與引用相符，但 DOI 指向另一篇著作「{ft}」，DOI 需更正。', 'The URL matches the citation, but the DOI points to a different work (“{ft}”); the DOI must be corrected.'],
+  // 建議項目一律放在句尾、後面不接標點，避免網址被標點黏住
+  S_sug: ['書目搜尋找到可能正確的著作：{what}', ' Bibliographic search found a likely correct record: {what}'],
+  S_sug_possible: ['書目搜尋找到相近著作，請人工比對：{what}', ' Bibliographic search found a similar record to compare manually: {what}'],
+  S_part_doi_bad_src_ok: ['來源可開啟且題名相符，但引用的 DOI 未註冊，DOI 需更正。', 'The source opens and its title matches, but the cited DOI is not registered and must be corrected.'],
+  S_part_exists_bad_id: ['{src} 查得此著作，但引用中的識別資訊有誤（{why}），請改用建議的 DOI／連結。', '{src} lists this work, but the cited identifier is wrong ({why}); use the suggested DOI/link instead.'],
+  neg_doi_not_registered: ['DOI 未註冊', 'DOI not registered'],
+  neg_http_404: ['網址 HTTP 404', 'URL returns HTTP 404'],
+  neg_http_410: ['網址 HTTP 410', 'URL returns HTTP 410'],
+  neg_dns_error: ['網域不存在', 'domain does not exist'],
+  neg_unsafe_url: ['網址不是公開位址', 'URL is not a public address'],
+  neg_invalid_url: ['網址格式無效', 'malformed URL'],
+  neg_soft_404: ['頁面顯示找不到', 'page reports not found'],
+  neg_redirect_home: ['網址被導回首頁', 'URL redirects to the home page'],
+  S_part_terms: ['來源存在，但題名的關鍵詞與來源不同（引用「{c}」／來源「{f}」）：可能引錯文獻或題名被改寫，請人工確認。', 'The source exists, but key terms in the title differ (cited “{c}” / source “{f}”): the reference may be misattributed or its title altered; check manually.'],
+  S_part_notice: ['DOI 指向更正、勘誤或撤稿聲明（「{ft}」），而不是原著作：請改用原文的 DOI，並確認原文是否已被撤稿。', 'The DOI points to a correction, erratum or retraction notice (“{ft}”) rather than the work itself: cite the original article’s DOI and check whether it has been retracted.'],
+  S_part_biblio: ['題名相符，但卷期與頁碼都與登記資料不符（登記：第 {vol} 卷，第 {pg} 頁起），請確認期刊、卷期與頁碼。', 'The title matches, but neither the volume nor the pages match the record (record: vol. {vol}, p. {pg}); check the journal, volume and pages.'],
+  S_part_archived: ['原網址已失效（{why}），但網際網路檔案館 {d} 的存檔與引用相符：文獻存在，請更新網址。', 'The link is dead ({why}), but the Internet Archive copy from {d} matches the citation: the document exists; update the URL.'],
+  S_unv_archived: ['原網址已失效（{why}），但網際網路檔案館曾於 {d} 存檔此網址：應為連結失效而非虛構文獻，請人工確認並更新網址。', 'The link is dead ({why}), but the Internet Archive captured this URL on {d}: the link has rotted rather than the source being fictitious; verify manually and update the URL.'],
+  S_unv_home: ['網址只是網站首頁（無法指認文獻本身），Crossref 與 OpenAlex 也查無此著作，需人工查證；請改引用文獻本身的網址。', 'The URL is only a site home page (it does not identify the document), and neither Crossref nor OpenAlex lists the work; verify manually and cite the document’s own URL.'],
+  S_unv_similar_terms: ['{pre}書目資料庫有題名相近的著作，但關鍵詞不同（引用「{c}」／資料庫「{f}」）：可能是改寫自另一篇文獻，請人工比對建議項目。', '{pre}the bibliographic databases list a similar title with different key terms (cited “{c}” / database “{f}”): it may be an altered version of another work; compare the suggestion manually.'],
+  S_unv_similar_generic: ['{pre}書目資料庫有同名著作，但題名過於一般、作者無法確認，不能據以查證，需人工查證。', '{pre}the bibliographic databases list a work with this title, but the title is too generic and the authors could not be confirmed; verify manually.'],
+  neg_isbn_invalid: ['ISBN 檢查碼錯誤', 'invalid ISBN check digit'],
+  S_nf_generic: ['{neg}；書目資料庫只有題名過於一般的同名著作（{ft}），不足以證實此文獻：可能是不存在的文獻，請人工確認。', '{neg}; the databases only list works with the same generic title ({ft}), which does not confirm this reference: it may not exist; check manually.'],
+  S_part_year: ['題名相符，但出版年不同（引用 {cy}，來源 {fy}），請確認年份。', 'The title matches, but the year differs (cited {cy}, source {fy}); check the year.'],
+  S_part_author: ['題名相符，但作者與來源資料不符（來源：{fa}），請確認作者。', 'The title matches, but the authors differ from the source record (source: {fa}); check the authors.'],
+  S_part_grey: ['來源存在，但題名僅部分相似（題名相似度 {s}），請人工確認是否為同一著作。', 'The source exists, but its title only partly resembles the citation (title similarity {s}); check manually that it is the same work.'],
+  S_part_title_unsure: ['來源存在，但無法從引用文字辨識題名以自動比對，請人工確認。', 'The source exists, but the cited title could not be identified for automatic comparison; check manually.'],
+  S_part_cross_lang: ['來源存在，但登記題名與引用題名語言不同，無法自動比對，請人工確認。', 'The source exists, but its registered title is in a different language from the citation; check manually.'],
+  S_part_pdf: ['PDF 可開啟，但無法以中繼資料比對題名，請人工確認內容。', 'The PDF opens, but its title could not be matched from metadata; check its content manually.'],
+  S_part_js_only: ['網頁可開啟，但內容由程式動態載入，無法自動比對，請人工確認。', 'The page opens, but its content is rendered by JavaScript and cannot be matched automatically; check manually.'],
+  S_part_not_in_page: ['網頁可開啟，但頁面中未見引用題名，請人工確認是否為正確頁面。', 'The page opens, but the cited title does not appear on it; check manually that it is the right page.'],
+  S_part_no_metadata: ['DOI 已註冊，但查無可比對的書目資料，請人工確認。', 'The DOI is registered, but no metadata was available to compare; check manually.'],
+  S_part_home_mentions: ['網址是網站首頁，首頁雖提到引用題名，但無法確認為該文獻，請改引用文獻本身的網址。', 'The URL is a home page that mentions the cited title, but it is not the document itself; cite the document’s own URL.'],
+  S_part_moved: ['網址被導回網站首頁；首頁雖提到引用題名，但原連結已失效，請更新為正確網址。', 'The URL redirects to the site’s home page; the home page mentions the cited title, but the original link is dead. Update the URL.'],
+  S_part_filetype: ['檔案可開啟，但無法自動比對內容，請人工確認。', 'The file opens, but its content cannot be matched automatically; check manually.'],
+  S_add_doi_bad: ['另：引用的 DOI 未註冊。', ' Also, the cited DOI is not registered.'],
+  S_nf: ['{neg}，且 Crossref 與 OpenAlex 查無相近著作：可能是不存在的文獻，或連結已失效，請人工確認。', '{neg}, and neither Crossref nor OpenAlex returned a similar work: the reference may not exist, or its link is dead; check manually.'],
+  S_nf_nosearch: ['DOI 未註冊，且書目搜尋無法完成：此 DOI 不存在，請人工查證此文獻。', 'The DOI is not registered and the bibliographic search could not be completed: this DOI does not exist; verify the reference manually.'],
+  S_unv_none: ['沒有 DOI 或網址可檢核，Crossref 與 OpenAlex 也查無此著作，需人工查證（常見於紙本書、政府出版品）。', 'No DOI or URL to check, and neither Crossref nor OpenAlex lists this work; verify manually (common for printed books and government publications).'],
+  S_unv_similar: ['{pre}書目資料庫找到相近但無法確認的著作（題名相似度 {s}），請人工比對建議項目。', '{pre}the bibliographic databases returned a similar but unconfirmed work (title similarity {s}); compare the suggestion manually.'],
+  S_unv_similar_author: ['{pre}書目資料庫有題名相符的著作，但作者不同（資料庫：{fa}），可能是作者誤植，請人工比對建議項目。', '{pre}the bibliographic databases list a work with this title but different authors ({fa}); the authors may be misattributed. Compare the suggestion manually.'],
+  S_unv_similar_year: ['{pre}書目資料庫有題名相符的著作，但出版年不同（資料庫：{fy}），請人工比對建議項目。', '{pre}the bibliographic databases list a work with this title but a different year ({fy}); compare the suggestion manually.'],
+  S_unv_pre_noid: ['沒有 DOI 或網址；', 'No DOI or URL; '],
+  S_unv_pre_neg: ['{neg}；', '{neg}; '],
+  S_unv_nothing: ['沒有可檢核的資訊，需人工查證。', 'Nothing could be checked automatically; verify manually.'],
+  S_inconc: ['{why}，無法判定，請稍後重試或人工查證。', '{why}; no verdict could be reached. Retry later or verify manually.'],
+  S_inconc_neg_search: ['{neg}，但書目搜尋無法完成，無法判定，請稍後重試或人工查證。', '{neg}, but the bibliographic search could not be completed; retry later or verify manually.'],
+  S_deadline: ['已達本次查核的時間上限，這筆尚未查核，請重新查核。', 'This run’s time limit was reached before this reference was checked; run the check again.'],
+  S_internal: ['查核程式發生錯誤，這筆未能判定，請人工查證。', 'An internal error prevented a verdict; verify manually.'],
+};
+
+function msg(L, key, p) {
+  const pair = MSG[key];
+  let s = pair ? pair[L === 'en' ? 1 : 0] : key;
+  if (p) s = s.replace(/\{(\w+)\}/g, (_, k) => (p[k] == null ? '' : String(p[k])));
+  return s;
+}
+
+function json(status, obj) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'access-control-allow-origin': '*',
+    },
+  });
+}
+
+function envInt(name, def, min, max) {
+  const v = parseInt(Deno.env.get(name) || '', 10);
+  return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : def;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 文字正規化與題名相似度
+// 中日韓文字：字元雙字組（bigram）；拉丁文字：單字（不分大小寫、去變音符號與標點）
+// ═══════════════════════════════════════════════════════════════
+const CJK_CLASS = '\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}';
+const CJK_RE = new RegExp(`[${CJK_CLASS}]`, 'u');
+const CJK_RUNS_RE = new RegExp(`[${CJK_CLASS}]+|[^${CJK_CLASS}]+`, 'gu');
+const STOPWORDS = new Set(('a an the of and or in on for to with by at from as is are be its into via about ' +
+  'over under between among this that these those de la le el los las et des du der die das und von zu en y').split(' '));
+
+const CJK_VARIANTS = { 溼: '濕', 裏: '裡', 着: '著', 綫: '線', 爲: '為', 峯: '峰', 羣: '群', 衆: '眾', 説: '說' };
+// 英式／美式拼字與單複數（behaviour/behavior、modelling/modeling、spaces/space）不應拉低相似度
+function stemWord(w) {
+  let x = w.replace(/isation$/, 'ization').replace(/ise$/, 'ize').replace(/ised$/, 'ized').replace(/ising$/, 'izing')
+    .replace(/yse$/, 'yze').replace(/elling$/, 'eling').replace(/elled$/, 'eled').replace(/([^aeiou])our$/, '$1or')
+    .replace(/([^aeiou])ours$/, '$1ors').replace(/tre$/, 'ter').replace(/tres$/, 'ters').replace(/ogue$/, 'og');
+  if (x.length > 4 && x.endsWith('ies')) x = x.slice(0, -3) + 'y';
+  else if (x.length > 4 && /(?:ss|x|ch|sh)es$/.test(x)) x = x.slice(0, -2);
+  else if (x.length > 3 && x.endsWith('s') && !/(?:ss|us|is)$/.test(x)) x = x.slice(0, -1);
+  return x;
+}
+
+function norm(s) {
+  return String(s == null ? '' : s)
+    .normalize('NFKC')
+    .replace(/臺/g, '台')                    // 台／臺 混用極常見
+    .replace(/[溼裏着綫爲峯羣衆説]/g, (ch) => CJK_VARIANTS[ch])
+    .toLowerCase()
+    .normalize('NFD').replace(/\p{M}+/gu, '') // 去變音符號
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+function tokens(s) {
+  const out = [];
+  for (const w of norm(s).split(' ')) {
+    if (!w) continue;
+    if (!CJK_RE.test(w)) { out.push(w); continue; }
+    for (const run of w.match(CJK_RUNS_RE) || []) {
+      if (!CJK_RE.test(run)) { out.push(run); continue; }
+      if (run.length === 1) out.push(run);
+      else for (let i = 0; i < run.length - 1; i++) out.push(run.slice(i, i + 2));
+    }
+  }
+  return out;
+}
+
+function contentSet(s) {
+  const t = tokens(s);
+  const c = t.filter(w => CJK_RE.test(w) || (w.length > 1 && !STOPWORDS.has(w)));
+  return new Set((c.length ? c : t).map(w => (CJK_RE.test(w) || /\d/.test(w) ? w : stemWord(w))));
+}
+
+function interCount(A, B) {
+  const [small, big] = A.size <= B.size ? [A, B] : [B, A];
+  let n = 0;
+  for (const x of small) if (big.has(x)) n++;
+  return n;
+}
+
+const hasCjkToken = (S) => { for (const x of S) if (CJK_RE.test(x)) return true; return false; };
+// 包含式加分只給夠長的題名：3 個字以內的短題名（如 Urban heat islands）太容易被別篇論文的題名「包含」
+const minContain = (S) => (hasCjkToken(S) ? 6 : 4);
+const round2 = (x) => Math.round(x * 100) / 100;
+
+// 題名相似度（0–1）：Dice 係數，並允許一方完整包含另一方（副標題、網站名稱），以長度比例折減
+function titleSim(a, b) {
+  const A = contentSet(a), B = contentSet(b);
+  if (!A.size || !B.size) return 0;
+  const i = interCount(A, B);
+  let s = (2 * i) / (A.size + B.size);
+  if (A.size >= minContain(A)) s = Math.max(s, (i / A.size) * Math.min(1, 0.4 + (0.6 * A.size) / B.size));
+  if (B.size >= minContain(B)) s = Math.max(s, (i / B.size) * Math.min(1, 0.4 + (0.6 * B.size) / A.size));
+  return round2(s);
+}
+
+// 找到的題名有多少比例出現在整筆文獻文字中（題名擷取不確定時的退路，也用來避免誤判 mismatch）
+function wholeContain(found, whole) {
+  const B = contentSet(found), W = contentSet(whole);
+  if (!B.size || !W.size) return 0;
+  if (B.size < (hasCjkToken(B) ? 6 : 4)) return 0;
+  return interCount(B, W) / B.size;
+}
+
+// 題名評分：題名擷取確定 → 直接比對；不確定 → 只用整筆文字包含度，且上限 0.84（不可能構成「強相符」）
+function scoreTitle(cite, found, allowWhole) {
+  if (!found) return 0;
+  if (cite.titleSure) return titleSim(cite.title, found);
+  if (!allowWhole) return 0;
+  const W = contentSet(cite.clean);
+  const c = wholeContain(found, cite.clean);
+  const B = contentSet(found);
+  return round2(Math.min(0.84, c * Math.min(1, 0.55 + (0.45 * B.size) / Math.max(1, W.size))));
+}
+
+// ── 題名關鍵詞替換偵測 ──
+// AI 常見的捏造：拿真實論文題名改掉地名、物種、年份（Taipei→Taichung、石虎→白鼻心、1990→2000）。
+// Dice 相似度對這類替換仍有 0.6–0.91（測試：16/16 ≥ 0.6、7/16 ≥ 0.85），無法用門檻區分；
+// 改以對齊兩個題名：只有「插入／刪除」（副標題、省略字詞、語序）視為正常，「雙方各有對方沒有的字詞」視為替換。
+const KT_STOP = new Set([...STOPWORDS, 'case', 'study']);
+const KT_FUNC = new Set([...'之的與及和以對於在其並或等']);
+const KT_SPLIT_RE = new RegExp(`[${CJK_CLASS}]|[^${CJK_CLASS}]+`, 'gu');
+function ktUnits(title) {
+  const s = String(title || '').normalize('NFKC').replace(/臺/g, '台').replace(/[溼裏着綫爲峯羣衆説]/g, (ch) => CJK_VARIANTS[ch])
+    .normalize('NFD').replace(/\p{M}+/gu, '');
+  const out = [];
+  let first = true;
+  for (const m of s.matchAll(/[\p{L}\p{N}]+|[:：.?!]/gu)) {
+    const t = m[0];
+    if (/^[:：.?!]$/.test(t)) { first = true; continue; }
+    if (CJK_RE.test(t)) {
+      for (const part of t.match(KT_SPLIT_RE)) {
+        if (CJK_RE.test(part)) { if (!KT_FUNC.has(part)) out.push({ u: part, o: part, cjk: true }); } else out.push({ u: part.toLowerCase(), o: part, num: /\d/.test(part) });
+      }
+      first = false;
+      continue;
+    }
+    const lw = t.toLowerCase();
+    const proper = !first && /^\p{Lu}/u.test(t);   // APA 句首大寫：句中大寫字＝專有名詞
+    first = false;
+    if ((lw.length < 2 && !/\d/.test(lw)) || KT_STOP.has(lw)) continue;
+    out.push({ u: /\d/.test(lw) ? lw : stemWord(lw), o: t, proper, num: /\d/.test(lw) });
+  }
+  return out.slice(0, 80);
+}
+function ktLev(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 3;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+// 小寫一般字的拼字差異（不含專有名詞、數字、中文）才視為同一字
+const ktNear = (x, y) => !x.proper && !y.proper && !x.num && !y.num && !x.cjk && !y.cjk &&
+  x.u.length >= 6 && y.u.length >= 6 && x.u.slice(0, 3) === y.u.slice(0, 3) && ktLev(x.u, y.u) <= 2;
+
+function keyTermDiff(cited, found) {
+  const A = ktUnits(cited), B = ktUnits(String(found || '').replace(/<[^>]*>/g, ' '));
+  if (!A.length || !B.length) return [];
+  const n = A.length, m = B.length;
+  const L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i].u === B[j].u ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const blocks = [];
+  let i = 0, j = 0, ca = [], cb = [];
+  const flush = () => { if (ca.length && cb.length) blocks.push([ca, cb]); ca = []; cb = []; };
+  while (i < n && j < m) {
+    if (A[i].u === B[j].u) { flush(); i++; j++; } else if (L[i + 1][j] >= L[i][j + 1]) ca.push(A[i++]); else cb.push(B[j++]);
+  }
+  while (i < n) ca.push(A[i++]);
+  while (j < m) cb.push(B[j++]);
+  flush();
+  const setA = new Set(A.map(x => x.u)), setB = new Set(B.map(x => x.u));
+  const out = [];
+  // 顯示用：原字形；中文單字前後各帶一字（「臺中市」／「臺北市」比「中」／「北」好懂）
+  const join = (xs, all) => {
+    if (!xs[0].cjk) return xs.map(x => x.o).join(' ');
+    const i0 = all.indexOf(xs[0]), i1 = all.indexOf(xs[xs.length - 1]);
+    return all.slice(Math.max(0, i0 - 1), i1 + 2).map(x => x.o).join('');
+  };
+  // 數字（年份、區間）以集合比較：對齊可能把「2000至2010」的 2010 與「2010至2020」的 2010 配對
+  const numA = A.filter(x => x.num && !setB.has(x.u)), numB = B.filter(x => x.num && !setA.has(x.u));
+  if (numA.length && numB.length) out.push({ cited: numA.map(x => x.o).join(' '), found: numB.map(x => x.o).join(' ') });
+  for (const [bc, bf] of blocks) {
+    let c = bc.filter(x => !x.num && !setB.has(x.u));      // 出現在對方其他位置＝語序不同，不算替換
+    let f = bf.filter(x => !x.num && !setA.has(x.u));
+    c = c.filter(x => !f.some(y => ktNear(x, y)));
+    f = f.filter(y => !bc.some(x => ktNear(x, y)));
+    if (c.length && f.length) out.push({ cited: join(c, A), found: join(f, B) });
+  }
+  return out.map(d => ({ cited: cleanText(d.cited, 60), found: cleanText(d.found, 60) }));
+}
+
+// 題名是否有足夠鑑別度（短而一般的題名如 Urban ecology、Nature-based solutions、都市生態學 有大量同名著作）
+function isDistinctive(title) {
+  const S = contentSet(title);
+  return hasCjkToken(S) ? S.size >= 6 : S.size >= 4;
+}
+
+// 卷期頁碼：書目資料有卷或起始頁，且引用文字在題名之後有數字時才比較；全部對不上才回傳 false
+function biblioAgrees(cite, meta) {
+  const vol = meta.volume && /^\d{1,5}$/.test(meta.volume) ? meta.volume : null;
+  const pg = meta.firstPage && /^[A-Za-z]?\d{1,8}$/.test(meta.firstPage) ? meta.firstPage : null;
+  const tail = cite.tail || '';
+  if ((!vol && !pg) || !/\d/.test(tail)) return null;
+  const has = (x) => new RegExp(`(?<![\\d.])${x}(?!\\d)`, 'i').test(tail);
+  const res = [vol && has(vol), pg && has(pg)].filter(x => x !== null && x !== '');
+  if (!res.length) return null;
+  if (res.every(x => x === false)) return false;
+  return res.every(x => x === true) ? true : null;
+}
+
+function crossLanguage(cite, titles) {
+  if (!cite.titleSure || !titles.length) return false;
+  const c = CJK_RE.test(cite.title);
+  return titles.every(t => CJK_RE.test(t) !== c);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 解析 APA 7 引用文字：作者、年份、題名
+// ═══════════════════════════════════════════════════════════════
+const TYPE_TAG_RE = /\[(?:政府|期刊|書籍|資料庫|NGO|媒體|Gov|Journal|Book|Database|Media|未見於本次搜尋)\]|\[not among this run.?s search results\]/gi;
+// 遇到全形標點（（）。，等）即停止，避免把「（2024 年擷取）」吃進網址
+const DOI_IN_TEXT_RE = /\b10\.\d{4,9}\/[^\s"<>\u3000-\u303f\uff00-\uffef]+/g;
+const URL_IN_TEXT_RE = /https?:\/\/[^\s<>"\u3000-\u303f\uff00-\uffef]+/gi;
+const ABBREV = new Set(['vs', 'ed', 'eds', 'vol', 'vols', 'no', 'nos', 'pp', 'jr', 'sr', 'st', 'dr', 'mr', 'mrs', 'ms',
+  'inc', 'co', 'corp', 'ltd', 'al', 'rev', 'fig', 'spp', 'sp', 'ssp', 'var', 'subsp', 'approx', 'dept', 'univ',
+  'e.g', 'i.e', 'etc', 'cf']);
+const ORG_CJK_RE = /(局|署|部|會|院|所|中心|協會|學會|大學|學院|政府|公司|基金會|處|館|組織|聯盟|辦公室|研究室)$/;
+
+function cutTitle(rest) {
+  if (!rest) return null;
+  const pairs = { '《': '》', '〈': '〉', '「': '」', '『': '』', '“': '”', '"': '"' };
+  if (pairs[rest[0]]) {
+    const end = rest.indexOf(pairs[rest[0]], 1);
+    if (end > 1) return tidyTitle(rest.slice(1, end));
+  }
+  let stop = rest.length;
+  for (let i = 0; i < rest.length; i++) {
+    const ch = rest[i];
+    if (ch === '。') { stop = i; break; }
+    const atEnd = i + 1 === rest.length || /\s/.test(rest[i + 1]);
+    if ((ch === '?' || ch === '!') && atEnd) { stop = i + 1; break; }
+    if (ch === '.' && atEnd) {
+      const w = (rest.slice(0, i).match(/(\S+)$/) || [, ''])[1].replace(/^[(\[]/, '');
+      if (/^(?:[A-Za-z]\.)*[A-Za-z]$/.test(w) || ABBREV.has(w.toLowerCase())) continue; // 縮寫（U.S.、spp.）不斷句
+      stop = i; break;
+    }
+  }
+  return tidyTitle(rest.slice(0, stop));
+}
+
+function tidyTitle(t) {
+  t = String(t || '').trim()
+    .replace(/\s*\[[^\]]{1,80}\]\s*$/, '')                                                    // [Report]、[Data set]
+    .replace(/\s*[〔【［][^〕】］]{1,80}[〕】］]\s*$/, '')                                          // 〔碩士論文，國立臺灣大學〕、【未出版】
+    .replace(/\s*[(（][^()（）]{0,40}(?:論文|thesis|dissertation)[^()（）]{0,40}[)）]\s*$/i, '')     // （未出版碩士論文）
+    .replace(/\s*\((?=[^()]*(?:\d|ed\.|版|卷|期|冊|report|報告))[^()]{1,40}\)\s*$/i, '')       // (2nd ed.)、(Report No. 3)
+    .replace(/^[《〈「『“"'\s]+|[》〉」』”"'\s]+$/g, '')
+    .replace(/[\s.,:;]+$/, '')
+    .trim();
+  return t || null;
+}
+
+function isReasonableTitle(t) {
+  if (!t || t.length > 300) return false;
+  const n = norm(t);
+  if (CJK_RE.test(n)) return n.replace(/ /g, '').length >= 4;
+  return n.length >= 8 && n.split(' ').length >= 2;
+}
+
+function parseCitation(text) {
+  const t = String(text || '').normalize('NFKC').replace(TYPE_TAG_RE, ' ');
+  const clean = t
+    .replace(URL_IN_TEXT_RE, ' ')
+    .replace(/\bdoi\s*:\s*/gi, ' ')
+    .replace(DOI_IN_TEXT_RE, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const cite = { clean, title: null, titleSure: false, year: null, firstAuthor: null, authorIsOrg: false };
+  // 年份：(2020)、(2020a)、(2020, May 3)、(2020 年 5 月)；民國年 (民國 109 年)、(109 年)；無日期 (n.d.)
+  // 只接受 1500–2099，避免把卷期「224(4647)」當成年份
+  let m = clean.match(/\(((?:1[5-9]|20)\d{2})[a-z]?(?:[^()\d][^()]{0,40})?\)/);
+  let year = m ? +m[1] : null;
+  if (!m) {
+    m = clean.match(/\((?:民國\s*(\d{2,3})\s*年?|(\d{2,3})\s*年)(?:[^()\d][^()]{0,40})?\)/);
+    const roc = m ? +(m[1] || m[2]) : 0;
+    if (m && roc >= 60 && roc <= 150) year = roc + 1911;
+    else m = clean.match(/\((?:n\.\s?d\.|nd|無日期|未註明日期|未載日期|in press|印刷中|付印中)\)/i);
+  }
+  if (!m) return cite;
+  if (year && year >= 1500 && year <= 2100) cite.year = year;
+  const authorsRaw = clean.slice(0, m.index);
+  const authorsPart = authorsRaw.replace(/[\s.。,]+$/, '').trim();
+  if (authorsPart) {
+    if (CJK_RE.test(authorsPart)) {
+      const first = authorsPart.split(/[、,;&]|\s+(?:and|&)\s+|與|及/)[0].trim();
+      cite.firstAuthor = first.slice(0, 40) || null;
+      cite.authorIsOrg = !!first && (first.length > 4 || ORG_CJK_RE.test(first));
+    } else {
+      cite.firstAuthor = authorsPart.split(',')[0].replace(/\s+et al\.?$/i, '').trim().slice(0, 80) || null;
+      // 沒有姓名縮寫（如 J. A.）→ 視為機構作者，不做作者比對
+      cite.authorIsOrg = !/\b[A-Z]\./.test(authorsRaw);
+    }
+  }
+  const rest = clean.slice(m.index + m[0].length).replace(/^[\s.。．,:]+/, '');
+  const title = cutTitle(rest);
+  cite.tail = rest;
+  if (title) {
+    cite.title = title;
+    cite.titleSure = isReasonableTitle(title);
+    const ti = rest.indexOf(title);
+    if (ti >= 0) cite.tail = rest.slice(ti + title.length);
+  }
+  return cite;
+}
+
+// 作者比對：true 相符、false 衝突、null 無法比較（機構作者、中文對羅馬拼音、任一方缺資料）
+function authorsAgree(cite, names) {
+  if (!cite.firstAuthor || cite.authorIsOrg || !names || !names.length) return null;
+  const a = norm(cite.firstAuthor);
+  if (!a) return null;
+  const aCjk = CJK_RE.test(a);
+  const comparable = names.map(norm).filter(n => n && CJK_RE.test(n) === aCjk);
+  if (!comparable.length) return null;
+  if (aCjk) {
+    const ac = a.replace(/ /g, '');
+    const sorted = (x) => [...x].sort().join('');
+    return comparable.some(n => { const nc = n.replace(/ /g, ''); return nc.includes(ac) || (nc.length >= 2 && ac.includes(nc)) || (nc.length >= 2 && sorted(nc) === sorted(ac)); });
+  }
+  const aw = a.split(' ');
+  return comparable.some(n => { const nw = n.split(' '); return aw.every(w => nw.includes(w)) || nw.every(w => aw.includes(w)); });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 識別碼整理
+// ═══════════════════════════════════════════════════════════════
+function trimTrailing(s) {
+  let x = s;
+  for (;;) {
+    const before = x;
+    x = x.replace(/[.,;:!?'"」』》〉。，、；：]+$/u, '');
+    for (const [o, c] of [['(', ')'], ['[', ']'], ['（', '）'], ['{', '}']]) {
+      while (x.endsWith(c) && x.split(o).length < x.split(c).length) x = x.slice(0, -c.length);
+    }
+    if (x === before) return x;
+  }
+}
+
+function normDoi(s) {
+  let d = String(s || '').trim();
+  try { d = decodeURIComponent(d); } catch (_) { /* 不是合法的百分比編碼：保留原字串 */ }
+  d = d.replace(/^(?:https?:\/\/)?(?:dx\.|www\.)?doi\.org\//i, '').replace(/^doi\s*:\s*/i, '').replace(/\s+/g, '');
+  d = trimTrailing(d);
+  if (d.length > 200 || !/^10\.\d{4,9}\/\S+$/.test(d)) return null;
+  return d.toLowerCase();
+}
+
+function trimUrl(u) {
+  if (typeof u !== 'string') return null;
+  let x = u.trim();
+  if (!x || x.length > MAX_URL_CHARS) return null;
+  x = trimTrailing(x);
+  return /^[a-z][a-z0-9+.-]*:/i.test(x) ? x : null;
+}
+
+function collectIdentifiers(ref) {
+  const dois = [], urls = [];
+  const addDoi = (d) => { const n = normDoi(d); if (n && !dois.includes(n) && dois.length < MAX_DOIS_PER_REF) dois.push(n); };
+  const addUrl = (u) => {
+    const x = trimUrl(u);
+    if (!x) return;
+    if (/^https?:\/\/(?:dx\.|www\.)?doi\.org\/10\./i.test(x)) { addDoi(x); return; }
+    if (!urls.includes(x) && urls.length < MAX_URLS_PER_REF) urls.push(x);
+  };
+  ref.dois.forEach(addDoi);
+  ref.urls.forEach(addUrl);
+  (ref.text.match(URL_IN_TEXT_RE) || []).forEach(addUrl);     // 前端漏抓時補上
+  (ref.text.match(DOI_IN_TEXT_RE) || []).forEach(addDoi);
+  return { dois, urls };
+}
+
+const encDoi = (doi) => doi.split('/').map(encodeURIComponent).join('/');
+const hostOf = (u) => { try { return new URL(u).hostname; } catch (_) { return ''; } };
+
+// ═══════════════════════════════════════════════════════════════
+// SSRF 防護：只允許 http/https、預設埠、公開位址；每一次轉址都重新檢查
+// ═══════════════════════════════════════════════════════════════
+function ipv4Blocked(ip) {
+  const p = ip.split('.').map(Number);
+  if (p.length !== 4 || p.some(n => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b, c] = p;
+  return a === 0 || a === 10 || a === 127 || a >= 224 ||        // 本機、私有、多播、保留
+    (a === 100 && b >= 64 && b <= 127) ||                         // CGNAT 100.64/10
+    (a === 169 && b === 254) ||                                   // 鏈路本地（含雲端中繼資料 169.254.169.254）
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+    (a === 192 && b === 88 && c === 99) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113);
+}
+
+function parseIPv6(h) {
+  let s = h.replace(/^\[|\]$/g, '').toLowerCase();
+  if (s.includes('%')) return null;
+  const v4 = s.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  if (v4) {
+    const p = v4[1].split('.').map(Number);
+    s = s.slice(0, -v4[1].length) + ((p[0] << 8) | p[1]).toString(16) + ':' + ((p[2] << 8) | p[3]).toString(16);
+  }
+  const parts = s.split('::');
+  if (parts.length > 2) return null;
+  const head = parts[0] ? parts[0].split(':') : [];
+  const tail = parts.length === 2 && parts[1] ? parts[1].split(':') : [];
+  const fill = parts.length === 2 ? 8 - head.length - tail.length : 0;
+  if (fill < 0 || (parts.length === 1 && head.length !== 8)) return null;
+  const all = [...head, ...new Array(fill).fill('0'), ...tail].map(x => (/^[0-9a-f]{1,4}$/.test(x) ? parseInt(x, 16) : NaN));
+  return all.length === 8 && all.every(n => Number.isInteger(n)) ? all : null;
+}
+
+function ipv6Blocked(h) {
+  const w = parseIPv6(h);
+  if (!w) return true;
+  if ((w[0] & 0xe000) !== 0x2000) return true;                    // 只允許全球單播 2000::/3（排除 ::1、ULA fc00::/7、fe80::/10、映射位址等）
+  if (w[0] === 0x2001 && w[1] < 0x0200) return true;              // 2001::/23 特殊用途（含 Teredo）
+  if (w[0] === 0x2001 && w[1] === 0x0db8) return true;            // 文件範例
+  if (w[0] === 0x2002) return true;                               // 6to4（可夾帶私有 IPv4）
+  return false;
+}
+
+const BLOCKED_SUFFIXES = ['.localhost', '.local', '.internal', '.intranet', '.lan', '.home', '.corp', '.localdomain',
+  '.home.arpa', '.arpa', '.test', '.invalid', '.example', '.onion',
+  '.nip.io', '.sslip.io', '.xip.io', '.localtest.me', '.lvh.me', '.vcap.me', '.lacolhost.com'];
+const BLOCKED_NAMES = new Set(['localhost', 'nip.io', 'sslip.io', 'xip.io', 'localtest.me', 'lvh.me', 'vcap.me', 'lacolhost.com', 'instance-data']);
+
+function hostBlocked(host) {
+  const h = host.toLowerCase().replace(/\.$/, '');
+  if (!h) return true;
+  if (h.startsWith('[')) return ipv6Blocked(h);
+  if (/^[\d.]+$/.test(h)) return ipv4Blocked(h);                  // WHATWG URL 已把 0x7f.1、2130706433 等寫法正規化為點分十進位
+  if (BLOCKED_NAMES.has(h) || !h.includes('.')) return true;      // 單一標籤（內網主機名）
+  if (BLOCKED_SUFFIXES.some(s => h.endsWith(s))) return true;
+  if (h === 'metadata' || h.startsWith('metadata.')) return true; // metadata.google.internal 等
+  return false;
+}
+
+// 若執行環境提供 DNS 查詢，額外擋下「公開網域解析到私有位址」（DNS rebinding 的基本防護）
+const TRUSTED_API_HOSTS = new Set(['doi.org', 'api.crossref.org', 'api.openalex.org', 'archive.org', 'web.archive.org']);
+
+async function resolvesToBlocked(host) {
+  const D = globalThis.Deno;
+  if (!D || typeof D.resolveDns !== 'function' || host.startsWith('[') || /^[\d.]+$/.test(host)) return false;
+  if (TRUSTED_API_HOSTS.has(host)) return false;
+  const q = (type) => new Promise((resolve) => {
+    const t = setTimeout(() => resolve([]), 1500);
+    Promise.resolve().then(() => D.resolveDns(host, type))
+      .then(r => { clearTimeout(t); resolve(Array.isArray(r) ? r : []); }, () => { clearTimeout(t); resolve([]); });
+  });
+  try {
+    const [a, aaaa] = await Promise.all([q('A'), q('AAAA')]);
+    return a.some(ip => ipv4Blocked(String(ip))) || aaaa.some(ip => ipv6Blocked(String(ip)));
+  } catch (_) { return false; }
+}
+
+async function checkTarget(raw) {
+  let u;
+  try { u = new URL(raw); } catch (_) { return { ok: false, code: 'invalid_url' }; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, code: 'unsafe_url' };
+  if (u.username || u.password || u.port !== '') return { ok: false, code: 'unsafe_url' }; // 帶帳密或非預設埠
+  if (hostBlocked(u.hostname)) return { ok: false, code: 'unsafe_url' };
+  if (await resolvesToBlocked(u.hostname)) return { ok: false, code: 'unsafe_url' };
+  u.hash = '';
+  return { ok: true, href: u.href };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 網路請求：每個請求獨立逾時，並受整體期限與用戶端斷線控制
+// ═══════════════════════════════════════════════════════════════
+function semaphore(n) {
+  let active = 0;
+  const queue = [];
+  return async (fn) => {
+    if (active >= n) await new Promise(r => queue.push(r));
+    active++;
+    try { return await fn(); } finally {
+      active--;
+      const next = queue.shift();
+      if (next) next();
+    }
+  };
+}
+
+function fetchErrorCode(e, timedOut, ctx) {
+  if (ctx.signal.aborted) return ctx.reason === 'client' ? 'aborted' : 'deadline';
+  if (timedOut) return 'timeout';
+  const parts = [];
+  for (let x = e, k = 0; x && k < 4; x = x.cause, k++) parts.push(String(x.code || ''), String(x.message || x));
+  const s = parts.join(' ');
+  if (/EAI_AGAIN|temporary failure in name resolution/i.test(s)) return 'network_error';
+  if (/ENOTFOUND|EAI_NONAME|dns error|failed to lookup address|name or service not known|nodename nor servname|no address associated|NXDOMAIN|no record found|no such host/i.test(s)) return 'dns_error';
+  if (/certificate|CERT_|\btls\b|\bssl\b|handshake/i.test(s)) return 'tls_error';
+  if (/ECONNREFUSED|connection refused/i.test(s)) return 'connect_error';
+  if (/abort|timed? ?out/i.test(s)) return 'timeout';
+  return 'network_error';
+}
+
+async function readCapped(res, max) {
+  if (!res.body) return new Uint8Array(0);
+  const reader = res.body.getReader();
+  const chunks = [];
+  let n = 0;
+  try {
+    while (n < max) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      n += value.byteLength;
+    }
+  } finally {
+    if (n >= max) reader.cancel().catch(() => {});
+  }
+  const out = new Uint8Array(Math.min(n, max));
+  let off = 0;
+  for (const c of chunks) {
+    if (off >= out.length) break;
+    const take = Math.min(c.byteLength, out.length - off);
+    out.set(c.subarray(0, take), off);
+    off += take;
+  }
+  return out;
+}
+
+async function fetchHop(url, ctx, headers, maxBytes) {
+  const remaining = ctx.deadline - Date.now();
+  if (ctx.signal.aborted || remaining <= 0) return { error: ctx.reason === 'client' ? 'aborted' : 'deadline' };
+  const ac = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ac.abort(new DOMException('timeout', 'TimeoutError')); },
+    Math.max(1, Math.min(ctx.upstreamMs, remaining)));
+  const onAbort = () => ac.abort(ctx.signal.reason);
+  ctx.signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    const res = await fetch(url, { method: 'GET', redirect: 'manual', headers, signal: ac.signal });
+    if (res.type === 'opaqueredirect' || res.status === 0) return { error: 'bad_redirect' };
+    if (res.status >= 300 && res.status < 400) {
+      if (res.body) res.body.cancel().catch(() => {});
+      return { redirect: true, status: res.status, location: res.headers.get('location') };
+    }
+    const ok = res.status >= 200 && res.status < 300;
+    const bytes = await readCapped(res, ok ? maxBytes : Math.min(maxBytes, MAX_ERROR_BYTES));
+    return {
+      status: res.status,
+      ok,
+      ctype: (res.headers.get('content-type') || '').toLowerCase(),
+      retryAfter: res.headers.get('retry-after'),
+      bytes,
+    };
+  } catch (e) {
+    return { error: fetchErrorCode(e, timedOut, ctx) };
+  } finally {
+    clearTimeout(timer);
+    ctx.signal.removeEventListener('abort', onAbort);
+  }
+}
+
+// 手動追蹤轉址（最多 4 次），每一跳都重新檢查目標是否安全
+async function safeFetch(rawUrl, ctx, headers, maxBytes) {
+  let url = rawUrl;
+  for (let hop = 0; ; hop++) {
+    const safe = await checkTarget(url);
+    if (!safe.ok) return { error: hop === 0 ? safe.code : 'unsafe_redirect', url, hops: hop };
+    const r = await fetchHop(safe.href, ctx, headers, maxBytes);
+    if (r.error) return { ...r, url: safe.href, hops: hop };
+    if (r.redirect) {
+      if (!r.location) return { error: 'bad_redirect', httpStatus: r.status, url: safe.href, hops: hop };
+      if (hop >= MAX_REDIRECTS) return { error: 'too_many_redirects', url: safe.href, hops: hop };
+      try { url = new URL(r.location, safe.href).href; } catch (_) { return { error: 'bad_redirect', url: safe.href, hops: hop }; }
+      continue;
+    }
+    return { ...r, url: safe.href, hops: hop };
+  }
+}
+
+function apiHeaders(ctx) {
+  return { 'user-agent': ctx.apiUa, accept: 'application/json' };
+}
+function pageHeaders() {
+  return {
+    'user-agent': UA,
+    accept: 'text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.5',
+    'accept-language': 'zh-TW,zh;q=0.9,en;q=0.8',
+  };
+}
+
+function parseJsonBytes(bytes) {
+  try { return JSON.parse(new TextDecoder().decode(bytes)); } catch (_) { return null; }
+}
+
+async function apiJson(url, ctx, accept) {
+  const headers = apiHeaders(ctx);
+  if (accept) headers.accept = accept;
+  const r = await safeFetch(url, ctx, headers, MAX_API_BYTES);
+  if (r.error) return r;
+  const t0 = performance.now();
+  const parsed = parseJsonBytes(r.bytes);
+  ctx.cpuMs += performance.now() - t0;          // JSON 解析也計入運算預算
+  return { ...r, json: parsed };
+}
+
+function httpErrCode(status) {
+  if (status === 404) return 'http_404';
+  if (status === 410) return 'http_410';
+  if (status === 401 || status === 403) return 'blocked_403';
+  if (status === 429) return 'rate_limited';
+  return 'http_' + status;
+}
+
+// Crossref 有併發與頻率限制：同一請求內限制同時連線數，429 時依 Retry-After 稍候重試一次
+function crossrefCall(url, ctx) {
+  return ctx.crossref(async () => {
+    let r = await apiJson(url, ctx);
+    if (r.status === 429 && !ctx.expired()) {
+      const wait = Math.min(2000, Math.max(300, (parseFloat(r.retryAfter) || 1) * 1000));
+      await new Promise(res => setTimeout(res, Math.min(wait, Math.max(0, ctx.deadline - Date.now()))));
+      r = await apiJson(url, ctx);
+    }
+    return r;
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 書目資料轉換（Crossref／CSL-JSON／OpenAlex → 統一格式）
+// ═══════════════════════════════════════════════════════════════
+const ENTITIES = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', lsquo: '‘', rsquo: '’',
+  ldquo: '“', rdquo: '”', hellip: '…', middot: '·', laquo: '«', raquo: '»', copy: '©', reg: '®', trade: '™',
+  times: '×', shy: '', zwj: '', zwnj: '', eacute: 'é', egrave: 'è', aacute: 'á', agrave: 'à', oacute: 'ó',
+  uacute: 'ú', iacute: 'í', ntilde: 'ñ', ouml: 'ö', uuml: 'ü', auml: 'ä', ccedil: 'ç', szlig: 'ß',
+};
+
+function decodeEntities(s) {
+  return String(s).replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z][a-z0-9]{1,31});/gi, (m, e) => {
+    if (e[0] === '#') {
+      const cp = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return cp > 0 && cp <= 0x10ffff && !(cp >= 0xd800 && cp <= 0xdfff) ? String.fromCodePoint(cp) : ' ';
+    }
+    const v = ENTITIES[e.toLowerCase()];
+    return v != null ? v : m;
+  });
+}
+
+// 對外回傳的題名一律去標籤、去控制字元、截斷——絕不回傳上游 HTML
+function cleanText(s, max = MAX_FOUND_TITLE) {
+  if (s == null) return null;
+  let t = decodeEntities(String(s).replace(/<[^>]*>/g, ' '))
+    .replace(/<[^>]*>/g, ' ')            // 實體解碼後才出現的標籤（&lt;img…&gt;）也去掉
+    .replace(/[<>]/g, ' ')
+    // deno-lint-ignore no-control-regex -- 刻意移除控制字元與零寬字元
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\ufeff]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!t) return null;
+  if (t.length > max) t = t.slice(0, max - 1) + '…';
+  return t;
+}
+
+const strList = (v) => (Array.isArray(v) ? v.filter(x => typeof x === 'string') : typeof v === 'string' ? [v] : []);
+
+function yearOf(s) {
+  const m = String(s || '').match(/\b(1[5-9]\d\d|20\d\d|21[0-2]\d)\b/);
+  return m ? +m[1] : null;
+}
+
+function dateYear(d) {
+  if (!d || typeof d !== 'object') return null;
+  const dp = d['date-parts'];
+  const y = Array.isArray(dp) && Array.isArray(dp[0]) ? dp[0][0] : null;
+  if (Number.isInteger(y) && y >= 1500 && y <= 2200) return y;
+  if (typeof y === 'string' && /^\d{4}$/.test(y)) return +y;
+  return typeof d.literal === 'string' ? yearOf(d.literal) : typeof d.raw === 'string' ? yearOf(d.raw) : null;
+}
+
+// 顯示用：西文取姓；中文姓名（Crossref 常拆成 family「林」＋ given「小明」）合併為全名
+function personNames(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map(a => {
+    if (!a || typeof a !== 'object') return '';
+    const fam = typeof a.family === 'string' ? a.family : '';
+    const giv = typeof a.given === 'string' ? a.given : '';
+    if (fam && CJK_RE.test(fam + giv)) return fam + giv;
+    return fam || (typeof a.name === 'string' && a.name) || (typeof a.literal === 'string' && a.literal) || '';
+  }).filter(Boolean).slice(0, 20);
+}
+// 比對用：姓＋名全部納入（作者比對只要求引用的第一作者姓氏出現在其中）
+function personFull(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map(a => (a && typeof a === 'object'
+    ? [a.family, a.given, a.name, a.literal].filter(x => typeof x === 'string' && x).join(' ')
+    : '')).filter(Boolean).slice(0, 20);
+}
+
+function fmtAuthors(list) {
+  if (!list || !list.length) return null;
+  const s = list.slice(0, 3).join(', ') + (list.length > 3 ? ', et al.' : '');
+  return cleanText(s, 200);
+}
+
+function metaFromCrossref(m) {
+  const main = strList(m.title), sub = strList(m.subtitle);
+  const titles = [...main];
+  if (main[0] && sub[0]) titles.push(main[0] + ': ' + sub[0]);
+  titles.push(...strList(m['original-title']), ...strList(m['short-title']));
+  // 線上優先出版與紙本卷期常差一年以上：任一出版日期吻合即可
+  const years = [m.issued, m['published-print'], m['published-online'], m.published].map(dateYear).filter(Boolean);
+  const cleaned = titles.map(t => cleanText(t)).filter(Boolean);
+  for (const t of cleaned.slice()) {
+    const main = t.split(/\s*[:：]\s+|\s+[–—-]\s+/)[0];
+    if (main && main !== t && isReasonableTitle(main) && !cleaned.includes(main)) cleaned.push(main);
+  }
+  return {
+    titles: cleaned,
+    year: years[0] || dateYear(m.created),
+    years,
+    authors: personNames(m.author),
+    compareNames: [...personFull(m.author), ...personFull(m.editor)],
+    doi: normDoi(m.DOI),
+    url: typeof m.URL === 'string' ? m.URL : null,
+    volume: typeof m.volume === 'string' ? m.volume.trim() : null,
+    firstPage: typeof m.page === 'string' ? m.page.split(/[-–]/)[0].trim() : typeof m['article-number'] === 'string' ? m['article-number'].trim() : null,
+  };
+}
+
+function metaFromCsl(m) {
+  const meta = metaFromCrossref({ ...m, 'short-title': m['title-short'] || m['short-title'] });
+  return meta;
+}
+
+function metaFromOpenAlex(w) {
+  const authors = Array.isArray(w.authorships)
+    ? w.authorships.map(a => (a && a.author && a.author.display_name) || (a && a.raw_author_name) || '').filter(Boolean).slice(0, 20)
+    : [];
+  const loc = w.primary_location && typeof w.primary_location === 'object' ? w.primary_location : null;
+  return {
+    titles: [w.title, w.display_name].filter(t => typeof t === 'string').map(t => cleanText(t)).filter(Boolean),
+    year: Number.isInteger(w.publication_year) ? w.publication_year : null,
+    years: Number.isInteger(w.publication_year) ? [w.publication_year] : [],
+    authors,
+    compareNames: authors,
+    doi: normDoi(w.doi),
+    url: (loc && typeof loc.landing_page_url === 'string' && loc.landing_page_url) || (typeof w.id === 'string' ? w.id : null),
+    volume: w.biblio && typeof w.biblio.volume === 'string' ? w.biblio.volume : null,
+    firstPage: w.biblio && typeof w.biblio.first_page === 'string' ? w.biblio.first_page : null,
+  };
+}
+
+function yearDiff(cite, meta) {
+  const ys = meta.years && meta.years.length ? meta.years : meta.year ? [meta.year] : [];
+  if (!cite.year || !ys.length) return null;
+  return Math.min(...ys.map(y => Math.abs(cite.year - y)));
+}
+
+function bestOf(titles, cite, allowWhole) {
+  let best = null;
+  for (const t of titles) {
+    const s = scoreTitle(cite, t, allowWhole);
+    if (!best || s > best.score) best = { t, score: s };
+  }
+  return best;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 網頁／PDF 解析
+// ═══════════════════════════════════════════════════════════════
+const SOFT404_RE = /\b404\b|\bnot\s+found\b|page\s+(?:does\s+not|doesn['’]t)\s+exist|找不到(?:網頁|頁面|您要的|此頁|該頁|檔案)|頁面不存在|網頁不存在|查無此(?:頁|網頁|頁面)|無此頁面|頁面已(?:移除|刪除)|錯誤頁面/i;
+
+const SOFT404_BODY_RE = /(?:資料|網頁|頁面|檔案|文章|內容)(?:不存在|已(?:被)?(?:移除|刪除|下架|過期))|查無(?:此)?(?:資料|網頁|頁面|檔案|文章)|找不到(?:網頁|頁面|您要|您所|該|此)|(?:page|content|article|document)\s+(?:you\s+(?:are\s+looking\s+for|requested)\s+)?(?:could\s+not\s+be\s+found|cannot\s+be\s+found|does\s+not\s+exist|no\s+longer\s+(?:exists|available)|has\s+been\s+removed)|\b404\b\s*(?:error|not\s+found)/i;
+const WAF_TITLE_RE = /^(?:Request Rejected|Access Denied|Attention Required!.*|Just a moment\.\.\.|Web Page Blocked!?|The page cannot be displayed)$/i;
+
+// ── 防止惡意頁面耗盡 CPU（ReDoS）──
+// 頁面內容不可信：以下所有正規表示式都必須是線性時間——每個起點只掃描有界長度，
+// 或以 indexOf 先定位再於小片段內比對。（未閉合的 <meta、<title、<h1 重複數萬次、
+// 超長屬性名稱等，在舊寫法下是平方時間，單頁可耗 CPU 數秒以上。）
+const MAX_ATTR_CHARS = 8192;
+
+function decodeHtml(bytes, ctype) {
+  let cs = (ctype.match(/charset\s*=\s*["']?([\w.:-]+)/i) || [])[1];
+  if (!cs) {
+    const head = new TextDecoder('latin1').decode(bytes.subarray(0, 4096));
+    cs = (head.match(/<meta\b[^<>]{0,300}?charset\s*=\s*["']?([\w.:-]+)/i) || [])[1];
+  }
+  try { return new TextDecoder(cs || 'utf-8').decode(bytes); } catch (_) { return new TextDecoder('utf-8').decode(bytes); }
+}
+
+function parseAttrs(s) {
+  const out = {};
+  if (s.length > MAX_ATTR_CHARS) return out;
+  // 屬性名稱只從空白、引號或斜線之後開始（後顧斷言）：超長的無「=」字串只會被掃描一次
+  for (const m of s.matchAll(/(?<![^\s"'\/])([^\s=\/"'<>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g)) {
+    const k = m[1].toLowerCase();
+    if (!(k in out)) out[k] = m[2] != null ? m[2] : m[3] != null ? m[3] : m[4];
+  }
+  return out;
+}
+
+// 第一個 <tag …>…</tag> 的內容（最多 max 字元）；以單次搜尋定位開頭、結尾，線性時間
+function firstTagText(s, tag, max) {
+  const open = new RegExp('<' + tag + '\\b', 'i').exec(s);
+  if (!open) return null;
+  const gt = s.indexOf('>', open.index);
+  if (gt < 0 || gt - open.index > MAX_ATTR_CHARS) return null;
+  const close = new RegExp('</' + tag + '\\s*>', 'gi');
+  close.lastIndex = gt + 1;
+  const c = close.exec(s);
+  if (!c) return null;
+  return s.slice(gt + 1, Math.min(c.index, gt + 1 + max));
+}
+
+// 去除標籤取得內文：先以線性掃描跳過 script／style 等區塊（每個區塊只掃一次，未閉合就截斷），
+// 再用原生正規表示式一次替換其餘標籤——避免回溯式寫法在惡意頁面上耗盡 CPU
+function stripToText(html) {
+  const blockRe = /<!--|<(script|style|svg|template|noscript|head)\b/gi;
+  const kept = [];
+  let pos = 0, m;
+  while ((m = blockRe.exec(html))) {
+    kept.push(html.slice(pos, m.index));
+    let end;
+    if (m[0] === '<!--') {
+      const e = html.indexOf('-->', m.index + 4);
+      end = e < 0 ? html.length : e + 3;
+    } else {
+      const closeRe = new RegExp('</' + m[1] + '\\s*>', 'gi');
+      closeRe.lastIndex = m.index + m[0].length;
+      const c = closeRe.exec(html);
+      end = c ? c.index + c[0].length : html.length;
+    }
+    pos = end;
+    if (end >= html.length) break;
+    blockRe.lastIndex = end;
+  }
+  if (pos < html.length) kept.push(html.slice(pos));
+  return decodeEntities(kept.join(' ').replace(/<[a-zA-Z\/!?][^>]*>?/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 200000);
+}
+
+function analyzeHtml(html) {
+  const headEnd = html.search(/<\/head\s*>/i);
+  const head = html.slice(0, headEnd > 0 ? Math.min(headEnd, 200000) : 200000);
+  const meta = {};
+  const authors = [];
+  // [^<>]*：未閉合的 <meta 只掃到下一個「<」為止（線性時間）
+  for (const m of head.matchAll(/<meta\b([^<>]*)>/gi)) {
+    const a = parseAttrs(m[1]);
+    const key = String(a.name || a.property || a.itemprop || '').toLowerCase().trim();
+    if (!key || a.content == null) continue;
+    if (key === 'citation_author' || key === 'dc.creator' || key === 'dcterms.creator') {
+      if (authors.length < 20) { const n = cleanText(a.content, 120); if (n) authors.push(n); }
+      if (key === 'citation_author') continue;   // DC.Creator 另存一份：政府網站常填機關名稱，用來辨識「網站名稱」型的 DC.Title
+    }
+    if (!(key in meta)) meta[key] = a.content;
+  }
+  const titleTag = firstTagText(html.slice(0, 300000), 'title', 2000);
+  const h1 = firstTagText(html, 'h1', 2000);
+  const cands = [];
+  const push = (t, label, scholarly) => { const c = cleanText(t); if (c && c.length >= 2) cands.push({ t: c, label, scholarly }); };
+  // 臺灣政府網站依規範每頁都有 DC.Title，但多數 CMS 填的是「網站名稱」——不能當成文獻題名去判 mismatch
+  const siteNames = [meta['og:site_name'], meta['dc.publisher'], meta['dc.creator'], meta['application-name'], meta['dc.rights']]
+    .map(x => (x ? norm(x) : '')).filter(x => x.length >= 2);
+  const siteLike = (t) => { const n = norm(t || ''); return !!n && siteNames.some(x => n === x || n.includes(x) || x.includes(n)); };
+  push(meta.citation_title, 'citation_title', true);
+  const dcTitle = meta['dc.title'] || meta['dcterms.title'];
+  push(dcTitle, 'dc.title', !siteLike(dcTitle));
+  push(meta['dcterms.alternative'], 'dc.title', false);
+  push(meta['og:title'], 'og:title', false);
+  push(meta['twitter:title'], 'twitter:title', false);
+  const tt = cleanText(titleTag);
+  if (tt) {
+    push(tt, 'title', false);
+    const segs = tt.split(/\s+[|｜\-–—:·•»]\s+|\s*[|｜]\s*|\s+::\s+|_/).map(s => s.trim()).filter(s => s && s !== tt);
+    for (const s of segs) push(s, 'title', false);
+  }
+  push(h1, 'h1', false);
+  // 只用「出版日期」類欄位比對年份；DC.Date／article:published_time 在政府網站常是最後更新日
+  const dateKey = ['citation_publication_date', 'citation_date', 'citation_online_date', 'citation_year',
+    'dcterms.issued', 'prism.publicationdate', 'dc.date.issued', 'citation_cover_date'].find(k => meta[k]);
+  const segsAll = tt ? [tt, ...tt.split(/\s+[|｜\-–—:·•»]\s+|\s*[|｜]\s*|\s+::\s+|_/).map(x => x.trim()).filter(Boolean)] : [];
+  const titleGeneric = !tt || segsAll.every(x => siteLike(x) || /^(?:首頁|home|homepage|index|default|main|無標題|untitled)$/i.test(x));
+  let text = null, raw = null;
+  const getText = () => (text != null ? text : (text = stripToText(html)));   // 只有題名沒對上時才需要內文
+  const getRaw = () => (raw != null ? raw : (raw = lightNorm(decodeEntities(html))));
+  return {
+    type: 'html',
+    cands,
+    display: cleanText(meta.citation_title || meta['dc.title'] || meta['og:title'] || titleTag || h1),
+    year: dateKey ? yearOf(meta[dateKey]) : null,
+    authors,
+    citationDoi: normDoi(meta.citation_doi || meta['prism.doi'] || meta['dc.identifier'] || ''),
+    html,                     // 僅供內部比對，絕不回傳
+    getText,
+    getRaw,
+    // 單頁應用程式的外殼頁通常很小；大頁面不必為此去標籤
+    isJsOnly: () => html.length < 60000 && /<script\b/i.test(html) && getText().length < 200,
+    soft404: SOFT404_RE.test(tt || '') || SOFT404_RE.test(cleanText(h1) || ''),
+    // 標題只有網站名稱、內文卻寫「資料不存在」→ 回 200 的錯誤頁（軟 404）
+    softBody: () => titleGeneric && SOFT404_BODY_RE.test(getText().slice(0, 8000)),
+    waf: WAF_TITLE_RE.test(tt || '') || /The requested URL was rejected\. Please consult with your administrator/i.test(html.slice(0, 4000)),
+  };
+}
+
+// PDF 字串在位元組層級解析（UTF-16BE 題名的位元組可能落在 0x80–0x9F，不能先轉成字元）
+function pdfLiteralBytes(b) {
+  const out = [];
+  for (let i = 0; i < b.length; i++) {
+    const c = b[i];
+    if (c !== 0x5c) { out.push(c); continue; }
+    const nx = b[++i];
+    if (nx === undefined) break;
+    if (nx >= 0x30 && nx <= 0x37) {
+      let v = nx - 0x30;
+      for (let k = 1; k < 3 && b[i + 1] >= 0x30 && b[i + 1] <= 0x37; k++) v = v * 8 + (b[++i] - 0x30);
+      out.push(v & 0xff);
+    } else if (nx === 0x0d || nx === 0x0a) {
+      if (nx === 0x0d && b[i + 1] === 0x0a) i++;
+    } else {
+      const map = { 0x6e: 0x0a, 0x72: 0x0d, 0x74: 0x09, 0x62: 0x08, 0x66: 0x0c };
+      out.push(map[nx] !== undefined ? map[nx] : nx);
+    }
+  }
+  return pdfBytesToString(Uint8Array.from(out));
+}
+
+function pdfBytesToString(b) {
+  if (b.length >= 2 && b[0] === 0xfe && b[1] === 0xff) return new TextDecoder('utf-16be').decode(b.subarray(2));
+  if (b.length >= 3 && b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) return new TextDecoder().decode(b.subarray(3));
+  return new TextDecoder('latin1').decode(b);
+}
+
+function pdfTitles(bytes) {
+  const latin = new TextDecoder('latin1').decode(bytes); // 單位元組對應單一字元，索引即位元組位置
+  const out = [];
+  // XMP 中繼資料（UTF-8）：先以 indexOf 定位，只在其後 3 KB 內比對（避免在惡意檔案上平方時間）
+  const xi = latin.indexOf('<dc:title>');
+  const x = xi >= 0 ? latin.slice(xi, xi + 3072).match(/^<dc:title>[\s\S]{0,2000}?<rdf:li[^<>]{0,300}>([\s\S]{1,1000}?)<\/rdf:li>/) : null;
+  if (x) {
+    const start = xi + x[0].length - '</rdf:li>'.length - x[1].length;
+    out.push(decodeEntities(new TextDecoder().decode(bytes.subarray(start, start + x[1].length))));
+  }
+  // 文件資訊字典 /Title (literal) 或 /Title <hex>
+  const t = latin.search(/\/Title\s*[(<]/);
+  if (t >= 0) {
+    let i = t + 6;
+    while (i < bytes.length && (bytes[i] === 0x20 || bytes[i] === 0x0a || bytes[i] === 0x0d || bytes[i] === 0x09)) i++;
+    if (bytes[i] === 0x28) {
+      const buf = [];
+      let depth = 1;
+      for (i++; i < bytes.length && buf.length < 2000; i++) {
+        const c = bytes[i];
+        if (c === 0x5c && i + 1 < bytes.length) { buf.push(c, bytes[++i]); continue; }
+        if (c === 0x28) depth++;
+        else if (c === 0x29 && --depth === 0) break;
+        buf.push(c);
+      }
+      out.push(pdfLiteralBytes(Uint8Array.from(buf)));
+    } else if (bytes[i] === 0x3c && bytes[i + 1] !== 0x3c) {
+      const end = latin.indexOf('>', i);
+      if (end > i && end - i < 4000) {
+        const h = latin.slice(i + 1, end).replace(/[^0-9A-Fa-f]/g, '');
+        const b = new Uint8Array(Math.floor(h.length / 2));
+        for (let k = 0; k < b.length; k++) b[k] = parseInt(h.substr(k * 2, 2), 16);
+        out.push(pdfBytesToString(b));
+      }
+    }
+  }
+  return out.map(s => cleanText(s))
+    .filter(s => s && !/^(?:untitled|microsoft (?:word|powerpoint|excel)\b|powerpoint presentation|document\d*$|無標題|新增 microsoft)/i.test(s));
+}
+
+function analyzeFetched(fr) {
+  const b = fr.bytes || new Uint8Array(0);
+  const ct = fr.ctype || '';
+  const head = new TextDecoder('latin1').decode(b.subarray(0, 1024));
+  if (/application\/pdf/.test(ct) || head.includes('%PDF-')) {
+    return { type: 'pdf', cands: pdfTitles(b).map(t => ({ t, label: 'pdf', scholarly: false })) };
+  }
+  const looksHtml = /html|xml|text\/plain/.test(ct) || (!ct && /<(?:!doctype|html|head|body|title)\b/i.test(head));
+  if (!looksHtml) return { type: 'other', ctype: ct.split(';')[0].trim() || 'unknown' };
+  return analyzeHtml(decodeHtml(b, ct));
+}
+
+// 引用題名是否出現在頁面內文中（要求題名夠長，避免網站名稱、選單字詞造成誤判）
+// 做法：把引用題名編成一個寬鬆的正規表示式（不分大小寫、台／臺 互通、字詞間容許任意標點空白），
+// 直接在頁面內文上搜尋——不必把整頁做 Unicode 正規化，大頁面也只需約 1 ms
+const LATIN_EXT_RE = /[À-ɏḀ-ỿ̀-ͯ]/;
+function lightNorm(s) {
+  let t = String(s).normalize('NFKC');
+  if (LATIN_EXT_RE.test(t)) t = t.normalize('NFD').replace(/[̀-ͯ]+/g, '');
+  return t;
+}
+
+function titlePattern(title, strict) {
+  const words = lightNorm(title).toLowerCase().replace(/臺/g, '台').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  if (!words.length) return null;
+  const compact = words.join('');
+  if (CJK_RE.test(compact)) {
+    // 題名太短（如「臺灣生物多樣性」）幾乎每個相關網站都會出現，不能當證據
+    if ([...compact].length < (strict ? 10 : 8)) return null;
+  } else if (words.join(' ').length < (strict ? 25 : 20) || words.length < (strict ? 5 : 4)) {
+    return null;
+  }
+  const SEP_ANY = '[^\\p{L}\\p{N}]*', SEP_WORD = '[^\\p{L}\\p{N}]+';
+  let src = '';
+  let prev = '';
+  words.forEach((w, wi) => {
+    [...w].forEach((ch, ci) => {
+      if (prev) {
+        if (CJK_RE.test(ch) || CJK_RE.test(prev)) src += SEP_ANY;
+        else if (ci === 0 && wi > 0) src += SEP_WORD;
+      }
+      src += ch === '台' ? '[台臺]' : ch;   // norm 後只剩字母與數字，不含正規表示式特殊字元
+      prev = ch;
+    });
+  });
+  if (!CJK_RE.test(compact)) src = '(?<![\\p{L}\\p{N}])' + src + '(?![\\p{L}\\p{N}])';
+  try { return new RegExp(src, 'iu'); } catch (_) { return null; }
+}
+
+// 題名中最有鑑別度的片段（拉丁：最長的 3 個字；中文：前、中、後 3 個雙字組）——全部出現才值得去標籤細比
+function titleAnchors(title) {
+  const words = lightNorm(title).toLowerCase().replace(/臺/g, '台').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const compact = words.join('');
+  if (CJK_RE.test(compact)) {
+    const chars = [...compact].filter(ch => CJK_RE.test(ch));
+    if (chars.length < 2) return [];
+    const at = [0, (chars.length >> 1) - 1, chars.length - 2].filter((x, i, a) => x >= 0 && a.indexOf(x) === i);
+    return at.map(i => chars[i] + chars[i + 1]);
+  }
+  return words.filter(w => w.length >= 4).sort((a, b) => b.length - a.length).slice(0, 3);
+}
+
+function pageHasTitle(an, cite) {
+  if (!cite.titleSure || !an.getText) return false;
+  const full = titlePattern(cite.title, false);
+  const main = cite.title.split(/:|：| — | – /)[0];
+  const mainRe = main !== cite.title ? titlePattern(main, true) : null;
+  const res = [full, mainRe].filter(Boolean);
+  if (!res.length) return false;                 // 題名太短：不必讀內文
+  // 1) 快速排除：有鑑別度的片段不在 HTML 中 → 去標籤後也不可能出現（不複製整頁字串，省 CPU 與記憶體）
+  const anchors = titleAnchors(cite.title).map(a => new RegExp(a.replace(/台/g, '[台臺]'), 'i'));
+  const hasAnchors = (str) => anchors.every(re => re.test(str));
+  if (anchors.length && !hasAnchors(an.html)) {
+    // 頁面含數字實體（&#33274;）、帶重音字母或全形英數時，正規化後再確認一次
+    if (!(/&#|[\uff10-\uff19\uff21-\uff3a\uff41-\uff5a]/.test(an.html) || LATIN_EXT_RE.test(an.html)) || !hasAnchors(an.getRaw())) return false;
+  }
+  // 2) 快速路徑：題名通常整段出現在同一個文字節點
+  if (res.some(re => re.test(an.getRaw()))) return true;
+  // 3) 題名被行內標籤（<b>、<br>）切開：去標籤後再比對
+  const text = lightNorm(an.getText());
+  return res.some(re => re.test(text));
+}
+
+const HOME_PATH_RE = /^\/?(?:(?:index|default|home|main|mp)(?:\.\w{2,5})?|zh-tw|zh_tw|tw|ch|cht|en|zh)?\/?$/i;
+const HOME_QUERY_RE = /^\?(?:lang|l|locale|mp|culture)=[\w-]+$/i;
+
+function isHomePath(u) {
+  try { const x = new URL(u); return HOME_PATH_RE.test(x.pathname) && (!x.search || HOME_QUERY_RE.test(x.search)); } catch (_) { return false; }
+}
+
+function isRedirectHome(orig, final) {
+  try {
+    const a = new URL(orig), b = new URL(final);
+    if (a.href === b.href) return false;
+    return !HOME_PATH_RE.test(a.pathname) && isHomePath(final);
+  } catch (_) { return false; }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 單項檢核：每項回傳 { kind, cls, reason, how, check }
+//   cls：match | partial | mismatch | negative（不存在）| error（無法判定）
+// ═══════════════════════════════════════════════════════════════
+const NEGATIVE_CODES = new Set(['dns_error', 'unsafe_url', 'invalid_url', 'http_404', 'http_410', 'soft_404', 'redirect_home', 'doi_not_registered', 'isbn_invalid']);
+
+function baseCheck(kind, target) {
+  return {
+    kind,
+    target: cleanText(target, 300) || '',
+    status: '',
+    httpStatus: null,
+    foundTitle: null,
+    foundYear: null,
+    foundAuthors: null,
+    titleScore: null,
+    note: '',
+  };
+}
+
+function errorNote(L, code, httpStatus) {
+  if (code === 'blocked_403') return msg(L, 'blocked_403', { code: httpStatus || 403 });
+  if (/^http_\d+$/.test(code) && !MSG[code]) return msg(L, 'http_error', { code: code.slice(5) });
+  if (code === 'aborted') return msg(L, 'deadline');
+  return MSG[code] ? msg(L, code) : msg(L, 'network_error');
+}
+
+function shortErr(L, code) {
+  if (/^http_\d+$/.test(code)) return 'HTTP ' + code.slice(5);
+  if (code === 'rate_limited') return 'HTTP 429';
+  if (code === 'blocked_403') return 'HTTP 403';
+  const zh = { timeout: '逾時', deadline: '達時間上限', aborted: '已中止', dns_error: 'DNS', tls_error: 'TLS', bad_metadata: '回應格式異常' };
+  const en = { timeout: 'timeout', deadline: 'time limit', aborted: 'aborted', dns_error: 'DNS', tls_error: 'TLS', bad_metadata: 'bad response' };
+  return (L === 'en' ? en : zh)[code] || (L === 'en' ? 'network error' : '連線失敗');
+}
+
+function fromError(check, code, ctx, httpStatus) {
+  const status = code === 'deadline' || code === 'aborted' ? 'timeout' : code;
+  check.status = status;
+  if (httpStatus) check.httpStatus = httpStatus;
+  check.note = errorNote(ctx.lang, code, httpStatus);
+  return { kind: check.kind, cls: NEGATIVE_CODES.has(status) ? 'negative' : 'error', reason: code, check };
+}
+
+// 依「書目資料」判定（Crossref、CSL-JSON、OpenAlex）
+function evaluateMeta(check, meta, cite, ctx, src) {
+  const L = ctx.lang;
+  const best = bestOf(meta.titles, cite, true);
+  check.source = src;
+  check.foundTitle = best ? best.t : null;
+  check.foundYear = meta.year;
+  check.foundAuthors = fmtAuthors(meta.authors);
+  check.titleScore = best ? best.score : null;
+  const ev = { kind: check.kind, check, meta };
+  if (!best) { check.status = 'doi_no_metadata'; check.note = msg(L, 'doi_no_metadata'); return { ...ev, cls: 'partial', reason: 'no_metadata' }; }
+  check.status = 'doi_ok';
+  // 更正／勘誤／撤稿聲明的題名常是「Correction to: 原題名」，相似度很高，但它不是原著作
+  const NOTICE_RE = /^(?:correction|corrigendum|erratum|addendum|retraction(?:\s+note)?|retracted|expression\s+of\s+concern|withdrawn|notice\s+of\s+retraction)(?![a-z])|^(?:更正|勘誤|撤稿|撤回)/i;
+  if (best.score >= SCORE_MATCH && NOTICE_RE.test(best.t) && !NOTICE_RE.test(cite.title || '')) {
+    check.note = msg(L, 'doi_notice', { ft: best.t });
+    return { ...ev, cls: 'partial', reason: 'notice', ft: best.t };
+  }
+  if (best.score >= SCORE_MATCH) {
+    const kd = cite.titleSure ? keyTermDiff(cite.title, best.t) : [];
+    if (kd.length) {
+      check.note = msg(L, 'doi_terms', { c: kd[0].cited, f: kd[0].found });
+      return { ...ev, cls: 'partial', reason: 'terms', kc: kd[0].cited, kf: kd[0].found };
+    }
+    const yd = yearDiff(cite, meta);
+    if (yd != null && yd > YEAR_TOLERANCE) {
+      check.note = msg(L, 'doi_year', { cy: cite.year, fy: meta.year });
+      return { ...ev, cls: 'partial', reason: 'year', cy: cite.year, fy: meta.year };
+    }
+    if (authorsAgree(cite, meta.compareNames) === false) {
+      check.note = msg(L, 'doi_author');
+      return { ...ev, cls: 'partial', reason: 'author' };
+    }
+    if (biblioAgrees(cite, meta) === false) {
+      check.note = msg(L, 'doi_biblio');
+      return { ...ev, cls: 'partial', reason: 'biblio', vol: meta.volume || '?', pg: meta.firstPage || '?' };
+    }
+    check.note = msg(L, 'doi_match', { src });
+    return { ...ev, cls: 'match', how: 'meta' };
+  }
+  if (!cite.titleSure) { check.note = msg(L, 'doi_title_unsure'); return { ...ev, cls: 'partial', reason: 'title_unsure' }; }
+  if (crossLanguage(cite, meta.titles)) {
+    // 語言不同無法比題名：改以年份與卷期頁碼判斷（中文題名配上英文期刊的 DOI → 另一篇著作）
+    const bib = biblioAgrees(cite, meta), yd = yearDiff(cite, meta);
+    if (bib === false || (yd != null && yd > YEAR_TOLERANCE && bib !== true)) {
+      check.note = msg(L, 'doi_cross_lang_mis');
+      return { ...ev, cls: 'mismatch' };
+    }
+    check.note = msg(L, 'doi_cross_lang'); return { ...ev, cls: 'partial', reason: 'cross_lang' };
+  }
+  // 找到的題名若大致出現在整筆引用文字中（題名擷取可能有誤），不判 mismatch
+  const veto = meta.titles.some(t => wholeContain(t, cite.clean) >= 0.8);
+  if (best.score < SCORE_MISMATCH && !veto) {
+    check.note = msg(L, 'doi_wrong_work');
+    return { ...ev, cls: 'mismatch' };
+  }
+  check.note = msg(L, 'doi_grey');
+  return { ...ev, cls: 'partial', reason: 'grey' };
+}
+
+// 依「網頁／PDF 內容」判定（網址檢核，或 DOI 導向的落地頁面）
+function evaluatePage(check, an, cite, ctx, fr, origUrl) {
+  const L = ctx.lang;
+  const isDoi = check.kind === 'doi';
+  const ev = { kind: check.kind, check };
+  if (an.type === 'other') {
+    check.status = isDoi ? 'doi_no_metadata' : 'http_' + fr.status;
+    check.note = msg(L, 'filetype', { type: an.ctype });
+    return { ...ev, cls: 'partial', reason: 'filetype' };
+  }
+  if (an.waf) {
+    check.status = 'blocked_waf'; check.note = msg(L, 'waf');
+    return { ...ev, cls: 'error', reason: 'blocked_waf' };
+  }
+  // 學術中繼資料（citation_title、dc.title）可用整筆文字比對；一般 <title> 不行（網站名稱常同時是作者）
+  let best = null;
+  for (const c of an.cands) {
+    const s = scoreTitle(cite, c.t, c.scholarly);
+    if (!best || s > best.score) best = { ...c, score: s };
+  }
+  check.titleScore = best ? best.score : null;
+  if (an.type === 'pdf') {
+    check.status = isDoi ? 'doi_ok' : 'pdf';
+    check.foundTitle = best ? best.t : null;
+    if (best && best.score >= SCORE_MATCH) {
+      const kd = cite.titleSure ? keyTermDiff(cite.title, best.t) : [];
+      if (kd.length) { check.note = msg(L, 'url_terms', { c: kd[0].cited, f: kd[0].found }); return { ...ev, cls: 'partial', reason: 'terms', kc: kd[0].cited, kf: kd[0].found }; }
+      check.note = isDoi ? msg(L, 'doi_landing_match') : msg(L, 'pdf_match');
+      return { ...ev, cls: 'match', how: isDoi ? 'landing' : 'pdf' };
+    }
+    // PDF 中繼資料常是「Microsoft Word - 檔名」之類，不據以判定 mismatch
+    check.note = msg(L, best ? 'pdf_title_differs' : 'pdf_nometa');
+    return { ...ev, cls: 'partial', reason: 'pdf' };
+  }
+  check.status = isDoi ? 'doi_ok' : 'http_' + fr.status;
+  check.foundTitle = best && best.score >= SCORE_MISMATCH ? best.t : an.display;
+  check.foundYear = an.year;
+  check.foundAuthors = fmtAuthors(an.authors);
+  const titleOk = !!best && best.score >= SCORE_MATCH;
+  if (titleOk && cite.titleSure) {
+    const kd = keyTermDiff(cite.title, best.t);
+    if (kd.length && !pageHasTitle(an, cite)) {
+      check.note = msg(L, isDoi ? 'doi_terms' : 'url_terms', { c: kd[0].cited, f: kd[0].found });
+      return { ...ev, cls: 'partial', reason: 'terms', kc: kd[0].cited, kf: kd[0].found };
+    }
+  }
+  const inPage = titleOk ? null : pageHasTitle(an, cite);   // 題名已相符就不必掃內文
+  check.inPage = inPage;
+  const movedHome = !isDoi && origUrl && isRedirectHome(origUrl, fr.url);
+  if ((titleOk || inPage) && movedHome) {
+    check.status = 'redirect_home';
+    check.note = msg(L, 'moved_home_mentions');
+    return { ...ev, cls: 'partial', reason: 'moved' };
+  }
+  // 網站首頁只「提到」題名（最新消息、選單）不代表引用的就是該文獻：只算部分查證
+  if (inPage && !titleOk && isHomePath(fr.url)) {
+    check.note = msg(L, 'home_mentions');
+    return { ...ev, cls: 'partial', reason: 'home_mentions' };
+  }
+  if (titleOk || inPage) {
+    const yd = cite.year && an.year ? Math.abs(cite.year - an.year) : null;
+    if (yd != null && yd > YEAR_TOLERANCE) {
+      check.note = msg(L, 'url_year', { cy: cite.year, fy: an.year });
+      return { ...ev, cls: 'partial', reason: 'year', cy: cite.year, fy: an.year };
+    }
+    if (authorsAgree(cite, an.authors) === false) {
+      check.note = msg(L, 'url_author');
+      return { ...ev, cls: 'partial', reason: 'author' };
+    }
+    const how = isDoi ? 'landing' : titleOk ? 'meta' : 'text';
+    check.note = isDoi ? msg(L, 'doi_landing_match') : msg(L, how === 'meta' ? 'url_meta_match' : 'url_in_page');
+    const out = { ...ev, cls: 'match', how };
+    if (an.citationDoi) out.pageDoi = an.citationDoi;
+    return out;
+  }
+  if (!isDoi && (an.soft404 || (an.softBody && an.softBody()))) { check.status = 'soft_404'; check.note = msg(L, 'soft_404'); return { ...ev, cls: 'negative', reason: 'soft_404' }; }
+  if (movedHome) {
+    check.status = 'redirect_home'; check.note = msg(L, 'redirect_home');
+    return { ...ev, cls: 'negative', reason: 'redirect_home' };
+  }
+  // 引用的是網站首頁：首頁的中繼資料與內容都不是文獻本身，不構成任何證據（不判 partial／mismatch）
+  // （單頁應用的 #/report/12 路由不是首頁）
+  if (!isDoi && isHomePath(fr.url) && !(origUrl && /#!?\/?[^#\s]{2,}/.test(origUrl))) { check.note = msg(L, 'home_only'); return { ...ev, cls: 'weak', reason: 'home' }; }
+  const scholarly = an.cands.filter(c => c.scholarly);
+  if (scholarly.length && cite.titleSure && !crossLanguage(cite, scholarly.map(c => c.t))) {
+    const sBest = Math.max(...scholarly.map(c => scoreTitle(cite, c.t, true)));
+    const veto = scholarly.some(c => wholeContain(c.t, cite.clean) >= 0.8);
+    if (sBest < SCORE_MISMATCH && !veto) {
+      check.foundTitle = scholarly[0].t;
+      check.note = msg(L, isDoi ? 'doi_wrong_work' : 'url_wrong_work');
+      return { ...ev, cls: 'mismatch' };
+    }
+  }
+  if (an.isJsOnly()) { check.note = msg(L, 'url_js_only'); return { ...ev, cls: 'partial', reason: 'js_only' }; }
+  if (best && best.score >= SCORE_MISMATCH) { check.note = msg(L, isDoi ? 'doi_grey' : 'url_grey'); return { ...ev, cls: 'partial', reason: 'grey' }; }
+  check.note = msg(L, isDoi ? 'doi_landing_unmatched' : 'url_not_in_page');
+  return { ...ev, cls: 'partial', reason: 'not_in_page' };
+}
+
+async function doiHandle(doi, ctx) {
+  const r = await apiJson(`https://doi.org/api/handles/${encDoi(doi)}?type=URL`, ctx);
+  if (r.error) return { state: 'error', code: r.error };
+  const rc = r.json && r.json.responseCode;
+  if (rc === 1 || rc === 200) return { state: 'exists' };
+  if (rc === 100) return { state: 'missing' };
+  return { state: 'error', code: httpErrCode(r.status), httpStatus: r.status };
+}
+
+async function crossrefWork(doi, ctx) {
+  const q = ctx.mailto ? `?mailto=${encodeURIComponent(ctx.mailto)}` : '';
+  const r = await crossrefCall(`https://api.crossref.org/works/${encDoi(doi)}${q}`, ctx);
+  if (r.error) return { state: 'error', code: r.error };
+  if (r.status === 404) return { state: 'missing' };
+  if (r.status === 200 && r.json && r.json.message && typeof r.json.message === 'object') {
+    return { state: 'ok', meta: metaFromCrossref(r.json.message) };
+  }
+  return { state: 'error', code: r.status === 200 ? 'bad_metadata' : httpErrCode(r.status), httpStatus: r.status };
+}
+
+// doi.org 內容協商：DataCite、mEDRA、JaLC 等回傳 CSL-JSON；不支援的註冊機構會導向落地頁面
+function agencyOf(url) {
+  const h = hostOf(url);
+  if (/(^|\.)datacite\.org$/.test(h)) return 'DataCite';
+  if (/(^|\.)crossref\.org$/.test(h)) return 'Crossref';
+  if (/(^|\.)medra\.org$/.test(h)) return 'mEDRA';
+  if (/(^|\.)jalc\.or\.jp$/.test(h)) return 'JaLC';
+  return 'doi.org';
+}
+
+async function doiContentNegotiation(doi, ctx) {
+  const headers = { ...apiHeaders(ctx), accept: 'application/vnd.citationstyles.csl+json, application/citeproc+json;q=0.9, text/html;q=0.5' };
+  const r = await safeFetch(`https://doi.org/${encDoi(doi)}`, ctx, headers, MAX_PAGE_BYTES);
+  if (r.error) return { state: 'error', code: r.error };
+  if (r.status === 404 && r.hops === 0) return { state: 'missing' };
+  if (r.ok) {
+    if (/json/.test(r.ctype)) {
+      const j = parseJsonBytes(r.bytes);
+      if (j && typeof j === 'object' && (j.title || j.DOI)) return { state: 'ok', meta: metaFromCsl(j), src: agencyOf(r.url) };
+      return { state: 'error', code: 'bad_metadata' };
+    }
+    return { state: 'page', fr: r };
+  }
+  return { state: 'error', code: httpErrCode(r.status), httpStatus: r.status };
+}
+
+function openalexParams(ctx, first) {
+  const p = [];
+  if (ctx.mailto) p.push('mailto=' + encodeURIComponent(ctx.mailto));
+  if (ctx.openalexKey) p.push('api_key=' + encodeURIComponent(ctx.openalexKey));
+  return p.length ? (first ? '?' : '&') + p.join('&') : '';
+}
+
+async function openalexByDoi(doi, ctx) {
+  const r = await apiJson(`https://api.openalex.org/works/doi:${encDoi(doi)}${openalexParams(ctx, true)}`, ctx);
+  if (r.error) return { state: 'error', code: r.error };
+  if (r.status === 404) return { state: 'missing' };
+  if (r.status === 200 && r.json && (r.json.title || r.json.display_name)) return { state: 'ok', meta: metaFromOpenAlex(r.json) };
+  return { state: 'error', code: r.status === 200 ? 'bad_metadata' : httpErrCode(r.status), httpStatus: r.status };
+}
+
+async function checkDoi(doi, cite, ctx) {
+  const L = ctx.lang;
+  const check = baseCheck('doi', doi);
+  // 註冊狀態與 Crossref 書目同時查
+  const [h, cr] = await Promise.all([doiHandle(doi, ctx), crossrefWork(doi, ctx)]);
+  if (cr.state === 'ok') return evaluateMeta(check, cr.meta, cite, ctx, 'Crossref');
+  if (h.state === 'missing') {
+    check.status = 'doi_not_registered';
+    check.httpStatus = 404;
+    check.note = msg(L, 'doi_not_registered');
+    check.source = 'doi.org';
+    return { kind: 'doi', cls: 'negative', reason: 'doi_not_registered', check };
+  }
+  // 非 Crossref 的 DOI → 內容協商；Crossref 失敗（限流、逾時）→ 先用 OpenAlex
+  let cnMissing = false, errCode = null, errHttp = null;
+  const order = cr.state === 'missing' ? ['cn', 'oa'] : ['oa', 'cn'];
+  for (const step of order) {
+    if (ctx.expired()) break;
+    const r = step === 'cn' ? await doiContentNegotiation(doi, ctx) : await openalexByDoi(doi, ctx);
+    if (r.state === 'ok') return evaluateMeta(check, r.meta, cite, ctx, step === 'cn' ? r.src : 'OpenAlex');
+    if (r.state === 'page') {
+      check.source = 'doi.org';
+      return analyzeWithBudget(check, r.fr, cite, ctx, null);
+    }
+    if (r.state === 'missing' && step === 'cn') cnMissing = true;
+    if (r.state === 'error' && !errCode) { errCode = r.code; errHttp = r.httpStatus || null; }
+  }
+  if (h.state === 'exists') {
+    check.status = 'doi_no_metadata';
+    check.note = msg(L, 'doi_no_metadata');
+    check.source = 'doi.org';
+    return { kind: 'doi', cls: 'partial', reason: 'no_metadata', check };
+  }
+  if (cnMissing && cr.state === 'missing') {
+    check.status = 'doi_not_registered';
+    check.httpStatus = 404;
+    check.note = msg(L, 'doi_not_registered');
+    check.source = 'doi.org';
+    return { kind: 'doi', cls: 'negative', reason: 'doi_not_registered', check };
+  }
+  const code = (cr.state === 'error' && cr.code) || errCode || (h.state === 'error' && h.code) || 'network_error';
+  return fromError(check, code, ctx, cr.httpStatus || errHttp || h.httpStatus);
+}
+
+// 解析頁面是整個查核唯一吃 CPU 的步驟：累計耗時，超過預算就不再解析（判為未能判定，絕不判為已查證）
+function analyzeWithBudget(check, fr, cite, ctx, origUrl) {
+  if (ctx.cpuMs >= ctx.cpuBudgetMs) {
+    check.status = 'cpu_budget';
+    check.note = msg(ctx.lang, 'cpu_budget');
+    return { kind: check.kind, cls: 'error', reason: 'cpu_budget', check };
+  }
+  const t0 = performance.now();
+  try {
+    return evaluatePage(check, analyzeFetched(fr), cite, ctx, fr, origUrl);
+  } finally {
+    ctx.cpuMs += performance.now() - t0;
+  }
+}
+
+async function checkUrl(url, cite, ctx) {
+  const check = baseCheck('url', url);
+  const fr = await safeFetch(url, ctx, pageHeaders(), MAX_PAGE_BYTES);
+  let ev;
+  if (fr.error) ev = fromError(check, fr.error, ctx, fr.httpStatus);
+  else {
+    check.httpStatus = fr.status;
+    ev = fr.ok ? analyzeWithBudget(check, fr, cite, ctx, url) : fromError(check, httpErrCode(fr.status), ctx, fr.status);
+  }
+  if (ev.cls === 'negative' && !['unsafe_url', 'invalid_url'].includes(ev.check.status)) ev = await waybackCheck(url, cite, ctx, ev);
+  return ev;
+}
+
+// 連結失效 ≠ 文獻不存在：政府機關改組（農委會→農業部、營建署→國土管理署）後舊網址大量失效。
+// 網際網路檔案館曾存檔此網址 → 網址確實存在過（捏造的路徑幾乎不可能被存檔）；存檔內容與引用相符 → 文獻存在。
+async function waybackCheck(url, cite, ctx, ev) {
+  if (ctx.expired()) return ev;
+  const r = await apiJson(`https://archive.org/wayback/available?url=${encodeURIComponent(url)}`, ctx);
+  const c = !r.error && r.json && r.json.archived_snapshots && r.json.archived_snapshots.closest;
+  if (!c || c.available !== true || String(c.status) !== '200' || !/^\d{14}$/.test(String(c.timestamp || ''))) return ev;
+  const ts = String(c.timestamp);
+  const d = `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}`;
+  let matched = false;
+  const fr = await safeFetch(`https://web.archive.org/web/${ts}id_/${url}`, ctx, pageHeaders(), MAX_PAGE_BYTES);
+  if (!fr.error && fr.ok && ctx.cpuMs < ctx.cpuBudgetMs) {
+    const t0 = performance.now();
+    try { matched = evaluatePage(baseCheck('url', url), analyzeFetched(fr), cite, ctx, fr, null).cls === 'match'; } catch (_) { /* 存檔無法解析：只算「曾存在」 */ }
+    ctx.cpuMs += performance.now() - t0;
+  }
+  const L = ctx.lang;
+  const check = { ...ev.check, archived: `https://web.archive.org/web/${ts}/${url}`,
+    note: ev.check.note + (L === 'en' ? '; ' : '；') + msg(L, matched ? 'archived_match' : 'archived_nomatch', { d }) };
+  return { ...ev, check, cls: matched ? 'partial' : 'weak', reason: matched ? 'archived_match' : 'archived', d, why: ev.check.note };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 書目搜尋（Crossref query.bibliographic ＋ OpenAlex search）
+// ═══════════════════════════════════════════════════════════════
+async function crossrefSearch(q, ctx) {
+  const base = `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(q)}&rows=3`;
+  const mt = ctx.mailto ? `&mailto=${encodeURIComponent(ctx.mailto)}` : '';
+  let r = await crossrefCall(`${base}&select=DOI,title,subtitle,author,editor,issued,type,container-title${mt}`, ctx);
+  if (r.status === 400 && !ctx.expired()) r = await crossrefCall(base + mt, ctx);  // select 欄位若被拒，改不帶 select
+  if (r.error) return { state: 'error', code: r.error };
+  const items = r.status === 200 && r.json && r.json.message && Array.isArray(r.json.message.items) ? r.json.message.items : null;
+  if (!items) return { state: 'error', code: r.status === 200 ? 'bad_metadata' : httpErrCode(r.status) };
+  return { state: 'ok', items: items.slice(0, 3).filter(x => x && typeof x === 'object').map(metaFromCrossref) };
+}
+
+async function openalexSearch(q, ctx) {
+  const url = `https://api.openalex.org/works?search=${encodeURIComponent(q)}&per_page=3` +
+    `&select=id,doi,title,display_name,publication_year,authorships,primary_location${openalexParams(ctx, false)}`;
+  const r = await apiJson(url, ctx);
+  if (r.error) return { state: 'error', code: r.error };
+  const items = r.status === 200 && r.json && Array.isArray(r.json.results) ? r.json.results : null;
+  if (!items) return { state: 'error', code: r.status === 200 ? 'bad_metadata' : httpErrCode(r.status) };
+  return { state: 'ok', items: items.slice(0, 3).filter(x => x && typeof x === 'object').map(metaFromOpenAlex) };
+}
+
+function searchQueries(cite) {
+  let full = cite.clean
+    .replace(/\b(?:retrieved|accessed)\b[^.]*?\bfrom\b/gi, ' ')
+    .replace(/(?:擷取|檢索)(?:日期|於|自)?[:：]?\s*\d{4}\s*年?[^。)]*/g, ' ')    // 擷取日期 2024 年 5 月 1 日
+    .replace(/取自|引自|檢自/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+  if (full.length > 300) full = full.slice(0, 300).replace(/\s+\S*$/, '');
+  let title = (cite.titleSure ? cite.title : full).replace(/[|"*:?!()[\]{}\\\/<>]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (title.length > 200) title = title.slice(0, 200).replace(/\s+\S*$/, '');
+  return { full, title };
+}
+
+async function searchBib(cite, ctx) {
+  const L = ctx.lang;
+  const { full, title } = searchQueries(cite);
+  const check = baseCheck('search', cite.titleSure ? cite.title : full);
+  if (!full || ctx.expired()) {
+    check.status = 'search_error';
+    check.note = msg(L, 'search_error', { why: msg(L, ctx.expired() ? 'deadline' : 'internal_error') });
+    return { cls: 'error', code: ctx.expired() ? 'deadline' : 'internal_error', check };
+  }
+  const [cr, oa] = await Promise.all([crossrefSearch(full, ctx), openalexSearch(title, ctx)]);
+  if (cr.state === 'error' && oa.state === 'error') {
+    const code = cr.code === 'deadline' || oa.code === 'deadline' ? 'deadline' : cr.code;
+    check.status = code === 'deadline' || code === 'timeout' ? 'timeout' : 'search_error';
+    check.note = msg(L, 'search_error', { why: shortErr(L, code) });
+    return { cls: 'error', code, check };
+  }
+  const cands = [];
+  for (const [src, res] of [['Crossref', cr], ['OpenAlex', oa]]) {
+    if (res.state !== 'ok') continue;
+    for (const m of res.items) {
+      if (!m.titles.length) continue;
+      const best = bestOf(m.titles, cite, true);
+      const yd = yearDiff(cite, m);
+      const yearOk = yd != null ? yd <= YEAR_TOLERANCE : best.score >= SCORE_SEARCH_NOYEAR;
+      const agree = authorsAgree(cite, m.compareNames);
+      const kd = cite.titleSure && best.score >= SCORE_MATCH ? keyTermDiff(cite.title, best.t) : [];
+      // 一般性短題名（Urban ecology、Nature-based solutions、都市生態學）：必須作者明確相符且年份相符才算強相符
+      const generic = cite.titleSure && !isDistinctive(cite.title) && !(agree === true && yd != null && yd <= YEAR_TOLERANCE);
+      const strong = cite.titleSure && best.score >= SCORE_SEARCH_STRONG && yearOk && agree !== false && !kd.length && !generic;
+      const why = strong ? null : !cite.titleSure || best.score < SCORE_SEARCH_STRONG ? (kd.length ? 'terms' : 'score')
+        : kd.length ? 'terms' : agree === false ? 'author' : !yearOk ? 'year' : generic ? 'generic' : 'score';
+      cands.push({ src, m, best, strong, why, kd });
+    }
+  }
+  cands.sort((a, b) => (b.strong - a.strong) || (b.best.score - a.best.score));
+  const top = cands[0];
+  const failed = cr.state === 'error' ? 'Crossref' : oa.state === 'error' ? 'OpenAlex' : null;
+  if (!top || top.best.score < SCORE_MATCH) {
+    check.status = 'search_none';
+    check.note = failed
+      ? msg(L, 'search_none_half', { ok: failed === 'Crossref' ? 'OpenAlex' : 'Crossref', bad: failed })
+      : msg(L, 'search_none');
+    return { cls: 'none', check };
+  }
+  check.source = top.src;
+  check.foundTitle = top.best.t;
+  check.foundYear = top.m.year;
+  check.foundAuthors = fmtAuthors(top.m.authors);
+  check.titleScore = top.best.score;
+  const suggestion = {
+    doi: top.m.doi,
+    title: top.best.t,
+    year: top.m.year,
+    url: top.m.doi ? 'https://doi.org/' + top.m.doi : top.m.url && /^https?:\/\//i.test(top.m.url) ? cleanText(top.m.url, 500) : null,
+    source: top.src,
+  };
+  if (top.strong) {
+    check.status = 'search_match';
+    check.note = msg(L, 'search_match', { src: top.src });
+    return { cls: 'strong', check, suggestion, score: top.best.score };
+  }
+  check.status = 'search_similar';
+  check.note = msg(L, { author: 'search_similar_author', year: 'search_similar_year', terms: 'search_similar_terms', generic: 'search_similar_generic' }[top.why] || 'search_similar', { src: top.src });
+  return { cls: 'similar', check, suggestion, score: top.best.score, why: top.why, kd: top.kd };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 綜合判定（保守原則：任何識別碼有誤都不給「已查證」）
+// ═══════════════════════════════════════════════════════════════
+function negShort(L, ev) {
+  const k = 'neg_' + (ev.check.status || ev.reason);
+  return MSG[k] ? msg(L, k) : ev.check.note;
+}
+
+function decide(id, evs, search, ctx) {
+  const L = ctx.lang;
+  const checks = evs.map(e => e.check).concat(search ? [search.check] : []);
+  const out = (verdict, method, summary, suggestion) => ({ id, verdict, method, checks, suggestion: suggestion || null, summary });
+  const match = evs.find(e => e.cls === 'match');
+  const doiMis = evs.find(e => e.kind === 'doi' && e.cls === 'mismatch');
+  const mis = doiMis || evs.find(e => e.cls === 'mismatch');
+  const doiNeg = evs.find(e => e.kind === 'doi' && e.cls === 'negative');
+  const neg = doiNeg || evs.find(e => e.cls === 'negative');
+  const partial = evs.find(e => e.cls === 'partial');
+  const err = evs.find(e => e.cls === 'error');
+  const weak = evs.find(e => e.cls === 'weak');
+  const sCls = search ? search.cls : null;
+  // 識別碼已證實有誤，而搜尋只找到「同名但題名過於一般」的著作 → 不足以推翻，判查無
+  if (sCls === 'similar' && search.why === 'generic' && neg) return out('not_found', neg.kind, msg(L, 'S_nf_generic', { neg: neg.check.note, ft: search.check.foundTitle || '?' }));
+  const citedDois = new Set(evs.filter(e => e.kind === 'doi').map(e => e.check.target));
+  const sug = (sCls === 'strong' || sCls === 'similar') && !(search.suggestion.doi && citedDois.has(search.suggestion.doi)) ? search.suggestion : null;
+  const sugWhat = (s) => {
+    const head = L === 'en' ? `“${s.title}”${s.year ? ` (${s.year})` : ''}` : `「${s.title}」${s.year ? `（${s.year}）` : ''}`;
+    const link = s.doi ? 'https://doi.org/' + s.doi : s.url;
+    return link ? `${head}${L === 'en' ? ', ' : '，'}${link}` : head;
+  };
+  const sugText = sug ? msg(L, sCls === 'strong' ? 'S_sug' : 'S_sug_possible', { what: sugWhat(sug) }) : '';
+  const fyText = (y) => (y ? (L === 'en' ? ` (${y})` : `（${y}）`) : '');
+
+  if (match) {
+    if (doiMis) return out('mismatch', 'doi', msg(L, 'S_mis_doi_url_ok', { ft: doiMis.check.foundTitle || '?' }) + sugText, sug);
+    if (doiNeg) return out('partial', match.kind, msg(L, 'S_part_doi_bad_src_ok') + sugText, sug);
+    if (mis) return out('partial', match.kind, msg(L, 'S_part_url_mixed', { ft: mis.check.foundTitle || '?' }), null);
+    const s = match.check.titleScore != null ? match.check.titleScore.toFixed(2) : '–';
+    let summary;
+    if (match.kind === 'doi') summary = match.how === 'landing' ? msg(L, 'S_ver_doi_landing') : msg(L, 'S_ver_doi', { src: match.check.source || 'Crossref', s });
+    else summary = msg(L, match.how === 'pdf' ? 'S_ver_url_pdf' : match.how === 'text' ? 'S_ver_url_text' : 'S_ver_url_meta', { s });
+    if (neg) summary += msg(L, 'S_add_dead', { why: neg.check.note });   // 例如另一個網址 404：仍屬已查證，但點出失效連結
+    // 網頁本身標示了 DOI，而引用沒附 DOI → 建議補上
+    const pageSug = match.kind === 'url' && match.pageDoi && !citedDois.size
+      ? { doi: match.pageDoi, title: match.check.foundTitle, year: match.check.foundYear, url: 'https://doi.org/' + match.pageDoi, source: 'citation_doi' }
+      : null;
+    return out('verified', match.kind, summary, pageSug);
+  }
+  if (mis) {
+    const key = mis.kind === 'doi' ? 'S_mis_doi' : 'S_mis_url';
+    return out('mismatch', mis.kind, msg(L, key, { ft: mis.check.foundTitle || '?', fy: fyText(mis.check.foundYear) }) + sugText, sug);
+  }
+  if (partial) {
+    const p = partial.check;
+    const keys = {
+      year: 'S_part_year', author: 'S_part_author', grey: 'S_part_grey', title_unsure: 'S_part_title_unsure',
+      cross_lang: 'S_part_cross_lang', pdf: 'S_part_pdf', js_only: 'S_part_js_only', not_in_page: 'S_part_not_in_page', moved: 'S_part_moved', home_mentions: 'S_part_home_mentions',
+      no_metadata: 'S_part_no_metadata', filetype: 'S_part_filetype',
+      terms: 'S_part_terms', biblio: 'S_part_biblio', archived_match: 'S_part_archived', notice: 'S_part_notice',
+    };
+    let summary = msg(L, keys[partial.reason] || 'S_part_grey', {
+      cy: partial.cy, fy: partial.fy, fa: p.foundAuthors || '?', s: p.titleScore != null ? p.titleScore.toFixed(2) : '–',
+      c: partial.kc, f: partial.kf, vol: partial.vol, pg: partial.pg, d: partial.d, why: partial.why, ft: partial.ft,
+    });
+    if (doiNeg) summary += msg(L, 'S_add_doi_bad');
+    return out('partial', partial.kind, summary + sugText, sug);
+  }
+  if (sCls === 'strong') {
+    if (neg) return out('partial', 'search', msg(L, 'S_part_exists_bad_id', { src: search.check.source, why: negShort(L, neg) }), sug);
+    const s = search.suggestion;
+    const summary = msg(L, 'S_ver_search', {
+      pre: err ? msg(L, 'S_pre_err') : evs.length ? '' : msg(L, 'S_pre_noid'),
+      src: search.check.source,
+      s: search.score.toFixed(2),
+      yr: s.year ? (L === 'en' ? `, ${s.year}` : `、${s.year} 年`) : '',
+      add: s.doi ? msg(L, 'S_add_doi', { doi: 'https://doi.org/' + s.doi }) : '',
+    });
+    return out('verified', 'search', summary, sug);
+  }
+  if (sCls === 'similar') {
+    const s = search.score.toFixed(2);
+    if (err && !neg) return out('inconclusive', err.kind, msg(L, 'S_inconc', { why: err.check.note }) + sugText, sug);
+    const pre = neg ? msg(L, 'S_unv_pre_neg', { neg: negShort(L, neg) }) : evs.length ? '' : msg(L, 'S_unv_pre_noid');
+    const key = { author: 'S_unv_similar_author', year: 'S_unv_similar_year', terms: 'S_unv_similar_terms', generic: 'S_unv_similar_generic' }[search.why] || 'S_unv_similar';
+    const kd0 = search.kd && search.kd[0];
+    return out('unverifiable', 'search', msg(L, key, { pre, s, fa: search.check.foundAuthors || '?', fy: search.check.foundYear || '?', c: kd0 ? kd0.cited : '?', f: kd0 ? kd0.found : '?' }),
+      search.why === 'generic' ? null : sug);
+  }
+  if (neg) {
+    if (sCls === 'none') return out('not_found', neg.kind, msg(L, 'S_nf', { neg: neg.check.note }));
+    if (doiNeg) return out('not_found', 'doi', msg(L, 'S_nf_nosearch'));
+    return out('inconclusive', neg.kind, msg(L, 'S_inconc_neg_search', { neg: neg.check.note }));
+  }
+  if (weak) {
+    if (weak.reason === 'archived') return out('unverifiable', 'url', msg(L, 'S_unv_archived', { why: weak.why, d: weak.d }));
+    if (!err) return out('unverifiable', 'url', msg(L, 'S_unv_home'));
+  }
+  if (err) return out('inconclusive', err.kind, msg(L, 'S_inconc', { why: err.check.note }));
+  if (sCls === 'none') return out('unverifiable', 'search', msg(L, 'S_unv_none'));
+  if (sCls === 'error') return out('inconclusive', 'search', msg(L, 'S_inconc', { why: search.check.note }));
+  return out('unverifiable', 'none', msg(L, 'S_unv_nothing'));
+}
+
+function isbnInvalid(text) {
+  const m = String(text || '').normalize('NFKC').match(/ISBN(?:-1[03])?\s*[:：]?\s*([0-9][0-9\- ]{8,16}[0-9Xx])\b/);
+  if (!m) return null;
+  const d = m[1].replace(/[\s-]/g, '').toUpperCase();
+  if (d.length === 13 && /^\d{13}$/.test(d)) {
+    const s = [...d].reduce((a, x, i) => a + Number(x) * (i % 2 ? 3 : 1), 0);
+    return s % 10 === 0 ? null : m[1].trim();
+  }
+  if (d.length === 10 && /^\d{9}[\dX]$/.test(d)) {
+    const s = [...d].reduce((a, x, i) => a + (x === 'X' ? 10 : Number(x)) * (10 - i), 0);
+    return s % 11 === 0 ? null : m[1].trim();
+  }
+  return null;
+}
+
+async function verifyRef(ref, ctx) {
+  if (ctx.expired()) {
+    return { id: ref.id, verdict: 'inconclusive', method: 'none', checks: [], suggestion: null, summary: msg(ctx.lang, 'S_deadline') };
+  }
+  const cite = parseCitation(ref.text);
+  const { dois, urls } = collectIdentifiers(ref);
+  const evs = [];
+  // 1. DOI（最權威）；相符即停止
+  for (const doi of dois) {
+    const ev = await checkDoi(doi, cite, ctx);
+    evs.push(ev);
+    if (ev.cls === 'match') break;
+  }
+  const doiMatched = evs.some(e => e.kind === 'doi' && e.cls === 'match');
+  // 2. 網址；DOI 已相符時仍檢查其他網址是否失效（只記錄失效，不影響已查證）
+  for (const u of urls) {
+    const ev = await checkUrl(u, cite, ctx);
+    if (doiMatched) { if (ev.cls === 'negative') evs.push(ev); continue; }
+    evs.push(ev);
+    if (ev.cls === 'match') break;
+  }
+  // ISBN 檢查碼：捏造的 ISBN 常常檢查碼錯誤
+  const isbn = isbnInvalid(ref.text);
+  if (isbn) {
+    const check = baseCheck('search', 'ISBN ' + isbn);
+    check.status = 'isbn_invalid';
+    check.note = msg(ctx.lang, 'isbn_invalid', { isbn });
+    evs.push({ kind: 'search', cls: 'negative', reason: 'isbn_invalid', check });
+  }
+  // 3. 書目搜尋：未相符、或 DOI 有誤（需找出正確版本）時才搜尋
+  const urlMatched = evs.some(e => e.kind === 'url' && e.cls === 'match');
+  const doiFlawed = evs.some(e => e.kind === 'doi' && (e.cls === 'negative' || e.cls === 'mismatch'));
+  // DOI 已確認是這篇著作（題名相符，只是年份或作者不符）→ 搜尋只會找到同一筆，省下查詢額度
+  const doiIdentified = evs.some(e => e.kind === 'doi' && e.cls === 'partial' && (e.reason === 'year' || e.reason === 'author'));
+  let search = null;
+  if (!doiMatched && !doiIdentified && (!urlMatched || doiFlawed)) search = await searchBib(cite, ctx);
+  return decide(ref.id, evs, search, ctx);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 請求驗證
+// ═══════════════════════════════════════════════════════════════
+async function readBodyCapped(request, max) {
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) { reader.cancel().catch(() => {}); return null; }
+    chunks.push(value);
+  }
+  const buf = new Uint8Array(n);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+  return new TextDecoder().decode(buf);
+}
+
+function validateRefs(refs, L) {
+  if (!Array.isArray(refs) || refs.length === 0) return { status: 400, error: msg(L, 'no_refs'), code: 'NO_REFS' };
+  if (refs.length > MAX_REFS) return { status: 413, error: msg(L, 'too_many_refs', { n: refs.length, max: MAX_REFS }), code: 'TOO_MANY_REFS' };
+  const ids = new Set();
+  const out = [];
+  for (let i = 0; i < refs.length; i++) {
+    const r = refs[i];
+    const bad = (why) => ({ status: 400, error: msg(L, 'bad_ref', { i: i + 1, why }), code: 'BAD_REF' });
+    if (!r || typeof r !== 'object' || Array.isArray(r)) return bad('not an object');
+    if (typeof r.id !== 'string' || !/^[A-Za-z0-9_.:-]{1,64}$/.test(r.id)) return bad('id');
+    if (ids.has(r.id)) return bad('duplicate id');
+    ids.add(r.id);
+    if (typeof r.text !== 'string' || !r.text.trim()) return bad('text');
+    if (r.text.length > HARD_TEXT_CHARS) return { status: 413, error: msg(L, 'bad_ref', { i: i + 1, why: 'text too long' }), code: 'TEXT_TOO_LONG' };
+    for (const k of ['urls', 'dois']) {
+      if (r[k] == null) continue;
+      if (!Array.isArray(r[k]) || r[k].length > MAX_LIST_ITEMS || r[k].some(x => typeof x !== 'string' || x.length > MAX_URL_CHARS)) return bad(k);
+    }
+    out.push({
+      id: r.id,
+      text: r.text.trim().slice(0, MAX_TEXT_CHARS),
+      urls: (r.urls || []).slice(0, MAX_URLS_PER_REF),
+      dois: (r.dois || []).slice(0, MAX_DOIS_PER_REF),
+    });
+  }
+  return { refs: out };
+}
+
+function makeCtx(lang) {
+  const mailtoRaw = (Deno.env.get('VERIFY_MAILTO') || '').trim();
+  const mailto = /^[^\s@<>()"]+@[^\s@<>()"]+\.[^\s@<>()"]+$/.test(mailtoRaw) ? mailtoRaw : '';
+  const totalMs = envInt('VERIFY_TOTAL_TIMEOUT_MS', TOTAL_TIMEOUT_MS, 200, TOTAL_TIMEOUT_MS);
+  const ac = new AbortController();
+  const ctx = {
+    lang,
+    mailto,
+    openalexKey: (Deno.env.get('VERIFY_OPENALEX_KEY') || '').trim(),
+    apiUa: mailto ? UA.replace(/\)$/, `; mailto:${mailto})`) : UA,
+    upstreamMs: envInt('VERIFY_UPSTREAM_TIMEOUT_MS', UPSTREAM_TIMEOUT_MS, 50, UPSTREAM_TIMEOUT_MS),
+    deadline: Date.now() + totalMs,
+    signal: ac.signal,
+    reason: null,
+    cancelled: false,
+    crossref: semaphore(mailto ? 3 : 2),
+    cpuMs: 0,
+    cpuBudgetMs: envInt('VERIFY_CPU_BUDGET_MS', CPU_BUDGET_MS, 0, 1000),
+    cancel(reason) {
+      if (reason === 'client') ctx.cancelled = true;   // 期限到了之後才斷線，也要停止
+      if (ctx.reason) return;
+      ctx.reason = reason;
+      ac.abort(new DOMException(reason, 'AbortError'));
+    },
+    expired() { return ctx.reason != null || Date.now() >= ctx.deadline; },
+  };
+  ctx.timer = setTimeout(() => ctx.cancel('deadline'), totalMs);
+  return ctx;
+}
+
+export default async (request) => {
+  if (request.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'POST, OPTIONS',
+        'access-control-allow-headers': 'content-type',
+      },
+    });
+  }
+  if (request.method !== 'POST') return json(405, { error: msg('zh', 'bad_method'), code: 'METHOD_NOT_ALLOWED' });
+
+  const PASSCODE = Deno.env.get('QI_PASSCODE');
+
+  const declared = Number(request.headers.get('content-length') || 0);
+  if (declared > MAX_BODY_BYTES) return json(413, { error: msg('zh', 'body_too_large'), code: 'BODY_TOO_LARGE' });
+  let raw;
+  try { raw = await readBodyCapped(request, MAX_BODY_BYTES); } catch (_) { raw = undefined; }
+  if (raw === null) return json(413, { error: msg('zh', 'body_too_large'), code: 'BODY_TOO_LARGE' });
+  let body;
+  try { body = JSON.parse(raw); } catch (_) { return json(400, { error: msg('zh', 'bad_json'), code: 'BAD_JSON' }); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return json(400, { error: msg('zh', 'bad_body'), code: 'BAD_BODY' });
+  const L = body.lang === 'en' ? 'en' : 'zh';
+
+  // ── 通行碼驗證（與 analyze 相同）──
+  if (PASSCODE) {
+    const given = String(body.passcode || '').trim();
+    if (!given) return json(401, { error: msg(L, 'passcode_required'), code: 'PASSCODE_REQUIRED' });
+    if (given !== PASSCODE) return json(401, { error: msg(L, 'passcode_invalid'), code: 'PASSCODE_INVALID' });
+  }
+
+  const v = validateRefs(body.refs, L);
+  if (v.error) return json(v.status, { error: v.error, code: v.code });
+
+  const started = Date.now();
+  const ctx = makeCtx(L);
+  const enc = new TextEncoder();
+  const stats = { verified: 0, partial: 0, mismatch: 0, not_found: 0, unverifiable: 0, inconclusive: 0 };
+  if (request.signal && typeof request.signal.addEventListener === 'function') {
+    request.signal.addEventListener('abort', () => ctx.cancel('client'), { once: true });
+  }
+
+  const stream = new ReadableStream({
+    start(controller) {
+      const emit = (obj) => {
+        if (ctx.cancelled) return;
+        try { controller.enqueue(enc.encode(JSON.stringify(obj) + '\n')); } catch (_) { ctx.cancel('client'); }
+      };
+      let next = 0;
+      const worker = async () => {
+        while (!ctx.cancelled) {
+          const i = next++;
+          if (i >= v.refs.length) return;
+          const ref = v.refs[i];
+          let res;
+          try { res = await verifyRef(ref, ctx); } catch (_) {
+            res = { id: ref.id, verdict: 'inconclusive', method: 'none', checks: [], suggestion: null, summary: msg(L, 'S_internal') };
+          }
+          if (ctx.cancelled) return;
+          if (!VERDICTS.includes(res.verdict)) res.verdict = 'inconclusive';
+          stats[res.verdict]++;
+          emit(res);
+        }
+      };
+      Promise.all(Array.from({ length: Math.min(REF_CONCURRENCY, v.refs.length) }, worker)).catch(() => {
+        /* 個別查核的錯誤已在 worker 內處理；這裡只確保最後一行一定送出 */
+      }).then(() => {
+        clearTimeout(ctx.timer);
+        if (ctx.cancelled) return;
+        emit({ done: true, stats: { ...stats, ms: Date.now() - started } });
+        try { controller.close(); } catch (_) { /* 用戶端已斷線 */ }
+      });
+    },
+    cancel() {
+      clearTimeout(ctx.timer);
+      ctx.cancel('client');   // 用戶端斷線：中止所有進行中的請求，不再開始新的查核
+    },
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      'x-accel-buffering': 'no',
+      'x-content-type-options': 'nosniff',
+      'access-control-allow-origin': '*',
+    },
+  });
+};
+
+export const config = { path: '/api/verify' };
