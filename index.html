@@ -313,6 +313,12 @@
   .result-error { padding: 14px 16px; background: var(--clay-pale); border: 1px solid var(--clay); border-left: 4px solid var(--clay); border-radius: 3px; color: #5a2810; font-family: var(--serif); font-size: 13px; line-height: 1.65; margin: 14px 0; }
   .result-error strong { color: var(--clay); }
   .result-error code { background: rgba(255,255,255,0.6); padding: 1px 5px; border-radius: 2px; font-family: ui-monospace, monospace; font-size: 11.5px; }
+  /* 參考文獻查證進度／結果（頁面上，不寫進報告） */
+  .verify-status { padding: 9px 14px; margin: 0 0 12px; background: var(--moss-pale); border: 1px solid var(--moss-light); border-left: 4px solid var(--moss); border-radius: 3px; color: var(--ink); font-family: var(--serif); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+  .verify-status.is-warn { background: var(--gold-pale); border-color: var(--clay-light); border-left-color: var(--clay); color: #5a2810; }
+  .verify-status.is-err { background: var(--clay-pale); border-color: var(--clay); border-left-color: var(--clay); color: #5a2810; }
+  .verify-status.is-run::before { content: ''; display: inline-block; width: 11px; height: 11px; margin-right: 8px; vertical-align: -1px; border: 2px solid var(--border); border-top-color: var(--moss); border-radius: 50%; animation: qi-spin 0.8s linear infinite; }
+  .result-actions .btn[disabled] { opacity: 0.55; cursor: progress; }
 
   /* Paste-back modal */
   .paste-modal { position: fixed; inset: 0; background: rgba(31, 45, 34, 0.55); display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 20px; backdrop-filter: blur(2px); }
@@ -325,6 +331,8 @@
   /* History — has-result badge */
   .history-item.has-result { border-left-color: var(--clay); }
   .history-result-badge { display: inline-block; font-size: 10px; padding: 1px 7px; background: var(--clay); color: white; border-radius: 999px; margin-left: 6px; vertical-align: middle; letter-spacing: 0.05em; }
+  .history-vf-badge { display: inline-block; font-size: 10px; padding: 0 7px; border: 1px solid var(--moss); color: var(--moss); background: var(--paper); border-radius: 999px; margin-left: 6px; vertical-align: middle; white-space: nowrap; }
+  .history-vf-badge.has-bad { border-color: var(--clay); color: var(--clay); }
 
   /* Visually hidden file input */
   .file-input-hidden { display: none; }
@@ -703,8 +711,10 @@
         <button class="btn btn-secondary" id="downloadPdfBtn">🖨 列印 PDF</button>
         <button class="btn btn-ghost" id="openResultBtn">↗ 新分頁開啟</button>
         <button class="btn btn-ghost" id="copyResultBtn">📋 複製原始碼</button>
+        <button class="btn btn-ghost" id="verifyRefsBtn" title="以 Crossref／DOI、書目資料庫與引用網頁，查證每筆參考文獻是否真實存在、書目是否相符">🔎 查證文獻</button>
         <button class="btn btn-ghost" id="closeResultBtn">✕ 收起預覽</button>
       </div>
+      <div id="verifyStatus" class="verify-status" role="status" aria-live="polite" style="display:none;"></div>
       <div id="resultNotice" class="result-notice" role="status" style="display:none;"></div>
       <!-- 不給 allow-same-origin：報告在獨立的不透明來源中執行，讀不到本頁的通行碼與 localStorage -->
       <iframe id="resultFrame" class="result-frame" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
@@ -984,6 +994,28 @@
     '↗ 新分頁開啟': '↗ Open in new tab',
     '📋 複製原始碼': '📋 Copy source',
     '✕ 收起預覽': '✕ Hide preview',
+    '🔎 查證文獻': '🔎 Verify references',
+    '以 Crossref／DOI、書目資料庫與引用網頁，查證每筆參考文獻是否真實存在、書目是否相符':
+      'Check every reference against Crossref/DOI, a bibliographic database and the cited web page: does it exist, and does the citation match?',
+    '🔎 查證中…請稍候': '🔎 Verification in progress — please wait',
+    '⚠️ 尚無報告可查證': '⚠️ There is no report to verify yet',
+    '⚠️ 報告中找不到參考文獻清單，無法查證': '⚠️ No reference list was found in this report, so there is nothing to verify',
+    '❌ 查證需要通行碼：請在上方「🔑 通行碼」欄位輸入後，再按「🔎 查證文獻」':
+      '❌ Verification needs the passcode: enter it in the "🔑 PASSCODE" field above, then press "🔎 Verify references"',
+    '🔒 查證需要通行碼：請在上方「🔑 通行碼」欄位輸入授課教師提供的通行碼，再按「🔎 查證文獻」。報告內容不受影響。':
+      '🔒 Verification needs the passcode: enter the passcode from your instructor in the "🔑 PASSCODE" field above, then press "🔎 Verify references". The report itself is unaffected.',
+    '🔒 通行碼不正確，無法查證文獻：請確認通行碼（注意大小寫與前後空白）後，再按「🔎 查證文獻」。報告內容不受影響。':
+      '🔒 Incorrect passcode, so the references could not be verified. Check the passcode (capitalisation, stray spaces), then press "🔎 Verify references". The report itself is unaffected.',
+    'ℹ️ 文獻查證服務尚未啟用（/api/verify 回應 404）。報告內容不受影響；請逐筆人工查證參考文獻。':
+      'ℹ️ The reference-verification service is not available (/api/verify returned 404). The report itself is unaffected; check the references by hand.',
+    '⚠️ 參考文獻筆數超過查證服務上限（HTTP 413）。報告內容不受影響。':
+      '⚠️ Too many references for the verification service (HTTP 413). The report itself is unaffected.',
+    '⚠️ 查證服務暫時忙碌（HTTP 429），請 1–2 分鐘後再按「🔎 查證文獻」。報告內容不受影響。':
+      '⚠️ The verification service is busy (HTTP 429). Wait 1–2 minutes, then press "🔎 Verify references". The report itself is unaffected.',
+    '⚠️ 無法連上文獻查證服務（網路中斷或逾時）。報告內容不受影響；可稍後按「🔎 查證文獻」重試。':
+      '⚠️ Could not reach the reference-verification service (network error or timeout). The report itself is unaffected; press "🔎 Verify references" to try again later.',
+    '參考文獻查證結果': 'Reference verification',
+    '已取消先前的查證': 'Previous verification cancelled',
 
     // ── History ──
     '歷史紀錄': 'History',
@@ -1497,6 +1529,7 @@
         throw new Error(`HTTP ${res.status}${errDetail ? ' · ' + errDetail : ''}`);
       }
       const data = await res.json();
+      data.__fetchedAt = new Date().toISOString();   // 擷取時間：寫進報告的「資料來源」
       inatCache[cacheKey] = data;
       renderInat(data);
     } catch (e) {
@@ -1536,6 +1569,7 @@
       radius: radius,
       quality: document.getElementById('inatQuality').value,
       taxon: document.getElementById('inatTaxon').value,
+      fetchedAt: data.__fetchedAt || null,
       topSpecies: data.results.slice(0, 20).map(r => ({
         name: r.taxon?.preferred_common_name || r.taxon?.name || 'Unknown',
         sci: r.taxon?.name || '',
@@ -1730,6 +1764,7 @@ out tags center;`;
       }
 
       const data = await res.json();
+      data.__fetchedAt = new Date().toISOString();   // 擷取時間：寫進報告的「資料來源」
       osmCache[cacheKey] = data;
       renderOsm(data, radius);
     } catch (e) {
@@ -1774,6 +1809,7 @@ out tags center;`;
     osmLastSummary = {
       radius: radius,
       total: data.elements.length,
+      fetchedAt: data.__fetchedAt || null,
       protectedAreas: categorized.protected.filter(p => p.name).slice(0, 5),
       protectedCount: categorized.protected.length,
       water: categorized.water.filter(w => w.name).slice(0, 8),
@@ -2294,10 +2330,10 @@ ${o.exEn}
         en: `5 Design measures: a table of ≤8 rows with columns measure | location (zone, or "section-stratum" such as "A-Bank shrubs") | links (R# · target species) | spec / numbers (e.g. culvert ≥1.2 m, lighting ≤2700 K and aimed downward, closed during breeding Mar–Jun) | material / method & cautions. Cells ≤18 words. Every row traces to a matrix row or a zone. No generic principles without a site-specific number or target (e.g. "use native plants", "maintain connectivity"). Fill in materials only where a measure needs one, and cite (Author, Year) for non-obvious claims about toxicity, durability or ecological benefit.` },
       { zh: `6 參考案例：至多 3 個經本次搜尋查證的真實案例，以一張表呈現：案例（地點・年份）｜對應問題／物種／棲地｜可移植做法（≤40 字）｜URL（以可見文字列出完整網址）。可查證者不足 3 個時只列已查證者並註明，不得以未查證案例湊數；不寫案例敘述。`,
         en: `6 Case references: up to 3 real cases verified in this session's searches, in one table: case (place · year) | matching issue / species / habitat | transferable technique (≤25 words) | URL (full address as visible text). If fewer than 3 can be verified, list only those and say so; never pad with unverified cases. No case narratives.` },
-      { zh: `7 參考文獻：<ul class="refs"> 單一 APA 7 清單，不分類（中文依第一作者筆畫排在前，英文依字母排在後）。只列正文實際引用者，且正文每筆引用都須列出；目標 ≤15 筆，不為湊數增列。每筆末加標籤［政府］［期刊］［書籍］［資料庫］［NGO］［媒體］；優先列 DOI，否則以可見文字列完整 URL；GBIF、IUCN、TBN、iNaturalist、OSM 等動態資料庫須註明擷取日期；若使用了上方的 iNaturalist／OSM 脈絡，須列為資料來源。`,
-        en: `7 References: one APA 7 list in <ul class="refs">, alphabetical and not grouped. List only works cited in the text, and every in-text citation must appear here; target ≤15 entries, never padded. End each entry with a tag [Gov] [Journal] [Book] [Database] [NGO] [Media]. Prefer a DOI, otherwise give the full URL as visible text. Dynamic databases (GBIF, IUCN, TBN, iNaturalist, OSM) include a retrieval date. If the iNaturalist/OSM context above was used, cite it as a data source.` },
-      { zh: `〔檢索聲明〕報告最後一行 <p class="note">：「資料檢索日期：${o.today}｜以網路搜尋取得並核對 N 筆來源｜未能查證：…（無則寫「無」）｜未經現地調查，施工前請現地確認。」不要另做定稿前的重檢搜尋。`,
-        en: `[Retrieval note] The last line of the report, <p class="note">: "Sources retrieved ${o.today} via web search; N sources checked | Not verified: … (or "none") | Not field-verified; confirm on site before construction." Do not run a separate round of re-check searches.` },
+      { zh: `7 參考文獻：<ul class="refs"> 單一 APA 7 清單，不分類（中文依第一作者筆畫排在前，英文依字母排在後）。只列正文實際引用者，且正文每筆引用都須列出；正文與清單的作者名稱與年份（含 2020a 等字尾）須完全相同。目標 ≤15 筆，不為湊數增列。有 DOI 者一律以 https://doi.org/… 列出；無 DOI 者以可見文字列出本次搜尋實際取得的完整 URL；書籍加註出版者（已知時加 ISBN）。不得編造或推測 DOI、URL：查不到就省略識別碼，並在該筆末加［未查證］。每筆末加標籤［政府］［期刊］［書籍］［資料庫］［NGO］［媒體］；GBIF、IUCN、TBN、iNaturalist、OSM 等動態資料庫須註明擷取日期；若使用了上方的 iNaturalist／OSM 脈絡，須列為資料來源。本工具會以 Crossref／DOI 註冊資料與所列網頁逐筆查證，編造或書目不符的文獻都會被標示出來。`,
+        en: `7 References: one APA 7 list in <ul class="refs">, alphabetical and not grouped. List only works cited in the text, and every in-text citation must appear here, with exactly the same author name and year (including suffixes such as 2020a) in both places; target ≤15 entries, never padded. Give the DOI as https://doi.org/… whenever one exists; otherwise give, as visible text, the full URL actually retrieved in this session's searches. Books add the publisher (and the ISBN if known). Never invent or guess a DOI or URL: if you cannot find one, omit it and end the entry with [unverified]. End each entry with a tag [Gov] [Journal] [Book] [Database] [NGO] [Media]. Dynamic databases (GBIF, IUCN, TBN, iNaturalist, OSM) include a retrieval date. If the iNaturalist/OSM context above was used, cite it as a data source. The tool checks every reference against Crossref/DOI records and the cited page, so fabricated or mismatched references will be flagged.` },
+      { zh: `〔檢索聲明〕報告最後一行 <p class="note">：「資料檢索日期：${o.today}｜網路搜尋 N 次｜未能查證：…（列出無法以搜尋結果確認的陳述或文獻，無則寫「無」）｜未經現地調查，施工前請現地確認。」N 為實際進行的搜尋次數。不要另做定稿前的重檢搜尋。`,
+        en: `[Retrieval note] The last line of the report, <p class="note">: "Sources retrieved ${o.today} | N web searches | Not verified: … (claims or references you could not confirm from the search results, or "none") | Not field-verified; confirm on site before construction." N is the number of searches you actually ran. Do not run a separate round of re-check searches.` },
     ];
   }
 
@@ -2554,7 +2590,7 @@ ${REPORT_RULES_ZH}`;
       item.className = 'history-item' + (e.htmlResult ? ' has-result' : '');
       const date = new Date(e.ts);
       const dateStr = `${date.getMonth()+1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;
-      const resultBadge = e.htmlResult ? `<span class="history-result-badge">${e.partial ? '📄 部分結果' : '📄 含結果'}</span>` : '';
+      const resultBadge = e.htmlResult ? `<span class="history-result-badge">${e.partial ? '📄 部分結果' : '📄 含結果'}</span>` + (e.htmlResult ? historyVerifyBadge(e.verification) : '') : '';
       item.innerHTML = `
         <div class="history-head">
           <span class="history-loc">${escapeHtml(e.name || `(${e.lat}, ${e.lon})`)}${resultBadge}</span>
@@ -2580,7 +2616,7 @@ ${REPORT_RULES_ZH}`;
         const entry = arr[+btn.dataset.idx];
         if (entry.htmlResult) {
           analysisMeta = null;
-          showResult(entry.htmlResult);
+          showResult(entry.htmlResult, { ts: entry.ts, meta: entry.meta ? compactMeta(entry.meta) : legacyMeta(entry) });
           toast(t('📄 已載入歷史結果'));
         }
       };
@@ -2644,7 +2680,9 @@ ${REPORT_RULES_ZH}`;
           (x.special == null || typeof x.special === 'string') && (x.htmlResult == null || typeof x.htmlResult === 'string'))
           .map(x => ({ ts: x.ts, lat: x.lat, lon: x.lon, name: x.name || '', species: x.species, conditions: x.conditions,
             habitatNeeds: x.habitatNeeds || [], special: x.special || '', ...(x.htmlResult ? { htmlResult: x.htmlResult, htmlSavedAt: typeof x.htmlSavedAt === 'string' ? x.htmlSavedAt : x.ts } : {}),
-            ...(x.partial === true ? { partial: true } : {}) }));
+            ...(x.partial === true ? { partial: true } : {}),
+            ...(x.meta && compactMeta(x.meta) ? { meta: compactMeta(x.meta) } : {}),
+            ...(x.verification && compactVerification(x.verification) ? { verification: compactVerification(x.verification) } : {}) }));
         const skipped = data.length - valid.length;
         const arr = loadHistory();
         const merged = [...valid, ...arr];
@@ -2819,6 +2857,52 @@ ${REPORT_RULES_ZH}`;
   const REPORT_MARK = 'heals-report-v2';
   const INCOMPLETE_MARK = '<meta name="heals-incomplete" content="1">';
   const REPORT_FONTS = 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Noto+Serif+TC:wght@400;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap';
+  // 參考文獻查證的樣式（徽章、查證段落、來源清單）。內含於 REPORT_CSS；
+  // 舊報告（樣式表裡沒有這段）查證時另以 <style id="heals-vf-style"> 補上。不加 .heals-doc 前綴，舊格式文件也適用。
+  // 列印友善：不靠底色區分（列印預設不印背景），以文字色、框線樣式與符號區分。
+  const VF_CSS_MARK = '/*heals-vf*/';
+  const VF_CSS = `${VF_CSS_MARK}
+.vf{display:inline-block;margin:0 0 0 6px;padding:0 6px;border:1px solid #456238;border-radius:3px;background:#fffdf7;color:#456238;font-family:'Noto Sans TC',sans-serif;font-size:11px;font-weight:600;font-style:normal;line-height:1.6;text-indent:0;white-space:nowrap;vertical-align:baseline}
+.vf.vf-warn{color:#b8694a;border-color:#b8694a;border-style:dashed}
+.vf.vf-bad{color:#b8694a;border:1.5px solid #b8694a;font-weight:700}
+.vf.vf-unk{color:#6b6e6a;border-color:#d4cdb8;border-style:dotted}
+.vf-detail{display:block;margin:2px 0 0;text-indent:0;font-family:'Noto Sans TC',sans-serif;font-size:11.5px;line-height:1.55;color:#6b6e6a;overflow-wrap:anywhere}
+.vf-detail b{color:#b8694a;font-weight:600}
+.vf-x{margin-left:4px;font-family:'Noto Sans TC',sans-serif;font-size:11px;color:#b8694a;white-space:nowrap;text-indent:0}
+section.verification{display:block;margin:34px 0 0;padding-top:2px;border-top:2px solid #456238}
+section.verification h2{margin-top:14px}
+section.verification h3{margin:18px 0 6px}
+section.verification p,section.verification li{font-family:'Noto Sans TC',sans-serif;font-size:13px;line-height:1.65}
+section.verification .vf-lead{margin:0 0 8px}
+section.verification .vf-scope{margin:0 0 12px;padding:8px 12px;background:#fffdf7;border:1px solid #d4cdb8;border-left:3px solid #456238;font-size:12px;color:#2e2a22}
+section.verification table.vf-table{font-size:12px}
+section.verification table.vf-table td:first-child,section.verification table.vf-table th:first-child{width:2.2em;white-space:nowrap;text-align:right}
+section.verification table.vf-table td:nth-child(3),section.verification table.vf-table td:nth-child(4){white-space:nowrap}
+section.verification table.vf-table .vf{margin-left:0}
+section.verification .vf-sub{display:block;margin-top:3px;font-size:11px;line-height:1.5;color:#6b6e6a}
+section.verification ul.vf-list{margin:4px 0 12px;padding-left:1.2em}
+section.verification ul.vf-list>li{margin-bottom:6px}
+section.verification .vf-okline{color:#456238}
+section.verification .vf-badline{color:#b8694a}
+section.verification details.vf-sources{margin:6px 0 0}
+section.verification details.vf-sources>summary{cursor:pointer;color:#456238;font-size:12.5px}
+section.verification ol.vf-src{margin:6px 0 0;padding-left:1.7em;font-size:12px;line-height:1.55}
+section.verification ol.vf-src>li{margin:0 0 7px;overflow-wrap:anywhere}
+section.verification .vf-host{color:#6b6e6a;font-size:11px}
+section.verification .vf-star{color:#456238;font-weight:700;font-size:11px;white-space:nowrap}
+section.verification ul.vf-q{list-style:none;margin:3px 0 0;padding:0 0 0 10px;border-left:2px solid #d4cdb8}
+section.verification ul.vf-q>li{margin:2px 0;font-size:11.5px;color:#6b6e6a;font-style:italic}
+@media (max-width:600px){
+ .heals-doc section.verification table.vf-table td:first-child,.heals-doc section.verification table.vf-table th:first-child{min-width:0}
+ .heals-doc section.verification table.vf-table td:nth-child(2){min-width:10em}
+ .heals-doc section.verification table.vf-table td:nth-child(5){min-width:13em}
+}
+@media print{
+ .vf,.vf.vf-bad{border-width:1px}
+ section.verification{break-before:auto}
+ section.verification tr{break-inside:avoid;page-break-inside:avoid}
+}
+`;
   // 列印友善的唯一樣式表：背景只用 #faf6ea／#fffdf7／#ffffff／#ede4cc（表頭），
   // 內文 #2e2a22、標題 moss #456238、強調 clay #b8694a、線條 #d4cdb8／#456238。
   const REPORT_CSS = `<style id="heals-report-style">
@@ -2880,7 +2964,7 @@ body.heals-doc{margin:0;background:#faf6ea;color:#2e2a22;font-family:'Noto Serif
  .heals-doc a{color:inherit;text-decoration:none}
  .heals-doc .heals-swipe{display:none}
 }
-</style>`;
+${VF_CSS}</style>`;
 
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -3046,7 +3130,12 @@ ${a}
 
   // ---------- 引用比對 ----------
   // API 路徑會收到模型實際搜尋到的網址（web_search_tool_result）。參考文獻每一筆若有網址或 DOI，
-  // 只比對「網域」與「DOI」；都對不上本次搜尋結果的，加註［未見於本次搜尋］。這不是查證，只是讓看不見的落差看得見。
+  // 只比對「網域」與「DOI」；都對不上本次搜尋結果的，加註［非本次搜尋取得］。這不是查證（文獻是否真實存在
+  // 由 verifyReferences() 查證並加上 ✅／❌ 標記），只是讓「模型可能憑記憶引用」的落差看得見。
+  const SRC_FLAG_TXT = {
+    zh: { text: '［非本次搜尋取得］', title: '這筆文獻的網址或 DOI 不在模型本次網路搜尋取得的來源中（可能憑記憶引用）。文獻是否真實存在，請看查證標記。' },
+    en: { text: ' [not from this run\u2019s searches]', title: 'This reference\u2019s URL or DOI is not among the sources the model retrieved in this run\u2019s web searches (it may be cited from memory). Whether the work exists is shown by the verification badge.' },
+  };
   const hostOf = u => { try { return new URL(u).hostname.replace(/^www\./i, '').toLowerCase(); } catch (_) { return ''; } };
   const DOI_RE = /\b10\.\d{4,9}\/[^\s"<>]+/gi;
   function checkCitations(article, sources, en) {
@@ -3069,7 +3158,8 @@ ${a}
           res.unmatched++;
           const flag = doc.createElement('span');
           flag.className = 'src-flag';
-          flag.textContent = en ? ' [not among this run\u2019s search results]' : '［未見於本次搜尋］';
+          flag.textContent = SRC_FLAG_TXT[en ? 'en' : 'zh'].text;
+          flag.title = SRC_FLAG_TXT[en ? 'en' : 'zh'].title;
           li.appendChild(flag);
         }
       });
@@ -3086,10 +3176,12 @@ ${a}
     parts.push(en ? `Generated by AI (${pv.model ? escapeHtml(pv.model) : 'Claude'}) on ${ds}` : `本報告由 AI（${pv.model ? escapeHtml(pv.model) : 'Claude'}）於 ${ds} 產生`);
     if (pv.route === 'manual') parts.push(en ? 'manual Claude.ai route (search activity not recorded)' : '手動 Claude.ai 路徑（無搜尋紀錄）');
     else if (pv.searchCalls != null) parts.push(en ? `${pv.searchCalls} web searches, ${check.sources != null ? check.sources : 0} source URLs received` : `網路搜尋 ${pv.searchCalls} 次、取得 ${check.sources != null ? check.sources : 0} 個來源網址`);
-    if (check.sources != null && check.linked) parts.push(en ? `${check.unmatched} of ${check.linked} linked references not found among the search results` : `參考文獻中有網址者 ${check.linked} 筆，其中 ${check.unmatched} 筆未見於本次搜尋`);
+    if (check.sources != null && check.linked) parts.push(en ? `${check.unmatched} of ${check.linked} linked references not from this run\u2019s searches` : `參考文獻中有網址者 ${check.linked} 筆，其中 ${check.unmatched} 筆非本次搜尋取得`);
     parts.push(en ? `Tool: Qi-Coexistence ${APP_VERSION}` : `工具：棲共生 Qi-Coexistence ${APP_VERSION}`);
     const warn = en ? 'AI-generated content may contain errors; verify every citation and field-check before use in design or coursework.' : 'AI 產出內容可能有誤；用於設計或課業前，請逐筆查證引用並現地確認。';
-    return `<footer class="provenance"><p>${parts.join(en ? ' · ' : '｜')}</p><p>${warn}</p></footer>`;
+    // 參考文獻查證摘要（查證完成後由 applyVerification() 以同一函式補上或更新）
+    const vf = pv.verification ? verifyProvenanceLine(pv.verification, en) : '';
+    return `<footer class="provenance"><p>${parts.join(en ? ' · ' : '｜')}</p>${vf}<p>${warn}</p></footer>`;
   }
 
   // 舊格式（完整文件）被截斷時也加上標記，讓結果區顯示「可能不完整」提示
@@ -4791,11 +4883,15 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     const own = runTs ? arr.find(x => x.ts === runTs) : null;
     const recent = own || (arr[0] && Date.now() - new Date(arr[0].ts).getTime() < 60000 &&
         arr[0].lat === state.lat && arr[0].lon === state.lon ? arr[0] : null);
+    let savedTs;
     if (recent) {
       recent.htmlResult = html;
       recent.htmlSavedAt = now;
       if (extra.sources) recent.sources = extra.sources;
+      if (extra.meta) recent.meta = extra.meta; else delete recent.meta;
+      delete recent.verification;          // 新報告：舊的查證紀錄不再適用
       if (extra.partial) recent.partial = true; else delete recent.partial;
+      savedTs = recent.ts;
       saveHistoryArray(arr);
     } else {
       const entry = {
@@ -4809,12 +4905,15 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
         htmlResult: html,
         htmlSavedAt: now,
         ...(extra.sources ? { sources: extra.sources } : {}),
+        ...(extra.meta ? { meta: extra.meta } : {}),
         ...(extra.partial ? { partial: true } : {}),
       };
       arr.unshift(entry);
+      savedTs = entry.ts;
       saveHistoryArray(arr.slice(0, 100));
     }
     renderHistory();
+    return savedTs;   // 供文獻查證完成後更新同一筆紀錄
   }
 
   // ========== About & Feedback ==========
