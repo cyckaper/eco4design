@@ -113,6 +113,7 @@ const MSG = {
   home_mentions: ['網站首頁提到引用題名，但首頁不是文獻本身，請改引用該文獻的頁面', 'The home page mentions the cited title, but it is not the document itself; cite the document’s own page'],
   moved_home_mentions: ['網址被導回網站首頁，首頁提到引用題名，但原連結已失效', 'The URL redirects to the home page, which mentions the cited title, but the original link is dead'],
   dns_error: ['網域無法解析（查無此網域）', 'Domain does not resolve (no such domain)'],
+  dns_check_failed: ['無法確認網域的位址（DNS 查詢逾時或失敗），基於安全未連線', 'The domain’s address could not be confirmed (DNS lookup timed out or failed), so it was not fetched for safety'],
   unsafe_url: ['網址指向內部、保留或不允許的位址，未連線檢查', 'URL points to an internal, reserved or disallowed address; not fetched'],
   invalid_url: ['網址格式無效', 'Malformed URL'],
   unsafe_redirect: ['網址轉向內部或不允許的位址，已停止追蹤', 'URL redirects to an internal or disallowed address; stopped'],
@@ -128,6 +129,7 @@ const MSG = {
   connect_error: ['無法連線至伺服器', 'Could not connect to the server'],
   network_error: ['網路連線失敗', 'Network error'],
   bad_metadata: ['書目服務回應格式異常', 'Unexpected response from the bibliographic service'],
+  record_mismatch: ['書目服務回傳的 DOI 與引用的 DOI 不同，未採用', 'The bibliographic service returned a record for a different DOI; it was not used'],
   internal_error: ['查核程式發生錯誤', 'Internal error while checking'],
 
   // 書目搜尋
@@ -566,6 +568,9 @@ function normDoi(s) {
   d = d.replace(/^(?:https?:\/\/)?(?:dx\.|www\.)?doi\.org\//i, '').replace(/^doi\s*:\s*/i, '').replace(/\s+/g, '');
   d = trimTrailing(d);
   if (d.length > 200 || !/^10\.\d{4,9}\/\S+$/.test(d)) return null;
+  // 「.」「..」路徑段與反斜線會被 URL 解析折疊（10.9999/x/../../../works/10.1038/… 會變成查詢另一個 DOI），
+  // 也包括百分比編碼後的 %2e：一律拒絕，避免不存在的 DOI 借用真實 DOI 的書目而被判為已查證
+  if (/(^|\/)\.{1,2}(\/|$)|\\/.test(d) || /%2e|%2f|%5c/i.test(d)) return null;
   return d.toLowerCase();
 }
 
@@ -643,10 +648,12 @@ function ipv6Blocked(h) {
   return false;
 }
 
+// 萬用 DNS 服務（任何子網域都解析到指定或本機位址）一律不連線：DNS 檢查在部分執行環境不可用時的縱深防護
+const WILDCARD_DNS = ['nip.io', 'sslip.io', 'xip.io', 'localtest.me', 'lvh.me', 'vcap.me', 'lacolhost.com',
+  'traefik.me', 'local.gd', 'localhost.direct', '1u.ms', 'rbndr.us'];
 const BLOCKED_SUFFIXES = ['.localhost', '.local', '.internal', '.intranet', '.lan', '.home', '.corp', '.localdomain',
-  '.home.arpa', '.arpa', '.test', '.invalid', '.example', '.onion',
-  '.nip.io', '.sslip.io', '.xip.io', '.localtest.me', '.lvh.me', '.vcap.me', '.lacolhost.com'];
-const BLOCKED_NAMES = new Set(['localhost', 'nip.io', 'sslip.io', 'xip.io', 'localtest.me', 'lvh.me', 'vcap.me', 'lacolhost.com', 'instance-data']);
+  '.home.arpa', '.arpa', '.test', '.invalid', '.example', '.onion', ...WILDCARD_DNS.map(d => '.' + d)];
+const BLOCKED_NAMES = new Set(['localhost', 'instance-data', ...WILDCARD_DNS]);
 
 function hostBlocked(host) {
   const h = host.toLowerCase().replace(/\.$/, '');
@@ -659,22 +666,43 @@ function hostBlocked(host) {
   return false;
 }
 
-// 若執行環境提供 DNS 查詢，額外擋下「公開網域解析到私有位址」（DNS rebinding 的基本防護）
+// 若執行環境提供 DNS 查詢，額外擋下「公開網域解析到私有位址」（DNS rebinding 的基本防護）。
+// 查詢逾時或失敗時「不連線」（判為無法判定），避免惡意 DNS 以拖延回應繞過檢查；
+// 只有執行環境根本不提供 DNS 查詢（API 不存在或無權限）時，才退回只做靜態檢查——回應標頭 x-verify-dns-guard 會標示 off。
+// 檢查與實際連線之間的時間差（DNS rebinding）只能由平台的對外連線管制防護。
 const TRUSTED_API_HOSTS = new Set(['doi.org', 'api.crossref.org', 'api.openalex.org', 'archive.org', 'web.archive.org']);
+const DNS_TIMEOUT_MS = 2500;
+const dnsGuard = { state: 'unknown' };     // 'on' | 'off' | 'unknown'（同一個執行個體內共用，供回應標頭與紀錄）
 
-async function resolvesToBlocked(host) {
+function dnsUnavailableError(e) {
+  const name = String((e && e.name) || ''), m = String((e && e.message) || e || '');
+  return /PermissionDenied|NotSupported|NotImplemented|NotCapable/i.test(name) ||
+    /not (?:supported|implemented|available)|permission|requires .*allow-net|is not a function/i.test(m);
+}
+function dnsNotFoundError(e) {
+  const name = String((e && e.name) || ''), m = String((e && e.message) || e || '');
+  return /NotFound/i.test(name) || /no (?:such host|records? found)|NXDOMAIN|not found/i.test(m);
+}
+
+// 回傳 'ok' | 'blocked' | 'nxdomain' | 'error'（逾時、其他失敗）| 'skip'（不需或無法檢查）
+async function dnsCheck(host) {
   const D = globalThis.Deno;
-  if (!D || typeof D.resolveDns !== 'function' || host.startsWith('[') || /^[\d.]+$/.test(host)) return false;
-  if (TRUSTED_API_HOSTS.has(host)) return false;
+  if (host.startsWith('[') || /^[\d.]+$/.test(host) || TRUSTED_API_HOSTS.has(host)) return 'skip';
+  if (!D || typeof D.resolveDns !== 'function') { dnsGuard.state = 'off'; return 'skip'; }
   const q = (type) => new Promise((resolve) => {
-    const t = setTimeout(() => resolve([]), 1500);
-    Promise.resolve().then(() => D.resolveDns(host, type))
-      .then(r => { clearTimeout(t); resolve(Array.isArray(r) ? r : []); }, () => { clearTimeout(t); resolve([]); });
+    const t = setTimeout(() => resolve({ err: 'timeout' }), DNS_TIMEOUT_MS);
+    Promise.resolve().then(() => D.resolveDns(host, type)).then(
+      r => { clearTimeout(t); resolve({ ips: Array.isArray(r) ? r.map(String) : [] }); },
+      e => { clearTimeout(t); resolve({ err: dnsUnavailableError(e) ? 'unavailable' : dnsNotFoundError(e) ? 'notfound' : 'error' }); });
   });
-  try {
-    const [a, aaaa] = await Promise.all([q('A'), q('AAAA')]);
-    return a.some(ip => ipv4Blocked(String(ip))) || aaaa.some(ip => ipv6Blocked(String(ip)));
-  } catch (_) { return false; }
+  const res = await Promise.all([q('A'), q('AAAA')]);
+  if (res.every(r => r.err === 'unavailable')) { dnsGuard.state = 'off'; return 'skip'; }
+  dnsGuard.state = 'on';
+  const [a, aaaa] = res;
+  if ((a.ips || []).some(ipv4Blocked) || (aaaa.ips || []).some(ipv6Blocked)) return 'blocked';
+  if ((a.ips || []).length || (aaaa.ips || []).length) return 'ok';
+  if (res.every(r => r.err === 'notfound' || (r.ips && !r.ips.length))) return 'nxdomain';
+  return 'error';   // 無位址且至少一項查詢逾時或失敗：寧可不連線
 }
 
 async function checkTarget(raw) {
@@ -683,7 +711,10 @@ async function checkTarget(raw) {
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, code: 'unsafe_url' };
   if (u.username || u.password || u.port !== '') return { ok: false, code: 'unsafe_url' }; // 帶帳密或非預設埠
   if (hostBlocked(u.hostname)) return { ok: false, code: 'unsafe_url' };
-  if (await resolvesToBlocked(u.hostname)) return { ok: false, code: 'unsafe_url' };
+  const d = await dnsCheck(u.hostname);
+  if (d === 'blocked') return { ok: false, code: 'unsafe_url' };
+  if (d === 'nxdomain') return { ok: false, code: 'dns_error' };
+  if (d === 'error') return { ok: false, code: 'dns_check_failed' };
   u.hash = '';
   return { ok: true, href: u.href };
 }
@@ -783,7 +814,7 @@ async function safeFetch(rawUrl, ctx, headers, maxBytes) {
   let url = rawUrl;
   for (let hop = 0; ; hop++) {
     const safe = await checkTarget(url);
-    if (!safe.ok) return { error: hop === 0 ? safe.code : 'unsafe_redirect', url, hops: hop };
+    if (!safe.ok) return { error: hop === 0 || /^dns_/.test(safe.code) ? safe.code : 'unsafe_redirect', url, hops: hop };
     const r = await fetchHop(safe.href, ctx, headers, maxBytes);
     if (r.error) return { ...r, url: safe.href, hops: hop };
     if (r.redirect) {
@@ -1250,25 +1281,44 @@ function titleAnchors(title) {
   return words.filter(w => w.length >= 4).sort((a, b) => b.length - a.length).slice(0, 3);
 }
 
+// 題名比對改用「正規化字串＋includes」：頁面與題名都只保留字母數字（中文題名去掉所有分隔、拉丁題名以單一空白分詞），
+// 語意與 titlePattern 相同，但為線性時間——引用題名與頁面同時由他人控制時，回溯式正規表示式可能耗盡 CPU。
+const MAX_TITLE_SCAN = 200000;
+function compactForMatch(s, cjk) {
+  const t = String(s).slice(0, MAX_TITLE_SCAN).toLowerCase().replace(/臺/g, '台');
+  return cjk ? t.replace(/[^\p{L}\p{N}]+/gu, '') : ' ' + t.replace(/[^\p{L}\p{N}]+/gu, ' ') + ' ';
+}
+function titleNeedle(title, strict) {
+  if (!titlePattern(title, strict)) return null;   // 沿用相同的「題名夠長才算證據」規則
+  const words = lightNorm(title).toLowerCase().replace(/臺/g, '台').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const cjk = CJK_RE.test(words.join(''));
+  return { cjk, s: cjk ? words.join('') : ' ' + words.join(' ') + ' ' };
+}
+
 function pageHasTitle(an, cite) {
   if (!cite.titleSure || !an.getText) return false;
-  const full = titlePattern(cite.title, false);
+  const full = titleNeedle(cite.title, false);
   const main = cite.title.split(/:|：| — | – /)[0];
-  const mainRe = main !== cite.title ? titlePattern(main, true) : null;
-  const res = [full, mainRe].filter(Boolean);
-  if (!res.length) return false;                 // 題名太短：不必讀內文
+  const mainN = main !== cite.title ? titleNeedle(main, true) : null;
+  const needles = [full, mainN].filter(Boolean);
+  if (!needles.length) return false;                 // 題名太短：不必讀內文
   // 1) 快速排除：有鑑別度的片段不在 HTML 中 → 去標籤後也不可能出現（不複製整頁字串，省 CPU 與記憶體）
   const anchors = titleAnchors(cite.title).map(a => new RegExp(a.replace(/台/g, '[台臺]'), 'i'));
   const hasAnchors = (str) => anchors.every(re => re.test(str));
   if (anchors.length && !hasAnchors(an.html)) {
     // 頁面含數字實體（&#33274;）、帶重音字母或全形英數時，正規化後再確認一次
-    if (!(/&#|[\uff10-\uff19\uff21-\uff3a\uff41-\uff5a]/.test(an.html) || LATIN_EXT_RE.test(an.html)) || !hasAnchors(an.getRaw())) return false;
+    if (!(/&#|[０-９Ａ-Ｚａ-ｚ]/.test(an.html) || LATIN_EXT_RE.test(an.html)) || !hasAnchors(an.getRaw())) return false;
   }
-  // 2) 快速路徑：題名通常整段出現在同一個文字節點
-  if (res.some(re => re.test(an.getRaw()))) return true;
+  const cache = an.matchCache || (an.matchCache = {});
+  const hay = (which, cjk) => {
+    const k = which + (cjk ? 'C' : 'L');
+    if (cache[k] == null) cache[k] = compactForMatch(which === 'raw' ? an.getRaw() : lightNorm(an.getText()), cjk);
+    return cache[k];
+  };
+  // 2) 快速路徑：題名通常整段出現在同一個文字節點（未去標籤的原始 HTML）
+  if (needles.some(n => hay('raw', n.cjk).includes(n.s))) return true;
   // 3) 題名被行內標籤（<b>、<br>）切開：去標籤後再比對
-  const text = lightNorm(an.getText());
-  return res.some(re => re.test(text));
+  return needles.some(n => hay('text', n.cjk).includes(n.s));
 }
 
 const HOME_PATH_RE = /^\/?(?:(?:index|default|home|main|mp)(?:\.\w{2,5})?|zh-tw|zh_tw|tw|ch|cht|en|zh)?\/?$/i;
@@ -1504,7 +1554,10 @@ async function crossrefWork(doi, ctx) {
   if (r.error) return { state: 'error', code: r.error };
   if (r.status === 404) return { state: 'missing' };
   if (r.status === 200 && r.json && r.json.message && typeof r.json.message === 'object') {
-    return { state: 'ok', meta: metaFromCrossref(r.json.message) };
+    const meta = metaFromCrossref(r.json.message);
+    // 回傳的書目必須就是所查的 DOI（縱深防護：不讓別筆 DOI 的書目證實引用的識別碼）
+    if (meta.doi && meta.doi !== doi) return { state: 'error', code: 'record_mismatch' };
+    return { state: 'ok', meta };
   }
   return { state: 'error', code: r.status === 200 ? 'bad_metadata' : httpErrCode(r.status), httpStatus: r.status };
 }
@@ -1527,7 +1580,11 @@ async function doiContentNegotiation(doi, ctx) {
   if (r.ok) {
     if (/json/.test(r.ctype)) {
       const j = parseJsonBytes(r.bytes);
-      if (j && typeof j === 'object' && (j.title || j.DOI)) return { state: 'ok', meta: metaFromCsl(j), src: agencyOf(r.url) };
+      if (j && typeof j === 'object' && (j.title || j.DOI)) {
+        const meta = metaFromCsl(j);
+        if (meta.doi && meta.doi !== doi) return { state: 'error', code: 'record_mismatch' };
+        return { state: 'ok', meta, src: agencyOf(r.url) };
+      }
       return { state: 'error', code: 'bad_metadata' };
     }
     return { state: 'page', fr: r };
@@ -1546,7 +1603,11 @@ async function openalexByDoi(doi, ctx) {
   const r = await apiJson(`https://api.openalex.org/works/doi:${encDoi(doi)}${openalexParams(ctx, true)}`, ctx);
   if (r.error) return { state: 'error', code: r.error };
   if (r.status === 404) return { state: 'missing' };
-  if (r.status === 200 && r.json && (r.json.title || r.json.display_name)) return { state: 'ok', meta: metaFromOpenAlex(r.json) };
+  if (r.status === 200 && r.json && (r.json.title || r.json.display_name)) {
+    const meta = metaFromOpenAlex(r.json);
+    if (meta.doi && meta.doi !== doi) return { state: 'error', code: 'record_mismatch' };
+    return { state: 'ok', meta };
+  }
   return { state: 'error', code: r.status === 200 ? 'bad_metadata' : httpErrCode(r.status), httpStatus: r.status };
 }
 
