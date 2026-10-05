@@ -5,28 +5,27 @@
 // 且等待上游回應不計入 CPU 時間。Deno 執行環境不需 build/npm install，
 // 因此可直接用拖拉方式部署。
 
+import { getCatalog, parseModelId, supportsEffort, thinksByDefault } from '../shared/model-catalog.js';
+
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
-// 只允許這三個模型，避免有人改前端送出昂貴或未預期的模型
-const ALLOWED_MODELS = new Set([
-  'claude-sonnet-4-6',
-  'claude-opus-4-7',
-  'claude-haiku-4-5-20251001',
-]);
+// 可用模型不寫死：只允許模型目錄（../shared/model-catalog.js）中各系列最新一版，
+// 避免有人改前端送出昂貴或未預期的模型；未指定或不在目錄中 → 用建議模型
 
 const MAX_PROMPT_CHARS = 24000;   // 提示詞長度上限（防濫用）
-const MAX_TOKENS = 32000;
+// 輸出上限：新一代模型預設會先思考（思考 token 也計入），上限給得較寬；只依實際產生量計費
+const MAX_TOKENS = 64000;
+// 推理強度：分析用 medium（兼顧品質、時間與 token），改寫只刪除與更正用 low
+const EFFORT = { analyze: 'medium', revise: 'low' };
 
 // mode: 'revise'（排除未通過查證的內容）：輸入是整份報告 <article> 加上排除清單，因此另有較高的長度上限；
 // 不提供任何工具（不做網路搜尋）——改寫只能刪除與更正，不得引入未經查證的新資料。
 // 防濫用（revise 不搜尋、回應較快，又接受較長的輸入）：
 //   - 長度上限依實際報告量測（文章 ≤ 約 35,000 字元＋清單與指示），超過時前端改以自動規則過濾
-//   - 只用 Sonnet／Haiku（Opus 一律改用 Sonnet）；max_tokens 依輸入長度縮小（輸出只會比原報告短）
+//   - 只用目錄中最新的 Sonnet／Haiku（Opus 或其他一律改用 Sonnet）；max_tokens 依輸入長度縮小（輸出只會比原報告短）
 //   - 提示詞必須恰好含一個 <<<REPORT … REPORT>>> 區塊，且區塊內恰好一份 <article>…</article>
 //   - 每個來源 IP 每 10 分鐘最多 40 次（單一執行個體內的記憶體計數）；未設定通行碼時不提供
 const MAX_REVISE_PROMPT_CHARS = 80000;
-const REVISE_MODELS = new Set(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']);
-const REVISE_DEFAULT_MODEL = 'claude-sonnet-4-6';
 const REVISE_MIN_TOKENS = 4096;
 const REVISE_RATE_WINDOW_MS = 10 * 60 * 1000, REVISE_RATE_MAX = 40;
 const MODES = new Set(['analyze', 'revise']);
@@ -133,11 +132,21 @@ export default async (request, context) => {
       { status: 429, headers: { 'content-type': 'application/json; charset=utf-8', 'retry-after': '120' } });
   }
 
-  const model = revise
-    ? (REVISE_MODELS.has(body.model) ? body.model : REVISE_DEFAULT_MODEL)
-    : (ALLOWED_MODELS.has(body.model) ? body.model : 'claude-sonnet-4-6');
-  // revise 的輸出（修訂後的報告）只會比輸入短：上限依輸入長度縮小
-  const maxTokens = revise ? Math.min(MAX_TOKENS, Math.max(REVISE_MIN_TOKENS, Math.ceil(prompt.length * 1.2))) : MAX_TOKENS;
+  const catalog = await getCatalog(API_KEY);
+  const inCatalog = id => typeof id === 'string' && catalog.models.some(m => m.id === id);
+  const familyLatest = f => (catalog.models.find(m => m.family === f) || {}).id;
+  let model;
+  if (revise) {
+    // 改寫：產生報告用 Haiku 時沿用 Haiku，其餘一律用最新的 Sonnet（不需要較貴的模型）
+    const fam = inCatalog(body.model) && (parseModelId(body.model) || {}).family;
+    model = (fam === 'haiku' ? body.model : familyLatest('sonnet')) || catalog.recommended;
+  } else {
+    model = inCatalog(body.model) ? body.model : catalog.recommended;
+  }
+  // revise 的輸出（修訂後的報告）只會比輸入短：上限依輸入長度縮小（預設會思考的模型多留思考空間）
+  const maxTokens = revise
+    ? Math.min(MAX_TOKENS, Math.max(REVISE_MIN_TOKENS, Math.ceil(prompt.length * 1.2)) + (thinksByDefault(model) ? 16000 : 0))
+    : (/haiku/.test(model) ? 32000 : MAX_TOKENS);
 
   let upstream;
   try {
@@ -152,6 +161,7 @@ export default async (request, context) => {
         model,
         max_tokens: maxTokens,
         stream: true,                     // 串流是關鍵：讓連線持續有資料流動，避開逾時
+        ...(supportsEffort(model) ? { output_config: { effort: revise ? EFFORT.revise : EFFORT.analyze } } : {}),
         messages: [{ role: 'user', content: prompt }],
         // max_uses：限制搜尋次數，縮短生成時間、降低手機斷線風險（報告只需 ≤3 案例、≤15 筆文獻；
         // 10 次＝物種與法規、選填的人類活動影響證據、案例；與 index.html 的 WEB_SEARCH_MAX 一致）
@@ -177,10 +187,12 @@ export default async (request, context) => {
     return json(upstream.status, { error: message, upstreamStatus: upstream.status });
   }
 
-  // 直接把 SSE 串流轉送給瀏覽器
+  // 直接把 SSE 串流轉送給瀏覽器（x-model：實際使用的模型，供前端記錄）
   return new Response(upstream.body, {
     status: 200,
     headers: {
+      'x-model': model,
+      'access-control-expose-headers': 'x-model',
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
       'connection': 'keep-alive',

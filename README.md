@@ -50,6 +50,7 @@ OpenStreetMap 環境特徵），再交由 Claude 生成完整的生態共存設�
 ```
 瀏覽器 → /api/analyze（Netlify Edge Function，補上金鑰）→ Anthropic API
 瀏覽器 → /api/verify（Netlify Edge Function）→ doi.org／Crossref／OpenAlex／所列網頁
+瀏覽器 → /api/models（Netlify Edge Function）→ Anthropic Models API（可用模型清單，快取 6 小時）
 ```
 
 金鑰存於 Netlify 伺服器端環境變數，瀏覽器完全看不到。
@@ -64,10 +65,27 @@ Edge Function 採串流回應，因此不受標準 serverless function 逾時限
 ├── .env.example                    環境變數範本（不含真值）
 ├── SETUP.md                        部署與環境變數設定指南
 ├── GITHUB-SETUP.md                 從拖拉部署改為 GitHub 連動的步驟
-└── netlify/edge-functions/
-        ├── analyze.js              Claude API 代理（金鑰在伺服器端；mode 'revise' 為不搜尋的排除改寫）
-        └── verify.js               參考文獻與案例來源查證（NDJSON 串流）
+└── netlify/
+    ├── edge-functions/
+    │   ├── analyze.js              Claude API 代理（金鑰在伺服器端；mode 'revise' 為不搜尋的排除改寫）
+    │   ├── models.js               可用模型與建議模型（GET /api/models）
+    │   └── verify.js               參考文獻與案例來源查證（NDJSON 串流）
+    └── shared/
+        └── model-catalog.js        模型目錄：各系列最新一版、單價、建議規則（analyze.js 與 models.js 共用）
 ```
+
+### 分析模型（不寫死）
+
+「分析模型」選單由伺服器向 Anthropic Models API 取得目前可用的模型，Opus／Sonnet／Haiku 各只列最新一版；
+Anthropic 推出新版時自動跟上，舊版的偏好設定也會自動改用建議模型。
+
+- **建議模型**：最新的 Sonnet。本工具的分析（網路搜尋＋長篇報告，每份約 3–8 分鐘）用 Sonnet 品質接近 Opus，
+  速度較快、單價約為 Opus 的一半。選單會標示各模型相對於建議模型的費用倍數與每百萬 tokens 單價。
+- **本機實測**：每份完成的報告在瀏覽器記錄耗時與 tokens，選單下方顯示該模型的平均分析時間與每份費用。
+- **推理強度**：分析用 `medium`、排除改寫用 `low`（兼顧品質、時間與 token）；Haiku 不支援此設定，不送出。
+- **排除改寫**：一律用最新的 Sonnet（產生報告用 Haiku 時沿用 Haiku），不用較貴的模型。
+- 更高階的 Fable 系列單價約為 Opus 的 2.5 倍，不列入選單。
+- 單價表在 `netlify/shared/model-catalog.js`（Models API 不提供價格）；未列出的新模型沿用同系列最新單價，並標示「估計」。
 
 ### 環境變數（在 Netlify Dashboard 設定，切勿寫入 repo）
 
@@ -75,6 +93,8 @@ Edge Function 採串流回應，因此不受標準 serverless function 逾時限
 |---|---|
 | `ANTHROPIC_API_KEY` | Anthropic 金鑰 |
 | `QI_PASSCODE` | 課程通行碼；未設定則分析不驗證（等同對外開放），查證與排除改寫則不提供 |
+| `VERIFY_MAILTO`（選填） | Crossref／OpenAlex 的聯絡信箱，可提高文獻查證的查詢額度 |
+| `RECOMMENDED_MODEL`（選填） | 指定建議模型（例如 `claude-opus-5-5`）；須是目前可用的模型，否則沿用預設（最新的 Sonnet） |
 
 詳見 `SETUP.md`。
 

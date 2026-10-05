@@ -740,11 +740,10 @@
       <label>
         <span>分析模型 MODEL</span>
         <select id="apiModel">
-          <option value="claude-sonnet-4-6" selected>Claude Sonnet 4.6（建議：快速、品質佳、性價比高）</option>
-          <option value="claude-opus-4-7">Claude Opus 4.7（最高品質，較慢、約 5× 費用）</option>
-          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5（最快、便宜，深度較低）</option>
+          <option value="" selected>（自動：伺服器建議的模型）</option>
         </select>
       </label>
+      <div class="chip-hint" id="modelNote"></div>
     </div>
 
     <details class="prompt-preview-details">
@@ -1209,9 +1208,7 @@
     '」，可改用地圖點選或輸入經緯度': '" — click the map or enter coordinates instead',
     '清空目前表單？（不會刪除歷史紀錄）': 'Clear the current form? (History will not be deleted)',
     '確定清除全部歷史紀錄？': 'Delete all history records?',
-    'Claude Haiku 4.5（最快、便宜，深度較低）': 'Claude Haiku 4.5 (fastest, cheapest, less depth)',
-    'Claude Opus 4.7（最高品質，較慢、約 5× 費用）': 'Claude Opus 4.7 (highest quality, slower, ~5× cost)',
-    'Claude Sonnet 4.6（建議：快速、品質佳、性價比高）': 'Claude Sonnet 4.6 (recommended: fast, high quality, best value)',
+    '（自動：伺服器建議的模型）': '(automatic: the server\u2019s recommended model)',
     'Special Considerations · 例如「注意有無裸露地」「部落共管」': 'Special Notes · e.g. bare ground, co-management with local communities',
     '— 人為設施 · Human Features —': '— Human Features —',
     '— 兩棲爬蟲 · Herpetofauna —': '— Herpetofauna —',
@@ -1326,6 +1323,7 @@
     // 重繪由 JS 產生的區塊
     try {
       if (typeof renderCombos === 'function') renderCombos();
+      if (typeof renderModelOptions === 'function') renderModelOptions();
       if (typeof renderQuickChips === 'function') renderQuickChips();
       if (typeof updateQuickChips === 'function') updateQuickChips();   // 重繪後的建議膠囊依（已映射語言的）選取狀態標示
       if (speciesChip) speciesChip.render();
@@ -3026,7 +3024,7 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
   // ========== Claude API（經由本站 Edge Function 代理，金鑰在伺服器端）==========
   const API_ENDPOINT = '/api/analyze';
   const PASSCODE_STORAGE = 'qi-coexistence-passcode-v1';
-  // v2：換 key 讓舊的模型偏好失效，所有人重設為 Sonnet 4.6 預設
+  // 模型偏好：只在偏好仍是目前可用的模型時沿用，否則改用伺服器建議的模型（見 renderModelOptions）
   const MODEL_STORAGE = 'qi-coexistence-model-v2';
   let analysisResult = null;
   let analysisNonce = '';   // 本次報告的 CSP nonce（見 withLayoutGuard）
@@ -3047,8 +3045,6 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
         document.getElementById('passcode').value = saved;
         document.getElementById('savePasscode').checked = true;
       }
-      const savedModel = localStorage.getItem(MODEL_STORAGE);
-      if (savedModel) document.getElementById('apiModel').value = savedModel;
     } catch (e) {}
 
     document.getElementById('passcode').addEventListener('input', e => {
@@ -3076,7 +3072,92 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
 
     document.getElementById('apiModel').addEventListener('change', e => {
       try { localStorage.setItem(MODEL_STORAGE, e.target.value); } catch (_) {}
+      renderModelNote();
     });
+    loadModelCatalog();
+  }
+
+  // ── 分析模型：不寫死，由伺服器（/api/models）依 Anthropic 目前提供的模型列出各系列最新一版與建議模型 ──
+  // 建議依據：本工具的分析（網路搜尋＋長篇報告）兼顧時間與 token 費用；本機另記錄每個模型的實測時間與費用供參考。
+  let MODEL_CATALOG = null;
+  const MODEL_STATS_STORAGE = 'qi-coexistence-model-stats-v1';
+  async function loadModelCatalog() {
+    try {
+      const r = await fetch('/api/models', { headers: { accept: 'application/json' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const c = await r.json();
+      if (!c || !Array.isArray(c.models) || !c.models.length) throw new Error('empty');
+      MODEL_CATALOG = {
+        recommended: typeof c.recommended === 'string' ? c.recommended : '', source: c.source === 'api' ? 'api' : 'fallback',
+        models: c.models.filter(m => m && typeof m.id === 'string' && /^claude-[a-z0-9-]{3,60}$/.test(m.id)).slice(0, 6).map(m => ({
+          id: m.id, name: typeof m.name === 'string' && m.name ? m.name.slice(0, 60) : m.id, family: String(m.family || ''),
+          price: m.price && isFinite(m.price.in) && isFinite(m.price.out) ? { in: +m.price.in, out: +m.price.out, est: !!m.price.est } : null })),
+      };
+    } catch (_) { MODEL_CATALOG = null; }   // 取不到（例如本機開檔）：保留「自動」選項，由伺服器決定
+    renderModelOptions();
+  }
+  function modelStats() {
+    try { const o = JSON.parse(localStorage.getItem(MODEL_STATS_STORAGE) || '{}'); return o && typeof o === 'object' ? o : {}; } catch (_) { return {}; }
+  }
+  // 每份成功的報告記錄一次：耗時、輸入／輸出 tokens、搜尋次數（只存在本機瀏覽器）
+  function recordModelRun(model, sec, usage, searches) {
+    if (typeof model !== 'string' || !/^claude-[a-z0-9-]{3,60}$/.test(model) || !(sec > 0)) return;
+    const all = modelStats(), e = all[model] || { n: 0, sec: 0, i: 0, o: 0, s: 0, nu: 0 };
+    e.n++; e.sec += sec; e.s += +searches || 0;
+    if (usage && +usage.output_tokens > 0) { e.nu++; e.i += +usage.input_tokens || 0; e.o += +usage.output_tokens || 0; }
+    all[model] = e;
+    try { localStorage.setItem(MODEL_STATS_STORAGE, JSON.stringify(all)); } catch (_) {}
+  }
+  function renderModelOptions() {
+    const sel = document.getElementById('apiModel');
+    if (!sel) return;
+    const en = LANG === 'en', c = MODEL_CATALOG;
+    let saved = '';
+    try { saved = localStorage.getItem(MODEL_STORAGE) || ''; } catch (_) {}
+    if (!c) { renderModelNote(); return; }
+    const rec = c.models.find(m => m.id === c.recommended) || c.models[0];
+    const unit = m => m.price ? m.price.in + m.price.out : 0;
+    const ratio = m => { const r = rec && unit(rec) ? unit(m) / unit(rec) : 0; return r ? (Math.round(r * 10) / 10).toString().replace(/\.0$/, '') : ''; };
+    const tier = {
+      opus: en ? 'highest quality, slower' : '品質最高，較慢',
+      sonnet: en ? 'fast, high quality, best balance of time and cost' : '速度快、品質佳，時間與費用最平衡',
+      haiku: en ? 'fastest and cheapest, less depth' : '最快、最便宜，深度較低',
+    };
+    sel.textContent = '';
+    c.models.forEach(m => {
+      const isRec = rec && m.id === rec.id, r = ratio(m);
+      const bits = [isRec ? (en ? 'recommended' : '建議') : '', tier[m.family] || '', !isRec && r ? (en ? `~${r}× cost` : `約 ${r}× 費用`) : ''].filter(Boolean);
+      const o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = `${m.name}${en ? ' (' + bits.join('; ') + ')' : '（' + bits.join('，').replace('建議，', '建議：') + '）'}`;
+      sel.appendChild(o);
+    });
+    // 只保留仍在清單中的偏好（舊版模型不再列出 → 自動改用建議模型）
+    sel.value = c.models.some(m => m.id === saved) ? saved : (rec ? rec.id : '');
+    renderModelNote();
+  }
+  function renderModelNote() {
+    const el = document.getElementById('modelNote'), sel = document.getElementById('apiModel');
+    if (!el || !sel) return;
+    const en = LANG === 'en', c = MODEL_CATALOG;
+    const m = c && c.models.find(x => x.id === sel.value);
+    const parts = [];
+    if (!c) parts.push(en ? 'The model list could not be loaded; the server will use its recommended model.' : '無法載入模型清單，將由伺服器使用建議的模型。');
+    else {
+      parts.push(en ? 'The list follows the newest models Anthropic currently offers. The recommendation weighs analysis time against token cost for this tool\u2019s reports (web search plus a long report).'
+        : '清單依 Anthropic 目前提供的最新模型自動更新；建議模型以本工具的分析（網路搜尋＋長篇報告）兼顧分析時間與 token 費用為準。');
+      if (c.source !== 'api') parts.push(en ? '(The latest list is temporarily unavailable; showing the fallback list.)' : '（暫時無法取得最新清單，顯示備援清單。）');
+      if (m && m.price) parts.push(en ? `Price per million tokens: input US$${m.price.in} / output US$${m.price.out}${m.price.est ? ' (estimated)' : ''}.`
+        : `每百萬 tokens：輸入 US$${m.price.in}／輸出 US$${m.price.out}${m.price.est ? '（估計）' : ''}。`);
+      const st = m && modelStats()[m.id];
+      if (st && st.n > 0) {
+        const min = (st.sec / st.n / 60).toFixed(1);
+        const cost = m.price && st.nu > 0 ? ((st.i / st.nu) * m.price.in + (st.o / st.nu) * m.price.out) / 1e6 + (st.s / st.n) * 0.01 : null;
+        parts.push(en ? `Measured in this browser (${st.n} report${st.n > 1 ? 's' : ''}): about ${min} min${cost != null ? `, about US$${cost.toFixed(2)}` : ''} per report.`
+          : `本機實測（${st.n} 份）：平均約 ${min} 分鐘${cost != null ? `、約 US$${cost.toFixed(2)}` : ''}／份。`);
+      }
+    }
+    el.textContent = parts.join(en ? ' ' : '');
   }
 
   // 從 Claude 回應中萃取報告。
@@ -3929,7 +4010,7 @@ ${a}
       return;
     }
 
-    const model = document.getElementById('apiModel').value;
+    let model = document.getElementById('apiModel').value;   // 空字串＝由伺服器選建議模型；實際使用的模型見回應標頭 x-model
     // 分析期間使用者可能切換語言或移動地圖：先記下本次分析的語言與基地
     const runLang = LANG;
     const runSite = { lat: state.lat, lon: state.lon, name: state.locationName };
@@ -3981,6 +4062,7 @@ ${a}
         body: JSON.stringify({ passcode, model, prompt: fullPrompt }),
         signal: ctl.signal,
       });
+      { const xm = response.headers.get('x-model'); if (xm && /^claude-[a-z0-9-]{3,60}$/.test(xm)) model = xm; }
 
       if (!response.ok) {
         let errText = '';
@@ -4006,8 +4088,8 @@ ${a}
           }
         } else if (response.status === 529) {
           errMsg = LANG === 'en'
-            ? 'Anthropic servers are busy (HTTP 529 Overloaded)\n\nThis is not a problem with your settings — overall load on Anthropic\u2019s side is too high.\n\nSuggestions:\n• Wait 1–2 minutes and press "🚀 Start Analysis" again\n• Switch to "Claude Sonnet 4.6" (less congested, still excellent quality)\n• Avoid peak hours'
-            : 'Anthropic 伺服器繁忙（HTTP 529 Overloaded）\n\n這不是您的設定問題，是 Anthropic 端整體負載過高。\n\n建議：\n• 1-2 分鐘後再按「🚀 開始分析」重試\n• 改用「Claude Sonnet 4.6」（較少擁塞、品質依然優秀）\n• 避開高峰時段（亞洲日間 + 美西夜間是高峰）';
+            ? 'Anthropic servers are busy (HTTP 529 Overloaded)\n\nThis is not a problem with your settings — overall load on Anthropic\u2019s side is too high.\n\nSuggestions:\n• Wait 1–2 minutes and press "🚀 Start Analysis" again\n• Switch to another model in the list (e.g. the recommended one)\n• Avoid peak hours'
+            : 'Anthropic 伺服器繁忙（HTTP 529 Overloaded）\n\n這不是您的設定問題，是 Anthropic 端整體負載過高。\n\n建議：\n• 1-2 分鐘後再按「🚀 開始分析」重試\n• 改用清單中的其他模型（例如建議的模型）\n• 避開高峰時段（亞洲日間 + 美西夜間是高峰）';
         } else if (response.status === 429) {
           errMsg = LANG === 'en'
             ? 'API rate limit reached (HTTP 429)\n\nToo many concurrent users or requests in a short period. Please wait 1–5 minutes and try again.'
@@ -4115,6 +4197,7 @@ ${a}
       const elapsed = Math.round((Date.now() - startTime) / 1000);
 
       const meta = runMeta();
+      if (!truncated) recordModelRun(model, (Date.now() - startTime) / 1000, usage, searchCalls);
       analysisMeta = {
         model: model,
         elapsed: elapsed,
@@ -6669,7 +6752,8 @@ ${block}`;
         if (o.onProgress) o.onProgress(text.length);
       }
       if (streamError) return { ok: false, why: 'stream', message: streamError, text, usage };
-      return { ok: true, text, stopReason, usage };
+      const xm = res.headers.get('x-model');
+      return { ok: true, text, stopReason, usage, model: xm && /^claude-[a-z0-9-]{3,60}$/.test(xm) ? xm : (o.model || '') };
     } finally {
       o.signal.removeEventListener('abort', onAbort);
     }
@@ -8195,14 +8279,15 @@ ${block}`;
       pre = prevPre || preFilterHtml(snapshot, en, plan.exclude.length + plan.orphans.length);
       setVerifyStatus(uen ? '✂️ Removing content that cites sources which failed verification…' : '✂️ 正在排除引用未通過查證之來源的內容…', 'run');
       if (!displayedFiltered) setFilterNotice('revise');
-      // 改寫一律用 Sonnet（產生報告用 Haiku 時沿用 Haiku）：改寫只刪除與更正，不需要較貴的模型
+      // 改寫用最新的 Sonnet（產生報告用 Haiku 時沿用 Haiku）：改寫只刪除與更正，不需要較貴的模型；實際模型由伺服器決定
       const genModel = (meta && meta.route === 'api' && meta.model) || (document.getElementById('apiModel') || {}).value || '';
-      reviseModel = /haiku/i.test(genModel) ? genModel : 'claude-sonnet-4-6';
+      reviseModel = /haiku/i.test(genModel) ? genModel : '';
       const rv = await callRevise({ prompt: buildRevisePrompt(articleForRevision(doc), plan, lang), model: reviseModel, passcode, signal: ctl.signal,
         onProgress: n => setVerifyStatus(uen ? `✂️ Removing content that cites sources which failed verification… (${n.toLocaleString()} characters)` : `✂️ 正在排除引用未通過查證之來源的內容…（已產生 ${n.toLocaleString()} 字）`, 'run') });
       if (seq !== verifySeq) return null;
       if (rv.why === 'aborted') { endBusy(); return null; }
       if (rv.usage && (rv.usage.i || rv.usage.o)) revUsage = rv.usage;
+      if (rv.model) reviseModel = rv.model;
       let revised = null, g = null;
       if (rv.ok) {
         const chk = validateRevision(rv.text, rv.stopReason, doc, plan);

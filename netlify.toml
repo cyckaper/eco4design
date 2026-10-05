@@ -34,3 +34,9 @@
 [[edge_functions]]
   path = "/api/verify"
   function = "verify"
+
+# 可用模型與建議模型（由 Anthropic Models API 取得，快取 6 小時）
+# 選填環境變數：RECOMMENDED_MODEL（指定建議模型，例如 claude-opus-5-5；須是目前可用的模型）
+[[edge_functions]]
+  path = "/api/models"
+  function = "models"
