@@ -914,6 +914,9 @@
 
   // ========== OSM Overpass ==========
   const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
+  // 主伺服器忙碌（429 查詢過於頻繁、502/503/504、逾時、連線失敗）時依序改用的公用備用伺服器（資料同為 OpenStreetMap）
+  const OVERPASS_MIRRORS = ['https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
+  let osmSeq = 0, osmCtl = null;
   const OSM_CATEGORIES = {
     protected:  { icon: '🛡️', name: '保護區', en: 'Protected areas' },
     water:      { icon: '💧', name: '水體', en: 'Water bodies' },
@@ -1878,37 +1881,52 @@
 );
 out tags center;`;
 
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-      const res = await fetch(OVERPASS_API, {
-        method: 'POST',
-        body: 'data=' + encodeURIComponent(query),
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      if (!res.ok) {
-        let errDetail = '';
-        try { errDetail = (await res.text()).slice(0, 200); } catch (_) {}
-        throw new Error(`HTTP ${res.status}${errDetail ? ' · ' + errDetail : ''}`);
+    // 只採用最新一次查詢：位置或半徑在查詢期間改變時，取消前一次（避免舊查詢的錯誤蓋掉新結果，也減少對伺服器的請求）
+    const seq = ++osmSeq;
+    if (osmCtl) osmCtl.abort();
+    const en = LANG === 'en';
+    let lastErr = null;
+    for (const [i, url] of [OVERPASS_API, ...OVERPASS_MIRRORS].entries()) {
+      if (i > 0) status.textContent = en ? `⏳ The main OSM server is busy — trying backup server ${i}…` : `⏳ OSM 主伺服器忙碌，改用備用伺服器 ${i}…`;
+      const ac = osmCtl = new AbortController();   // 每次嘗試各用一個；新的查詢開始時取消正在進行的這一次
+      let timedOut = false;
+      const timeoutId = setTimeout(() => { timedOut = true; ac.abort(); }, 25000);
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          body: 'data=' + encodeURIComponent(query),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          signal: ac.signal
+        });
+        if (seq !== osmSeq) return;
+        // 忙碌或伺服器錯誤 → 換下一台；其他錯誤（查詢本身有問題）不換
+        if (!res.ok) { lastErr = { status: res.status }; if ([429, 502, 503, 504].includes(res.status)) continue; break; }
+        const data = await res.json();
+        if (seq !== osmSeq) return;
+        data.__fetchedAt = new Date().toISOString();   // 擷取時間：寫進報告的「資料來源」
+        osmCache[cacheKey] = data;
+        renderOsm(data, radius);
+        return;
+      } catch (e) {
+        if (seq !== osmSeq) return;                 // 被新的查詢取代：不顯示任何訊息
+        lastErr = timedOut ? { timeout: true } : { network: true };
+        console.warn('OSM fetch error:', url, e);
+      } finally {
+        clearTimeout(timeoutId);
+        if (osmCtl === ac) osmCtl = null;
       }
-
-      const data = await res.json();
-      data.__fetchedAt = new Date().toISOString();   // 擷取時間：寫進報告的「資料來源」
-      osmCache[cacheKey] = data;
-      renderOsm(data, radius);
-    } catch (e) {
-      status.classList.add('error');
-      const msg = e.name === 'AbortError' ? '查詢逾時（30 秒）' : (e.message || String(e));
-      let hint = '';
-      if (msg.includes('429')) hint = '——查詢過於頻繁，請稍候再試';
-      else if (msg.includes('504') || msg.includes('逾時')) hint = '——伺服器繁忙或查詢過於複雜，可縮小半徑';
-      status.textContent = LANG==='en' ? `❌ OSM load failed: ${msg}${hint}` : `❌ OSM 載入失敗：${msg}${hint}`;
-      console.error('OSM fetch error:', e);
     }
+    if (seq !== osmSeq) return;
+    status.classList.add('error');
+    const e = lastErr || {};
+    const what = e.status === 429 ? (en ? 'the OSM servers are receiving too many requests (HTTP 429)' : 'OSM 伺服器查詢量過大（HTTP 429）')
+      : e.status >= 500 ? (en ? `the OSM servers are busy (HTTP ${e.status})` : `OSM 伺服器忙碌（HTTP ${e.status}）`)
+      : e.timeout ? (en ? 'the query timed out' : '查詢逾時')
+      : e.status ? `HTTP ${e.status}` : (en ? 'could not connect' : '無法連線');
+    const hint = e.timeout || e.status === 504
+      ? (en ? 'Try a smaller radius, or press “🔄 Query” again in a minute.' : '可縮小半徑，或 1 分鐘後再按「🔄 查詢」。')
+      : (en ? 'The backup servers were tried too. Press “🔄 Query” again in a minute; the analysis can also run without OSM data.' : '已改試備用伺服器仍未成功。請 1 分鐘後再按「🔄 查詢」；沒有 OSM 資料也可以進行分析。');
+    status.textContent = en ? `❌ OSM load failed: ${what}. ${hint}` : `❌ OSM 載入失敗：${what}。${hint}`;
   }
 
   let osmLastData = null, osmLastRadius = null;
