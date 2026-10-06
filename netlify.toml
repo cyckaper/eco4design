@@ -28,3 +28,15 @@
 [[edge_functions]]
   path = "/api/analyze"
   function = "analyze"
+
+# 參考文獻真實性查核（doi.org／Crossref／OpenAlex／直接開啟網址；不需金鑰）
+# 選填環境變數：VERIFY_MAILTO（Crossref／OpenAlex 禮貌池聯絡信箱，可提高查詢額度）
+[[edge_functions]]
+  path = "/api/verify"
+  function = "verify"
+
+# 可用模型與建議模型（由 Anthropic Models API 取得，快取 6 小時）
+# 選填環境變數：RECOMMENDED_MODEL（指定建議模型，例如 claude-opus-5-5；須是目前可用的模型）
+[[edge_functions]]
+  path = "/api/models"
+  function = "models"
