@@ -5,7 +5,8 @@
 // 且等待上游回應不計入 CPU 時間。Deno 執行環境不需 build/npm install，
 // 因此可直接用拖拉方式部署。
 
-import { getCatalog, parseModelId, supportsEffort, thinksByDefault } from '../shared/model-catalog.js';
+import { getCatalog, parseModelId, supportsEffort, supportsDynamicTools, thinksByDefault } from '../shared/model-catalog.js';
+import { relay } from '../shared/sse-relay.js';
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -15,8 +16,20 @@ const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const MAX_PROMPT_CHARS = 24000;   // 提示詞長度上限（防濫用）
 // 輸出上限：新一代模型預設會先思考（思考 token 也計入），上限給得較寬；只依實際產生量計費
 const MAX_TOKENS = 64000;
-// 推理強度：分析用 medium（兼顧品質、時間與 token），改寫只刪除與更正用 low
-const EFFORT = { analyze: 'medium', revise: 'low' };
+// 推理強度：分析用 high（多查、查得仔細，減少「未查得」），改寫只刪除與更正用 low
+const EFFORT = { analyze: 'high', revise: 'low' };
+// 網路工具：搜尋 ≤15 次（與 index.html 的 WEB_SEARCH_MAX 一致）；讀取網頁全文 ≤6 次（論文、政府文件中的數值多半不在搜尋摘要裡）。
+// Sonnet／Opus 4.6 以上用可過濾結果的新版工具（先以程式篩出相關段落再放進內容，省 token）；Haiku 只搜尋（維持便宜、快速）。
+const WEB_SEARCH_MAX = 15, WEB_FETCH_MAX = 6, FETCH_MAX_CONTENT_TOKENS = 15000;
+function webTools(model) {
+  if (supportsDynamicTools(model)) {
+    return [
+      { type: 'web_search_20260209', name: 'web_search', max_uses: WEB_SEARCH_MAX },
+      { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: WEB_FETCH_MAX, max_content_tokens: FETCH_MAX_CONTENT_TOKENS, citations: { enabled: true } },
+    ];
+  }
+  return [{ type: 'web_search_20250305', name: 'web_search', max_uses: WEB_SEARCH_MAX }];
+}
 
 // mode: 'revise'（排除未通過查證的內容）：輸入是整份報告 <article> 加上排除清單，因此另有較高的長度上限；
 // 不提供任何工具（不做網路搜尋）——改寫只能刪除與更正，不得引入未經查證的新資料。
@@ -148,27 +161,27 @@ export default async (request, context) => {
     ? Math.min(MAX_TOKENS, Math.max(REVISE_MIN_TOKENS, Math.ceil(prompt.length * 1.2)) + (thinksByDefault(model) ? 16000 : 0))
     : (/haiku/.test(model) ? 32000 : MAX_TOKENS);
 
+  const messages = [{ role: 'user', content: prompt }];
+  const callUpstream = msgs => fetch(ANTHROPIC_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      stream: true,                     // 串流是關鍵：讓連線持續有資料流動，避開逾時
+      ...(supportsEffort(model) ? { output_config: { effort: revise ? EFFORT.revise : EFFORT.analyze } } : {}),
+      messages: msgs,
+      // revise：不帶 tools，模型無法搜尋或取得新資料
+      ...(revise ? {} : { tools: webTools(model) }),
+    }),
+  });
   let upstream;
   try {
-    upstream = await fetch(ANTHROPIC_URL, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        stream: true,                     // 串流是關鍵：讓連線持續有資料流動，避開逾時
-        ...(supportsEffort(model) ? { output_config: { effort: revise ? EFFORT.revise : EFFORT.analyze } } : {}),
-        messages: [{ role: 'user', content: prompt }],
-        // max_uses：限制搜尋次數，縮短生成時間、降低手機斷線風險（報告只需 ≤3 案例、≤15 筆文獻；
-        // 10 次＝物種與法規、選填的人類活動影響證據、案例；與 index.html 的 WEB_SEARCH_MAX 一致）
-        // revise：不帶 tools，模型無法搜尋或取得新資料
-        ...(revise ? {} : { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 10 }] }),
-      }),
-    });
+    upstream = await callUpstream(messages);
   } catch (e) {
     return json(502, { error: '無法連線至 Anthropic API：' + (e?.message || String(e)) });
   }
@@ -187,8 +200,9 @@ export default async (request, context) => {
     return json(upstream.status, { error: message, upstreamStatus: upstream.status });
   }
 
-  // 直接把 SSE 串流轉送給瀏覽器（x-model：實際使用的模型，供前端記錄）
-  return new Response(upstream.body, {
+  // 把 SSE 串流轉送給瀏覽器（搜尋迴圈暫停時自動接續、閒置時送 keepalive、網頁全文不轉送）；x-model：實際使用的模型，供前端記錄
+  const outBody = revise ? upstream.body : relay(upstream, { userMessages: messages, next: callUpstream });
+  return new Response(outBody, {
     status: 200,
     headers: {
       'x-model': model,

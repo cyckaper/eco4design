@@ -3973,13 +3973,14 @@ ${a}
     });
   }
 
-  const WEB_SEARCH_MAX = 10;       // 與 netlify/edge-functions/analyze.js 的 web_search max_uses 一致
+  const WEB_SEARCH_MAX = 15;       // 與 netlify/edge-functions/analyze.js 的 WEB_SEARCH_MAX 一致
+  const WEB_FETCH_MAX = 6;         // 讀取網頁全文的次數（analyze.js 的 WEB_FETCH_MAX）
   const PROMPT_MAX_CHARS = 24000;  // 與 analyze.js 的 MAX_PROMPT_CHARS 一致
   // API 路徑的回應格式指令（搜尋上限與優先序）：有「未來使用活動」時，加查這些活動對焦點物種的影響
   function responseFormatSuffix(en, act) {
     return en
-      ? `\n\n⚠️ RESPONSE FORMAT: You have at most ${WEB_SEARCH_MAX} web searches. Prioritise legal/conservation status and focal-species ecology, ${act ? 'then the impacts of the listed activities, searched by disturbance pathway (approach/flushing, dogs, night light, noise, trampling and erosion, in-stream disturbance, feeding) so that one study can serve several activities — an activity with no evidence gets "not found"; never lower the source standard to fill a row — then cases' : 'then cases'}; one species account can serve all of a species' cells. Finish all searches before writing the report, and do not write any commentary while searching. The first characters you output are <article> and the last are </article>. No markdown code fence.`
-      : `\n\n⚠️ 回應格式：網路搜尋最多 ${WEB_SEARCH_MAX} 次——先查保育／法規身分與焦點物種生態，${act ? '再查所列人類活動的影響：依干擾途徑合併搜尋（接近／驚飛、犬隻、夜間光、噪音、踐踏與沖蝕、水域擾動、餵食），一份文獻可支持多個活動，不必逐項活動搜尋；搜尋不到的活動寫「未查得」，不要為填滿每一列而降低來源品質；最後查案例' : '再查案例'}；同一物種的各欄可共用一份物種文獻。全部搜尋完成後才開始輸出報告，搜尋期間不要輸出任何說明文字；第一個輸出字元即為 <article>，最後為 </article>；不要加 markdown code fence。`;
+      ? `\n\n⚠️ RESPONSE FORMAT: You have at most ${WEB_SEARCH_MAX} web searches. Prioritise legal/conservation status and focal-species ecology, ${act ? 'then the impacts of the listed activities, searched by disturbance pathway (approach/flushing, dogs, night light, noise, trampling and erosion, in-stream disturbance, feeding) so that one study can serve several activities — an activity with no evidence gets "not found"; never lower the source standard to fill a row — then cases' : 'then cases'}; one species account can serve all of a species' cells. If a full-text reading tool is available (at most ${WEB_FETCH_MAX} pages), open the most relevant paper or government document when the search snippet lacks a needed number (breeding months, buffer width, flight-initiation distance) rather than writing "not found"; cite pages you read like search results. Finish all searches before writing the report, and do not write any commentary while searching. The first characters you output are <article> and the last are </article>. No markdown code fence.`
+      : `\n\n⚠️ 回應格式：網路搜尋最多 ${WEB_SEARCH_MAX} 次——先查保育／法規身分與焦點物種生態，${act ? '再查所列人類活動的影響：依干擾途徑合併搜尋（接近／驚飛、犬隻、夜間光、噪音、踐踏與沖蝕、水域擾動、餵食），一份文獻可支持多個活動，不必逐項活動搜尋；搜尋不到的活動寫「未查得」，不要為填滿每一列而降低來源品質；最後查案例' : '再查案例'}；同一物種的各欄可共用一份物種文獻。若有讀取網頁全文的工具（最多 ${WEB_FETCH_MAX} 頁），搜尋摘要缺少所需數值（繁殖月份、緩衝寬度、驚飛距離等）時，先開啟最相關的論文或政府文件全文查找，不要直接寫「未查得」；讀過的網頁與搜尋結果一樣可以引用。全部搜尋完成後才開始輸出報告，搜尋期間不要輸出任何說明文字；第一個輸出字元即為 <article>，最後為 </article>；不要加 markdown code fence。`;
   }
 
   async function callClaudeAPI() {
@@ -4037,6 +4038,7 @@ ${a}
     let streamStarted = false;
     let fullText = '';
     let searchCalls = 0;
+    let fetchCalls = 0;           // 讀取網頁全文（web_fetch）的次數
     const sources = [];           // 模型實際搜尋到的網址（web_search_tool_result），供引用比對
     const sourceTitles = new Map();   // 網址 → 搜尋結果標題
     const citedMap = new Map();       // 模型撰寫時實際引用的來源（citations_delta）：網址 → { t, q: [被引用原文] }
@@ -4137,8 +4139,18 @@ ${a}
             else if (ev.delta.type === 'citations_delta') noteCitation(citedMap, ev.delta.citation);
           } else if (ev.type === 'content_block_start' && ev.content_block) {
             if (ev.content_block.type === 'server_tool_use') {
-              searchCalls++;
-              if (subtextEl) subtextEl.textContent = `🔍 已進行 ${searchCalls} 次網路搜尋…`;
+              // 依工具名稱計數：web_search＝搜尋、web_fetch＝讀取網頁全文；其他（新版工具篩選結果用的程式執行）不計
+              const tn = ev.content_block.name;
+              if (tn === 'web_fetch') fetchCalls++;
+              else if (tn === 'web_search' || !tn) searchCalls++;
+              if (subtextEl) subtextEl.textContent = `🔍 已進行 ${searchCalls} 次網路搜尋${fetchCalls ? `・📄 讀取 ${fetchCalls} 個網頁` : ''}…`;
+            } else if (ev.content_block.type === 'web_fetch_tool_result' && ev.content_block.content && ev.content_block.content.type === 'web_fetch_result') {
+              // 模型實際讀過全文的網頁：與搜尋結果一樣算作本次取得的來源（查證時的依據）
+              const fr = ev.content_block.content, u = fr.url, tt = fr.content && fr.content.title;
+              if (typeof u === 'string' && u) {
+                if (!sources.includes(u)) sources.push(u);
+                if (typeof tt === 'string' && tt.trim() && !sourceTitles.has(u)) sourceTitles.set(u, tt.replace(/\s+/g, ' ').trim().slice(0, 200));
+              }
             } else if (ev.content_block.type === 'web_search_tool_result' && Array.isArray(ev.content_block.content)) {
               ev.content_block.content.forEach(r => {
                 if (!r || typeof r.url !== 'string') return;
@@ -4158,7 +4170,7 @@ ${a}
         if (fullText && subtextEl && searchCalls === 0) {
           subtextEl.textContent = `✍️ 已產生 ${fullText.length.toLocaleString()} 字…`;
         } else if (fullText && subtextEl) {
-          subtextEl.textContent = `🔍 ${searchCalls} 次搜尋 · ✍️ 已產生 ${fullText.length.toLocaleString()} 字…`;
+          subtextEl.textContent = `🔍 ${searchCalls} 次搜尋${fetchCalls ? ` · 📄 ${fetchCalls} 個網頁` : ''} · ✍️ 已產生 ${fullText.length.toLocaleString()} 字…`;
         }
         progressChars = fullText.length;
         progressSearches = searchCalls;
@@ -4204,6 +4216,7 @@ ${a}
         timestamp: new Date().toISOString(),
         usage: usage || {},
         searchCalls: searchCalls,
+        fetchCalls: fetchCalls,
         stopReason: stopReason,
         sources: sources.slice(0, 80),
         searchSources: meta.src,     // [{ u, t }] 搜尋取得的來源（含標題）
@@ -5441,7 +5454,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     if (analysisMeta) {
       const u = analysisMeta.usage;
       const tokenStr = u.input_tokens != null ? `輸入 ${u.input_tokens} / 輸出 ${u.output_tokens} tokens` : '';
-      meta.textContent = `${analysisMeta.model} · ${analysisMeta.elapsed} 秒 · ${analysisMeta.searchCalls} 次搜尋 · ${tokenStr}`;
+      meta.textContent = `${analysisMeta.model} · ${analysisMeta.elapsed} 秒 · ${analysisMeta.searchCalls} 次搜尋${analysisMeta.fetchCalls ? ` · ${analysisMeta.fetchCalls} 個網頁` : ''} · ${tokenStr}`;
     } else {
       meta.textContent = '手動載入';
     }
@@ -6229,8 +6242,10 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     // unchecked：查證服務因本身的限制（時間上限、運算預算等）而未查核這筆——不是來源的問題，須重新查核，不得據以排除。
     // 舊版服務沒有這個欄位：「未完成查證、方法 none、沒有任何檢核」只會出現在未開始查核的項目
     const unchecked = !invalid && verdict === 'inconclusive' && (o.unchecked === true || (method === 'none' && !checks.length));
+    // transient：對方網站暫時性錯誤（逾時、連線失敗、5xx）造成的未完成查證 → 單筆重新查核一次
+    const transient = !invalid && !unchecked && verdict === 'inconclusive' && o.transient === true;
     return { id: o.id, verdict, reason, method, checks, suggestion, summary: str(o.summary, 600),
-      ...(invalid ? { invalid: true } : {}), ...(unchecked ? { unchecked: true } : {}) };
+      ...(invalid ? { invalid: true } : {}), ...(unchecked ? { unchecked: true } : {}), ...(transient ? { transient: true } : {}) };
   }
   // 送出一批並逐行讀取 NDJSON；回傳 { error } 或 { done }
   async function streamVerify(batch, lang, passcode, signal, onResult) {
@@ -6603,6 +6618,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
 
   // ---------- 送出查證（文獻＋案例，每批 VERIFY_BATCH 筆）----------
   const VERIFY_RETRY_BATCH = 4;      // 查證服務回報「未查核」（時間上限、運算預算）的項目：以較小批次重新查核一次
+  const VERIFY_RETRY2_MAX = 8;       // 第二輪單筆重查的上限（避免查證時間過長）
   async function verifyItems(items, lang, passcode, signal, seq, onProgress) {
     const results = new Map();
     let failure = null;
@@ -6622,6 +6638,14 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     await run(items, VERIFY_BATCH);
     const retry = items.filter(it => results.has(it.id) && results.get(it.id).unchecked);
     if (retry.length && !failure && seq === verifySeq) await run(retry, VERIFY_RETRY_BATCH);
+    // 第二輪：仍未查核者，以及對方網站暫時性錯誤（逾時、5xx）而未完成查證者 → 每批 1 筆（整個時間上限給這一筆）再查一次。
+    // 新結果較差（原本已查核、重查反而未查核）時保留原結果
+    const retry2 = items.filter(it => { const x = results.get(it.id); return x && (x.unchecked || x.transient); }).slice(0, VERIFY_RETRY2_MAX);
+    if (retry2.length && !failure && seq === verifySeq) {
+      const before = new Map(retry2.map(it => [it.id, results.get(it.id)]));
+      await run(retry2, 1);
+      before.forEach((old, id) => { const now = results.get(id); if (now && now.unchecked && !old.unchecked) results.set(id, old); });
+    }
     // 重新查核後仍未查核：視同查證中斷（不是來源的問題，不得據以排除任何內容）
     const still = items.filter(it => results.has(it.id) && results.get(it.id).unchecked);
     if (!failure && still.length) failure = { kind: 'unchecked', n: still.length };
@@ -6643,8 +6667,12 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
   const clip = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   // 改寫指示：報告本文放在提示詞最後的 REPORT 區塊內（標記在全文中只出現一次；analyze.js 以此確認請求確實是改寫），
   // 並明示其內容是資料（報告來自模型、貼上或匯入，可能夾帶指令）
-  function buildRevisePrompt(article, plan, lang) {
+  function buildRevisePrompt(article, plan, lang, note) {
     const en = lang === 'en';
+    // 第二次改寫：上一次的遺漏（由本工具產生；文獻標題等來自報告本身，同樣只作為資料列出）
+    const missed = Array.isArray(note) ? note.filter(x => typeof x === 'string' && x.trim()).slice(0, 20).map(x => '- ' + clip(x, 240)) : [];
+    const missedZh = missed.length ? `\n【上一次改寫的遺漏】（這次務必修正）\n${missed.join('\n')}\n` : '';
+    const missedEn = missed.length ? `\nWHAT THE PREVIOUS ATTEMPT MISSED (fix this time)\n${missed.join('\n')}\n` : '';
     const ex = plan.exclude.map(x => `- [${x.id}] ${x.kind === 'case' ? (en ? 'Case row: ' : '案例列：') : ''}${clip(x.label, 320)} — ${en ? 'reason: ' : '原因：'}${x.whyText}`);
     plan.orphans.forEach(o => ex.push(`- ${en ? `In-text citation (${o.label})` : `正文引用（${o.label}）`} — ${en ? 'reason: ' : '原因：'}${filterWhyText('orphan', en)}`));
     const rep = plan.repair.map(x => {
@@ -6664,7 +6692,7 @@ ${ex.length ? ex.join('\n') : none}
 
 CITATIONS TO CORRECT (the work exists, but the citation details are wrong)
 ${rep.length ? rep.join('\n') : none}
-
+${missedEn}
 RULES
 1. Delete everything that cites or relies on an excluded source: sentences, list items, table-cell content, design-measure rows, case rows, and the cross-section JSON entries (species or data) that rest only on those sources. If a parenthetical citation names both an excluded source and a remaining source, delete only the excluded citation and keep the sentence (e.g. "(Lin, 2019; Bad, 2020)" becomes "(Lin, 2019)"); a month, place or event in the parentheses is not a source. If a sentence or table cell has separate clauses, one citing an excluded source and another citing a remaining source (e.g. "A holds (Lin, 2019), and B holds (Bad, 2020)."), delete only the clause citing the excluded source and keep the rest with its citation ("A holds (Lin, 2019)."); do not delete the whole sentence or cell for it. When a table cell's content is deleted, write "not found" in it; delete a design-measure or case row entirely when the whole row rests on excluded sources. In the species table keep each focal species' name: if its row rests only on excluded sources, write "not found" in its other cells, and write "not found" in that species' column of the resource matrix (class matrix). In the human-activity table (class activities) keep every activity row: write "not found" in the cells that relied on excluded sources, and if an activity's impact cell becomes "not found", its use level, its management cell (unless that cell cites a remaining source) and its row in the compatibility matrix (class compat) become "not found" too — except a use level that cites a remaining law or agency rule, which stays.
 2. Remove the excluded entries from the reference list <ul class="refs">.
@@ -6683,7 +6711,7 @@ ${ex.length ? ex.join('\n') : none}
 
 【必須更正的書目】（文獻存在，但書目有誤）
 ${rep.length ? rep.join('\n') : none}
-
+${missedZh}
 【修訂規則】
 1. 刪除所有引用或依據「必須排除的來源」的內容：句子、清單項目、表格儲存格內容、設計措施列、案例列，以及第 4.2 節 JSON 中只依據這些來源的物種或資料。同一個括號同時引用被排除與保留的來源時，只刪除被排除的那筆引用，句子保留（例如「（Lin, 2019；Bad, 2020）」改為「（Lin, 2019）」）；括號中的月份、地名或事件不是來源。同一句或同一格中，分別引用被排除與保留來源的子句（例如「甲（Lin, 2019），乙（Bad, 2020）。」）：只刪除引用被排除來源的子句，其餘子句連同引用保留（改為「甲（Lin, 2019）。」），不得因此刪除整句或整格。表格儲存格的內容刪除後寫「未查得」；整列都依據被排除來源的設計措施列或案例列，整列刪除。物種需求表保留每個焦點物種的名稱：整列都依據被排除來源者，其餘各格寫「未查得」，並把資源利用矩陣（class matrix）中該物種一欄改為「未查得」。人類活動表（class activities）保留每一個活動列：依據被排除來源的格寫「未查得」；某活動的影響機制成為「未查得」時，其使用程度、管理建議（除非該格引用保留的來源）與相容性矩陣（class compat）中該列也改為「未查得」——但使用程度引用保留的法規或主管機關公告者，保留該等級。
 2. 從參考文獻清單 <ul class="refs"> 刪除被排除的文獻。
@@ -8282,22 +8310,18 @@ ${block}`;
       // 改寫用最新的 Sonnet（產生報告用 Haiku 時沿用 Haiku）：改寫只刪除與更正，不需要較貴的模型；實際模型由伺服器決定
       const genModel = (meta && meta.route === 'api' && meta.model) || (document.getElementById('apiModel') || {}).value || '';
       reviseModel = /haiku/i.test(genModel) ? genModel : '';
-      const rv = await callRevise({ prompt: buildRevisePrompt(articleForRevision(doc), plan, lang), model: reviseModel, passcode, signal: ctl.signal,
-        onProgress: n => setVerifyStatus(uen ? `✂️ Removing content that cites sources which failed verification… (${n.toLocaleString()} characters)` : `✂️ 正在排除引用未通過查證之來源的內容…（已產生 ${n.toLocaleString()} 字）`, 'run') });
-      if (seq !== verifySeq) return null;
-      if (rv.why === 'aborted') { endBusy(); return null; }
-      if (rv.usage && (rv.usage.i || rv.usage.o)) revUsage = rv.usage;
-      if (rv.model) reviseModel = rv.model;
-      let revised = null, g = null;
-      if (rv.ok) {
+      // 一次改寫：呼叫、驗證、套用防護、與原稿比對；不改動外部狀態，回傳結果供比較（第一次不理想時重試一次，取較好的一次）
+      const attemptRevise = async note => {
+        const rv = await callRevise({ prompt: buildRevisePrompt(articleForRevision(doc), plan, lang, note), model: reviseModel, passcode, signal: ctl.signal,
+          onProgress: n => setVerifyStatus(uen ? `✂️ Removing content that cites sources which failed verification${note ? ' (second attempt)' : ''}… (${n.toLocaleString()} characters)` : `✂️ 正在排除引用未通過查證之來源的內容${note ? '（第二次改寫）' : ''}…（已產生 ${n.toLocaleString()} 字）`, 'run') });
+        if (rv.usage && (rv.usage.i || rv.usage.o)) revUsage = revUsage ? { i: revUsage.i + (rv.usage.i || 0), o: revUsage.o + (rv.usage.o || 0) } : rv.usage;
+        if (rv.model) reviseModel = rv.model;
+        if (!rv.ok) return { kind: 'fail', why: rv, retry: !(rv.why === 'aborted' || rv.why === 'too_long' || (rv.why === 'http' && rv.status < 500)) };
         const chk = validateRevision(rv.text, rv.stopReason, doc, plan);
-        if (chk.ok) {
-          const d2 = new DOMParser().parseFromString(snapshot, 'text/html');
-          if (spliceRevised(d2, chk.html)) revised = d2; else setWhy({ why: 'invalid' });
-        } else setWhy(chk);
-      } else setWhy(rv);
-      if (revised) {
-        g = applyExclusionGuards(revised, plan);
+        if (!chk.ok) return { kind: 'fail', why: chk, retry: true };
+        const revised = new DOMParser().parseFromString(snapshot, 'text/html');
+        if (!spliceRevised(revised, chk.html)) return { kind: 'fail', why: { why: 'invalid' }, retry: true };
+        const g = applyExclusionGuards(revised, plan);
         // 改寫只能刪除、縮短與更正：逐句與原稿比對，新加的內容（或改寫後放回的已排除內容）刪除；太多就不採用改寫
         const pv = provenanceCheck(revised, doc, plan);
         // 剖面 JSON：新加的物種、被改寫的標題或圖說（只比對 JSON 本身；文字的比對見上）
@@ -8306,20 +8330,42 @@ ${block}`;
         const nNew = pv.novel + pv.readd;
         if (nNew > PROV_REJECT_MAX) {
           console.warn('[verify] revision added material', pv.samples);
-          setWhy({ why: 'added', novel: pv.novel, readd: pv.readd });
-          revised = null;
-        } else {
-          workDoc = revised; mode = 'ai';
-          // 改寫未依指示刪除（清單仍有被排除的文獻、被排除的案例列仍在、正文仍引用或重述被排除的來源）：防護已補刪，但未附引用的相關內容可能仍在
-          const ignored = pv.readd > 0 || g.refsRemoved.some(o => o.action === 'exclude') || g.merged.length > 0 || g.prune.hitsDropped > 0 || g.prune.hitsOrphan > 0 ||
-            g.casesRemoved.some(r => r.ids.length && r.ids.every(k => plan.exclCaseIds.has(k)));
-          // 新加的內容與未依指示刪除分開說明（只刪除、沒有新加內容的改寫不會被說成「加入了內容」）
-          if (pv.novel) { whyCode = 'revise_added'; setWhy({ why: 'added_some', n: pv.novel }); if (ignored) setWhy({ why: 'ignored' }, true); }
-          else if (ignored) { whyCode = 'revise_ignored'; setWhy({ why: 'ignored' }); }
-          if (nNew || ignored) console.info('[verify] revision downgraded', { novel: pv.novel, readd: pv.readd, samples: pv.samples, refsLeft: g.refsRemoved.filter(o => o.action === 'exclude').map(o => o.id),
-            merged: g.merged.length, hitsDropped: g.prune.hitsDropped, hitsOrphan: g.prune.hitsOrphan, casesLeft: g.casesRemoved.filter(r => r.ids.length && r.ids.every(k => plan.exclCaseIds.has(k))).map(r => r.name) });
+          return { kind: 'fail', why: { why: 'added', novel: pv.novel, readd: pv.readd }, retry: true };
         }
+        // 改寫未依指示刪除（清單仍有被排除的文獻、被排除的案例列仍在、正文仍引用或重述被排除的來源）：防護已補刪，但未附引用的相關內容可能仍在
+        const refsLeft = g.refsRemoved.filter(o => o.action === 'exclude');
+        const casesLeft = g.casesRemoved.filter(r => r.ids.length && r.ids.every(k => plan.exclCaseIds.has(k)));
+        const ignored = pv.readd > 0 || refsLeft.length > 0 || g.merged.length > 0 || g.prune.hitsDropped > 0 || g.prune.hitsOrphan > 0 || casesLeft.length > 0;
+        if (nNew || ignored) console.info('[verify] revision downgraded', { novel: pv.novel, readd: pv.readd, samples: pv.samples, refsLeft: refsLeft.map(o => o.id),
+          merged: g.merged.length, hitsDropped: g.prune.hitsDropped, hitsOrphan: g.prune.hitsOrphan, casesLeft: casesLeft.map(r => r.name) });
+        // 給第二次改寫的提示：上一次留下了什麼
+        const missed = [];
+        refsLeft.forEach(o => missed.push((en ? 'still in the reference list: ' : '參考文獻清單仍列出：') + clip(o.item.text, 160)));
+        casesLeft.forEach(r => missed.push((en ? 'case row still present: ' : '案例列仍在：') + clip(r.name, 120)));
+        const nCite = g.prune.hitsDropped + g.prune.hitsOrphan + pv.readd;
+        if (nCite) missed.push(en ? `${nCite} passage(s) still cited or restated an excluded source` : `仍有 ${nCite} 處引用或重述被排除的來源`);
+        if (pv.novel) missed.push(en ? `${pv.novel} passage(s) added material that is not in the original` : `有 ${pv.novel} 處加入了原稿沒有的內容`);
+        return { kind: 'ok', revised, g, novel: pv.novel, ignored, missed };
+      };
+      const score = a => a.kind !== 'ok' ? 0 : (a.ignored || a.novel) ? 1 : 2;
+      let att = await attemptRevise('');
+      if (seq !== verifySeq) return null;
+      if (att.kind === 'fail' && att.why.why === 'aborted') { endBusy(); return null; }
+      // 第一次不理想（失敗、加入內容或未依指示刪除）：重試一次，並告訴模型上一次的遺漏；取較好的一次
+      if (score(att) < 2 && (att.kind === 'ok' || att.retry)) {
+        const note = att.kind === 'ok' ? att.missed : [en ? 'the previous output could not be used (incomplete, invalid or added content); output the complete revised article and only delete or correct' : '上一次的輸出無法採用（不完整、格式不符或加入了內容）：請輸出完整的修訂後 <article>，只刪除或更正'];
+        const att2 = await attemptRevise(note.length ? note : ['']);
+        if (seq !== verifySeq) return null;
+        if (att2.kind === 'fail' && att2.why.why === 'aborted') { endBusy(); return null; }
+        if (score(att2) > score(att) || (score(att2) === score(att) && att2.kind === 'ok' && att2.missed.length < att.missed.length)) att = att2;
       }
+      let revised = null, g = null;
+      if (att.kind === 'ok') {
+        revised = att.revised; g = att.g; workDoc = revised; mode = 'ai';
+        // 新加的內容與未依指示刪除分開說明（只刪除、沒有新加內容的改寫不會被說成「加入了內容」）
+        if (att.novel) { whyCode = 'revise_added'; setWhy({ why: 'added_some', n: att.novel }); if (att.ignored) setWhy({ why: 'ignored' }, true); }
+        else if (att.ignored) { whyCode = 'revise_ignored'; setWhy({ why: 'ignored' }); }
+      } else setWhy(att.why);
       if (!revised) {   // 改寫失敗、不完整或不可信：對原始報告只套用確定性規則
         workDoc = doc; mode = 'rules'; whyCode = 'revise_failed';
         g = applyExclusionGuards(workDoc, plan);
