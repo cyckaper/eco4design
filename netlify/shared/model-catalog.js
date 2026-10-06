@@ -52,6 +52,11 @@ export function supportsEffort(id) {
   if (p.family === 'sonnet') return p.major > 4 || (p.major === 4 && p.minor >= 6);
   return false;
 }
+// 可過濾結果的新版網路工具（web_search／web_fetch _20260209）：Opus／Sonnet 4.6 以上
+export function supportsDynamicTools(id) {
+  const p = parseModelId(id);
+  return !!p && (p.family === 'opus' || p.family === 'sonnet') && (p.major > 4 || (p.major === 4 && p.minor >= 6));
+}
 // 預設開啟思考（adaptive）的模型：思考 token 計入 max_tokens，需要較大的上限
 export function thinksByDefault(id) {
   const p = parseModelId(id);

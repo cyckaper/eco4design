@@ -48,7 +48,7 @@ const MAX_DOI_CHARS = 300;            // 單一 DOI 字串上限（DOI 本身不
 const UPSTREAM_BASE = 40, UPSTREAM_PER_REF = 14, UPSTREAM_MAX = 300;   // 同一次請求的對外連線總數上限：min(300, 40 + 14 × 筆數)
 const RATE_WINDOW_MS = 5 * 60 * 1000, RATE_MAX = 100;                // 同一來源 IP 每 5 分鐘最多 100 次請求（單一執行個體內）
 const CPU_BUDGET_MS = 40;             // 頁面解析的運算時間預算（Netlify Edge 每次請求 CPU 上限 50 ms；等待網路不計）
-const UPSTREAM_TIMEOUT_MS = 8000;     // 每個上游請求
+const UPSTREAM_TIMEOUT_MS = 12000;    // 每個上游請求（部分政府網站回應較慢）
 const TOTAL_TIMEOUT_MS = 35000;       // 整體上限（headers 立即回傳，結果逐行串流）
 
 const UA = 'Qi-Coexistence-RefCheck/1.0 (+https://eco4design.healsdesign.org)';
@@ -1572,6 +1572,8 @@ function isRedirectHome(orig, final) {
 // ═══════════════════════════════════════════════════════════════
 // 本工具自身的限制造成的「未查核」（不是來源的問題）：時間上限、用戶端中止、運算預算、連線數上限、內部錯誤
 const TOOL_SIDE_CODES = new Set(['deadline', 'aborted', 'cpu_budget', 'upstream_budget', 'host_budget', 'internal_error']);
+// 暫時性錯誤（逾時、連線失敗、伺服器 5xx、請求過多）：可能是對方網站一時的狀況 → 判為未完成查證時標記 transient，前端單筆重新查核一次
+const TRANSIENT_CODES = new Set(['timeout', 'network_error', 'tls_error', 'rate_limited', 'http_500', 'http_502', 'http_503', 'http_504']);
 const NEGATIVE_CODES = new Set(['dns_error', 'unsafe_url', 'invalid_url', 'http_404', 'http_410', 'soft_404', 'redirect_home', 'doi_not_registered', 'isbn_invalid']);
 
 function baseCheck(kind, target) {
@@ -2139,8 +2141,9 @@ function decide(id, evs, search, ctx, cite) {
   // unchecked（附加欄位，只在 true 時出現）：判為 inconclusive 的原因包含本工具自身的限制（時間上限、運算預算、連線數上限、內部錯誤），
   // 而不是來源網站或書目服務的回應——前端應以較小批次重新查核，仍未查核時視同查證中斷（不得據以排除）
   const toolSide = evs.some(e => e.cls === 'error' && TOOL_SIDE_CODES.has(e.reason)) || !!(search && search.cls === 'error' && TOOL_SIDE_CODES.has(search.code));
+  const transient = !toolSide && evs.some(e => e.cls === 'error' && TRANSIENT_CODES.has(e.reason));
   const out = (verdict, method, summary, suggestion, reason) => ({ id, verdict, method, reason: verdict === 'partial' ? (reason || 'unknown') : null, checks, suggestion: suggestion || null, summary,
-    ...(verdict === 'inconclusive' && toolSide ? { unchecked: true } : {}) });
+    ...(verdict === 'inconclusive' && toolSide ? { unchecked: true } : {}), ...(verdict === 'inconclusive' && transient ? { transient: true } : {}) });
   const match = evs.find(e => e.cls === 'match');
   const doiMis = evs.find(e => e.kind === 'doi' && e.cls === 'mismatch');
   const mis = doiMis || evs.find(e => e.cls === 'mismatch');
