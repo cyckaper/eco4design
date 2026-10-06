@@ -1861,25 +1861,36 @@
 
     const r = radius * 1000;
     const lat = state.lat, lon = state.lon;
-    const query = `[out:json][timeout:25];
+    // 以外接方框（bbox）查詢：Overpass 以空間索引直接篩選，比逐項 around（計算每條線與基地的距離）快很多，
+    // 繁忙時較不易逾時；查回後再以中心點距離篩回所選半徑（見下方 inRadius）。
+    // 人行道與穿越道（footway=sidewalk／crossing）在都市中數以千計、與棲地無關，不查。
+    const dLat = r / 111320, dLon = r / (111320 * Math.max(0.2, Math.cos(lat * Math.PI / 180)));
+    const bbox = [lat - dLat, lon - dLon, lat + dLat, lon + dLon].map(v => v.toFixed(5)).join(',');
+    const query = `[out:json][timeout:25][bbox:${bbox}];
 (
-  way["leisure"="nature_reserve"](around:${r},${lat},${lon});
-  way["boundary"="protected_area"](around:${r},${lat},${lon});
-  way["boundary"="national_park"](around:${r},${lat},${lon});
-  relation["leisure"="nature_reserve"](around:${r},${lat},${lon});
-  relation["boundary"="protected_area"](around:${r},${lat},${lon});
-  way["landuse"="forest"](around:${r},${lat},${lon});
-  way["natural"="wood"](around:${r},${lat},${lon});
-  way["natural"="water"](around:${r},${lat},${lon});
-  way["waterway"~"river|stream|canal|drain"](around:${r},${lat},${lon});
-  node["natural"="waterfall"](around:${r},${lat},${lon});
-  node["natural"="spring"](around:${r},${lat},${lon});
-  node["place"~"village|hamlet|isolated_dwelling|farm"](around:${r},${lat},${lon});
-  way["highway"~"path|track|footway|bridleway"](around:${r},${lat},${lon});
-  node["natural"="peak"](around:${r},${lat},${lon});
-  way["natural"="cliff"](around:${r},${lat},${lon});
+  way["leisure"="nature_reserve"];
+  way["boundary"="protected_area"];
+  way["boundary"="national_park"];
+  relation["leisure"="nature_reserve"];
+  relation["boundary"="protected_area"];
+  way["landuse"="forest"];
+  way["natural"="wood"];
+  way["natural"="water"];
+  way["waterway"~"^(river|stream|canal|drain)$"];
+  node["natural"="waterfall"];
+  node["natural"="spring"];
+  node["place"~"^(village|hamlet|isolated_dwelling|farm)$"];
+  way["highway"~"^(path|track|bridleway)$"];
+  way["highway"="footway"]["footway"!~"^(sidewalk|crossing)$"];
+  node["natural"="peak"];
+  way["natural"="cliff"];
 );
 out tags center;`;
+    // 篩回所選半徑：點以位置、線與面以中心點計；線與面延伸較廣，容許中心點在半徑 1.5 倍內（大片森林、長河段的中心常在範圍外）
+    const distM = (a, b) => { const R = 6371000, toR = Math.PI / 180, dp = (b.lat - a.lat) * toR, dl = (b.lon - a.lon) * toR;
+      const h = Math.sin(dp / 2) ** 2 + Math.cos(a.lat * toR) * Math.cos(b.lat * toR) * Math.sin(dl / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
+    const inRadius = el => { const c = el.type === 'node' ? el : el.center; if (!c || typeof c.lat !== 'number') return true;
+      return distM({ lat, lon }, c) <= (el.type === 'node' ? r : r * 1.5); };
 
     // 只採用最新一次查詢：位置或半徑在查詢期間改變時，取消前一次（避免舊查詢的錯誤蓋掉新結果，也減少對伺服器的請求）
     const seq = ++osmSeq;
@@ -1890,7 +1901,7 @@ out tags center;`;
       if (i > 0) status.textContent = en ? `⏳ The main OSM server is busy — trying backup server ${i}…` : `⏳ OSM 主伺服器忙碌，改用備用伺服器 ${i}…`;
       const ac = osmCtl = new AbortController();   // 每次嘗試各用一個；新的查詢開始時取消正在進行的這一次
       let timedOut = false;
-      const timeoutId = setTimeout(() => { timedOut = true; ac.abort(); }, 25000);
+      const timeoutId = setTimeout(() => { timedOut = true; ac.abort(); }, 30000);   // 伺服器端上限 25 秒＋傳輸
       try {
         const res = await fetch(url, {
           method: 'POST',
@@ -1903,6 +1914,7 @@ out tags center;`;
         if (!res.ok) { lastErr = { status: res.status }; if ([429, 502, 503, 504].includes(res.status)) continue; break; }
         const data = await res.json();
         if (seq !== osmSeq) return;
+        if (Array.isArray(data.elements)) data.elements = data.elements.filter(inRadius);
         data.__fetchedAt = new Date().toISOString();   // 擷取時間：寫進報告的「資料來源」
         osmCache[cacheKey] = data;
         renderOsm(data, radius);
