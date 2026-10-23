@@ -1,4 +1,4 @@
-# 棲共生 Qi-Coexistence v1.31
+# 棲共生 Qi-Coexistence v1.33
 
 景觀生態共存設計工作流工具 · eco4design.healsdesign.org
 國立臺灣大學 園藝暨景觀學系 · HEALS Design System
@@ -17,7 +17,9 @@ OpenStreetMap 環境特徵），再交由 Claude 生成完整的生態共存設�
 ## 六步驟工作流
 
 1. **選擇基地位置** — 地圖點選、地名搜尋（Nominatim）、或輸入經緯度
-2. **焦點物種** — iNaturalist 自動載入在地觀察 + 預設組合 + 自訂輸入
+2. **焦點物種** — iNaturalist 自動載入在地觀察 + 預設組合 + 自訂輸入；
+   觀察卡片標出臺灣特有種與保育類等級（《野生動物保育法》I／II／III 級、文資法珍貴稀有植物），
+   類群篩選只改變畫面上的卡片，送給模型的在地觀察清單固定為全部類群
 3. **基地條件與棲地需求** — OSM 自動偵測環境特徵；棲地需求為獨立結構化欄位
 4. **未來使用活動**（選填）— 遊憩、自然體驗、療癒與社區、常見高衝擊四類膠囊（最多 10 項）+ 自訂輸入 + 預期使用規模；
    有選擇時，報告增加第 5 節「人類活動影響與使用建議」（活動影響表與活動 × 分區相容性矩陣），其後各節順延
@@ -51,6 +53,7 @@ OpenStreetMap 環境特徵），再交由 Claude 生成完整的生態共存設�
 瀏覽器 → /api/analyze（Netlify Edge Function，補上金鑰）→ Anthropic API
 瀏覽器 → /api/verify（Netlify Edge Function）→ doi.org／Crossref／OpenAlex／所列網頁
 瀏覽器 → /api/models（Netlify Edge Function）→ Anthropic Models API（可用模型清單，快取 6 小時）
+瀏覽器 → /api/taxon-status（Netlify Edge Function）→ TaiCOL 臺灣物種名錄／TBN 台灣生物多樣性網絡（保育類與特有種，快取 24 小時）
 ```
 
 金鑰存於 Netlify 伺服器端環境變數，瀏覽器完全看不到。
@@ -69,6 +72,7 @@ Edge Function 採串流回應，因此不受標準 serverless function 逾時限
     ├── edge-functions/
     │   ├── analyze.js              Claude API 代理（金鑰在伺服器端；mode 'revise' 為不搜尋的排除改寫）
     │   ├── models.js               可用模型與建議模型（GET /api/models）
+    │   ├── taxon-status.js         iNaturalist 卡片的保育類與特有種（代查 TaiCOL、TBN；POST /api/taxon-status）
     │   └── verify.js               參考文獻與案例來源查證（NDJSON 串流）
     └── shared/
         ├── model-catalog.js        模型目錄：各系列最新一版、單價、建議規則（analyze.js 與 models.js 共用）
@@ -123,7 +127,9 @@ Anthropic 推出新版時自動跟上，舊版的偏好設定也會自動改用�
 | 來源 | 用途 | 授權 |
 |---|---|---|
 | OpenStreetMap | 圖磚、Overpass 環境特徵、Nominatim 地名搜尋 | ODbL |
-| iNaturalist | 在地物種觀察記錄 | CC BY-NC |
+| iNaturalist | 在地物種觀察記錄、物種在臺灣的身分（特有／原生／外來） | CC BY-NC |
+| TaiCOL 臺灣物種名錄 | 特有種與保育類等級（卡片標示） | CC BY 4.0 |
+| TBN 台灣生物多樣性網絡 | 保育類等級（TaiCOL 查無或以亞種列名時補查） | 依 TBN 資料使用規範 |
 | Anthropic Claude | 分析生成 | — |
 
 ---
@@ -134,7 +140,7 @@ CC BY-NC-SA 4.0 · 張俊彥（Chang Chun-Yen）
 國立臺灣大學園藝暨景觀學系
 
 建議引用格式：
-> 張俊彥（2026）。棲共生 Qi-Coexistence v1.31：景觀生態共存設計工作流工具 [Web App]。國立臺灣大學園藝暨景觀學系。
+> 張俊彥（2026）。棲共生 Qi-Coexistence v1.33：景觀生態共存設計工作流工具 [Web App]。國立臺灣大學園藝暨景觀學系。
 
 ---
 
