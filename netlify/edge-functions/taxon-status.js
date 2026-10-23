@@ -229,7 +229,7 @@ export default async (request, context) => {
       const text = await res.text();
       const h = {};
       for (const k of ['server', 'cf-ray', 'content-type', 'x-cache', 'via', 'www-authenticate']) if (res.headers.get(k)) h[k] = res.headers.get(k);
-      return json({ status: res.status, headers: h, body: text.slice(0, 6000), length: text.length });
+      return json({ status: res.status, headers: h, body: text.slice(0, 200000), length: text.length });
     } catch (e) {
       return json({ error: String(e && e.message || e) });
     }
