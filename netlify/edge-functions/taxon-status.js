@@ -3,8 +3,9 @@
 //       與「臺灣特有種」，協助使用者依保育意義挑選焦點物種，而不是只看觀察筆數。
 //
 // 查詢來源：臺灣物種名錄 TaiCOL API v2（api.taicol.tw/v2/taxon；公開、不需金鑰，但不支援瀏覽器跨網域呼叫，所以由本站代查）
-//   1. taxon_group=<學名>：一次取得該分類群與其下的亞種、變種（保育類有時以臺灣的亞種列名，例如石虎）
-//   2. 名錄沒有這個學名時改用 scientific_name（可對到異名），再不行用中文俗名（common_name）
+//   1. scientific_name=<學名>（可對到異名）；查無時改用中文俗名（common_name）
+//   2. 物種已列 II／III 級，或紅皮書受脅卻沒有保育等級時，再以 taxon_group 取其下的亞種、變種
+//      （保育類有時以臺灣的亞種列名較嚴格的等級，例如石虎）
 //   台灣生物多樣性網絡 TBN API 對本站伺服器回應 403，因此不使用。
 //
 // 請求（POST JSON）：{ taxa: [{ sci: 'Psilopogon nuchalis', zh: '五色鳥' }, …] }（最多 MAX_TAXA 筆）
@@ -162,43 +163,45 @@ function summarize(base, group) {
 
 const EMPTY = { protected: null, protectedScope: null, endemic: null, endemicRank: null, source: null, id: null };
 
+// 需要看臺灣的亞種、變種的情形：物種已列 II／III 級（亞種可能更嚴格，例如石虎：豹貓 II、臺灣的亞種 I），
+// 或國家紅皮書列為受脅（NCR／NEN／NVU）或接近受脅（NNT）卻沒有保育等級。
+// TaiCOL 的 taxon_group 查詢一次要 2–4 秒，只在這些情形才查，其餘物種只用一次 scientific_name 查詢（約 0.1–0.3 秒）。
+function needsInfra(base) {
+  if (!isSpecies(base)) return false;
+  const level = levelOf(base.protected);
+  if (level === 'II' || level === 'III') return true;
+  return !level && /^N(CR|EN|VU|NT)$/i.test(String(base.redlist || '').trim());
+}
+
 async function lookup(sci, zh, deadline, debug) {
   const trace = debug ? [] : null;
-  const note = (q, r) => { if (trace) trace.push({ q, err: r.err || null, n: r.data ? recordsOf(r.data).length : null }); };
+  const note = (q, r, t0) => { if (trace) trace.push({ q, err: r.err || null, n: r.data ? recordsOf(r.data).length : null, ms: Date.now() - t0 }); };
   const enc = encodeURIComponent;
   const target = bareName(sci);
   let failed = false;   // 名錄沒有回應（逾時、錯誤）：結果可能不完整
-  let base = null, group = null, r;
+  let base = null, group = null, r, t0;
 
-  // 1) 該分類群與其下的亞種、變種
-  r = await fetchJson(`${TAICOL_API}?taxon_group=${enc(sci)}&limit=50`, deadline);
-  note('group', r);
+  // 1) 學名（有效名或異名）
+  t0 = Date.now();
+  r = await fetchJson(`${TAICOL_API}?scientific_name=${enc(sci)}`, deadline);
+  note('sci', r, t0);
   if (r.err) failed = true;
-  else {
-    const arr = usable(recordsOf(r.data));
-    base = pickByName(arr, target);
-    if (base) group = arr;
-  }
-  // 2) 名錄的有效名不是這個學名：用 scientific_name（可對到異名）
-  if (!base && !failed) {
-    r = await fetchJson(`${TAICOL_API}?scientific_name=${enc(sci)}`, deadline);
-    note('sci', r);
-    if (r.err) failed = true;
-    else { const arr = usable(recordsOf(r.data)); base = pickByName(arr, target) || pickBySynonym(arr, target); }
-  }
-  // 3) 還是查無：用中文俗名
+  else { const arr = usable(recordsOf(r.data)); base = pickByName(arr, target) || pickBySynonym(arr, target); }
+  // 2) 查無：中文俗名
   if (!base && !failed && zh) {
+    t0 = Date.now();
     r = await fetchJson(`${TAICOL_API}?common_name=${enc(zh)}`, deadline);
-    note('zh', r);
+    note('zh', r, t0);
     if (r.err) failed = true;
     else base = pickByZh(usable(recordsOf(r.data)), zh);
   }
   if (!base) return failed ? { pending: true, trace } : { value: EMPTY, trace };
 
-  // 4) 經由異名或俗名對到的種：補查其下的亞種、變種
-  if (!group && isSpecies(base) && base.simple_name) {
+  // 3) 必要時取其下在臺灣的亞種、變種
+  if (needsInfra(base) && base.simple_name) {
+    t0 = Date.now();
     r = await fetchJson(`${TAICOL_API}?taxon_group=${enc(base.simple_name)}&limit=50`, deadline);
-    note('group2', r);
+    note('group', r, t0);
     if (r.err) failed = true;
     else group = usable(recordsOf(r.data));
   }
