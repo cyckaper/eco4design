@@ -53,7 +53,7 @@ OpenStreetMap 環境特徵），再交由 Claude 生成完整的生態共存設�
 瀏覽器 → /api/analyze（Netlify Edge Function，補上金鑰）→ Anthropic API
 瀏覽器 → /api/verify（Netlify Edge Function）→ doi.org／Crossref／OpenAlex／所列網頁
 瀏覽器 → /api/models（Netlify Edge Function）→ Anthropic Models API（可用模型清單，快取 6 小時）
-瀏覽器 → /api/taxon-status（Netlify Edge Function）→ TaiCOL 臺灣物種名錄／TBN 台灣生物多樣性網絡（保育類與特有種，快取 24 小時）
+瀏覽器 → /api/taxon-status（Netlify Edge Function）→ TaiCOL 臺灣物種名錄（保育類與特有種，含臺灣的亞種、變種；快取 24 小時）
 ```
 
 金鑰存於 Netlify 伺服器端環境變數，瀏覽器完全看不到。
@@ -72,7 +72,7 @@ Edge Function 採串流回應，因此不受標準 serverless function 逾時限
     ├── edge-functions/
     │   ├── analyze.js              Claude API 代理（金鑰在伺服器端；mode 'revise' 為不搜尋的排除改寫）
     │   ├── models.js               可用模型與建議模型（GET /api/models）
-    │   ├── taxon-status.js         iNaturalist 卡片的保育類與特有種（代查 TaiCOL、TBN；POST /api/taxon-status）
+    │   ├── taxon-status.js         iNaturalist 卡片的保育類與特有種（代查 TaiCOL；POST /api/taxon-status）
     │   └── verify.js               參考文獻與案例來源查證（NDJSON 串流）
     └── shared/
         ├── model-catalog.js        模型目錄：各系列最新一版、單價、建議規則（analyze.js 與 models.js 共用）
@@ -129,7 +129,6 @@ Anthropic 推出新版時自動跟上，舊版的偏好設定也會自動改用�
 | OpenStreetMap | 圖磚、Overpass 環境特徵、Nominatim 地名搜尋 | ODbL |
 | iNaturalist | 在地物種觀察記錄、物種在臺灣的身分（特有／原生／外來） | CC BY-NC |
 | TaiCOL 臺灣物種名錄 | 特有種與保育類等級（卡片標示） | CC BY 4.0 |
-| TBN 台灣生物多樣性網絡 | 保育類等級（TaiCOL 查無或以亞種列名時補查） | 依 TBN 資料使用規範 |
 | Anthropic Claude | 分析生成 | — |
 
 ---

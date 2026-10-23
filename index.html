@@ -921,7 +921,7 @@
   let inatLastSummary = null;
   let inatSummarySeq = 0;              // 提示詞用的全部類群清單：較新的一次更新優先
   // 保育類與特有種標示（卡片上）
-  const taxonStatus = new Map();       // 學名 → { protected, protectedScope, endemic, source }（查無時各欄為 null）
+  const taxonStatus = new Map();       // 學名 → { protected, protectedScope, endemic, endemicRank, source }（查無時各欄為 null）
   const taxonStatusAsked = new Set();  // 已送出查詢、尚未回來的學名
   const taxonStatusTries = new Map();  // 學名 → 名錄沒有回應的次數（達 3 次就不再查，本頁不標示）
   const TAXON_STATUS_BATCH = 30;       // 與 /api/taxon-status 的每次上限一致
@@ -1705,28 +1705,35 @@
     updatePrompt();
   }
 
-  // 臺灣特有種：iNaturalist 的 establishment_means（限 Taiwan place 7887 的紀錄）
+  // 臺灣特有：iNaturalist 的 establishment_means（限 Taiwan place 7887 的紀錄）→ 回傳分類階層（species／subspecies…），不是特有時回傳空字串
   function inatEndemic(t) {
     const em = t && t.establishment_means;
-    return !!(em && em.establishment_means === 'endemic' && em.place && +em.place.id === TAIWAN_PLACE_ID);
+    return em && em.establishment_means === 'endemic' && em.place && +em.place.id === TAIWAN_PLACE_ID ? String(t.rank || 'species') : '';
   }
 
-  function badgeHtml(sci, inatIsEndemic) {
+  const ENDEMIC_LABEL = {
+    species:    { zh: '特有',     en: 'Endemic',      tipZh: '臺灣特有種',   tipEn: 'Endemic to Taiwan' },
+    subspecies: { zh: '特有亞種', en: 'Endemic ssp.', tipZh: '臺灣特有亞種', tipEn: 'Subspecies endemic to Taiwan' },
+    variety:    { zh: '特有變種', en: 'Endemic var.', tipZh: '臺灣特有變種', tipEn: 'Variety endemic to Taiwan' },
+  };
+
+  function badgeHtml(sci, inatRank) {
     const en = LANG === 'en';
     const st = sci ? taxonStatus.get(sci) : null;
     const out = [];
-    // 臺灣物種名錄明確記載「非特有」時以名錄為準（iNaturalist 的地區清單由社群維護，偶有誤植）
-    const listSaysNo = !!(st && st.endemic === false && /^TaiCOL/.test(st.source || ''));
-    const srcs = [];
-    if (inatIsEndemic && !listSaysNo) srcs.push('iNaturalist');
-    if (st && st.endemic === true && st.source) srcs.push(st.source);
-    if (srcs.length) {
+    // 特有：臺灣物種名錄有記載時以名錄為準（iNaturalist 的地區清單由社群維護，偶有誤植）；名錄查無時才用 iNaturalist
+    let rank = '', srcs = [];
+    if (st && st.source === 'TaiCOL' && st.endemic != null) {
+      if (st.endemic === true) { rank = String(st.endemicRank || 'species').toLowerCase(); srcs = inatRank ? ['iNaturalist', 'TaiCOL'] : ['TaiCOL']; }
+    } else if (inatRank) { rank = String(inatRank).toLowerCase(); srcs = ['iNaturalist']; }
+    if (rank) {
+      const L = ENDEMIC_LABEL[rank] || { zh: '特有', en: 'Endemic', tipZh: '臺灣特有（種下分類群）', tipEn: 'Endemic to Taiwan (infraspecific taxon)' };
       const src = srcs.join(en ? ', ' : '、');
-      out.push(`<span class="inat-badge endemic" title="${escapeHtml(en ? `Endemic to Taiwan (source: ${src})` : `臺灣特有種（來源：${src}）`)}">${en ? 'Endemic' : '特有'}</span>`);
+      out.push(`<span class="inat-badge endemic" title="${escapeHtml(en ? `${L.tipEn} (source: ${src})` : `${L.tipZh}（來源：${src}）`)}">${en ? L.en : L.zh}</span>`);
     }
     const p = st && st.protected ? PROTECTED_LABEL[st.protected] : null;
     if (p) {
-      const scope = st.protectedScope === 'subspecies' ? (en ? '; listed at subspecies level' : '；以亞種列名') : '';
+      const scope = st.protectedScope === 'infra' ? (en ? '; listed below species level (the subspecies or variety in Taiwan)' : '；以臺灣的亞種或變種列名') : '';
       const tip = (en ? p.tipEn : p.tipZh) + scope + (en ? ` (source: ${st.source})` : `（來源：${st.source}）`);
       out.push(`<span class="inat-badge protected" title="${escapeHtml(tip)}">${en ? p.en : p.zh}</span>`);
     }
@@ -1736,11 +1743,11 @@
   function applyTaxonBadges() {
     document.querySelectorAll('#inatResults .inat-item[data-sci]').forEach(item => {
       const box = item.querySelector('.inat-badges');
-      if (box) box.innerHTML = badgeHtml(item.dataset.sci, item.dataset.endemic === '1');
+      if (box) box.innerHTML = badgeHtml(item.dataset.sci, item.dataset.endemic || '');
     });
   }
 
-  // 保育類與特有種：由 /api/taxon-status 代查 TaiCOL（臺灣物種名錄）與 TBN（台灣生物多樣性網絡），結果留在本頁記憶體
+  // 保育類與特有種：由 /api/taxon-status 代查 TaiCOL 臺灣物種名錄，結果留在本頁記憶體
   async function requestTaxonStatus(results) {
     const want = [], seen = new Set();
     for (const r of results || []) {
@@ -1794,9 +1801,9 @@
     const en = LANG === 'en';
     const filtered = !!document.getElementById('inatTaxon').value;
     el.innerHTML = en
-      ? `<span class="inat-badge endemic">Endemic</span> endemic to Taiwan　<span class="inat-badge protected">Protected I–III</span> Wildlife Conservation Act category　<span class="inat-badge protected">Rare plant</span> Cultural Heritage Preservation Act<br>Checklists: iNaturalist, TaiCOL (Catalogue of Life in Taiwan), TBN (Taiwan Biodiversity Network). For reference only; the official lists prevail.` +
+      ? `<span class="inat-badge endemic">Endemic</span> endemic to Taiwan　<span class="inat-badge protected">Protected I–III</span> Wildlife Conservation Act category　<span class="inat-badge protected">Rare plant</span> Cultural Heritage Preservation Act<br>From TaiCOL, the Catalogue of Life in Taiwan (iNaturalist’s endemic flag is used when TaiCOL has no record); hover a badge for details. For reference only; the official lists prevail.` +
         (filtered ? '<br>The analysis prompt always uses the all-taxa list; this filter only changes the cards shown here.' : '')
-      : `<span class="inat-badge endemic">特有</span>臺灣特有種　<span class="inat-badge protected">保育 I–III</span>《野生動物保育法》保育類等級　<span class="inat-badge protected">珍貴稀有植物</span>《文化資產保存法》<br>名錄來源：iNaturalist、TaiCOL 臺灣物種名錄、TBN 台灣生物多樣性網絡；僅供參考，以主管機關公告為準。` +
+      : `<span class="inat-badge endemic">特有</span>臺灣特有種　<span class="inat-badge protected">保育 I–III</span>《野生動物保育法》保育類等級　<span class="inat-badge protected">珍貴稀有植物</span>《文化資產保存法》<br>依 TaiCOL 臺灣物種名錄（名錄查無時參考 iNaturalist 的特有種標示）；滑鼠移到標籤上可看說明。僅供參考，以主管機關公告為準。` +
         (filtered ? '<br>分析提示詞固定使用全部類群的觀察清單；類群篩選只改變這裡顯示的卡片。' : '');
     el.style.display = '';
   }
@@ -1911,7 +1918,7 @@
           const item = document.createElement('div');
           item.className = 'inat-item' + (isAdded ? ' added' : '');
           if (sciName) item.dataset.sci = sciName;
-          if (inatEndemic(t)) item.dataset.endemic = '1';
+          if (inatEndemic(t)) item.dataset.endemic = inatEndemic(t);
 
           const photoHtml = photo
             ? `<img class="inat-photo" src="${photo}" alt="${displayName}" loading="lazy">`

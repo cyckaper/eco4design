@@ -2,18 +2,19 @@
 // 目的：iNaturalist 在地觀察卡片標出「保育類」（《野生動物保育法》第 I／II／III 級；文資法珍貴稀有植物）
 //       與「臺灣特有種」，協助使用者依保育意義挑選焦點物種，而不是只看觀察筆數。
 //
-// 查詢來源（公開名錄，不需金鑰；兩者都不支援瀏覽器跨網域呼叫，所以由本站代查）：
-//   1. 臺灣物種名錄 TaiCOL API v2（api.taicol.tw/v2/taxon）：以學名查詢；查無時改用中文俗名
-//   2. 台灣生物多樣性網絡 TBN API v2.5（www.tbn.org.tw/api/v25/taxon）：TaiCOL 查無、或物種層級沒有保育等級時，
-//      連同下一階層（亞種）一起查，補上「亞種為保育類」的情形（例如部分鳥類以臺灣亞種列名）
+// 查詢來源：臺灣物種名錄 TaiCOL API v2（api.taicol.tw/v2/taxon；公開、不需金鑰，但不支援瀏覽器跨網域呼叫，所以由本站代查）
+//   1. taxon_group=<學名>：一次取得該分類群與其下的亞種、變種（保育類有時以臺灣的亞種列名，例如石虎）
+//   2. 名錄沒有這個學名時改用 scientific_name（可對到異名），再不行用中文俗名（common_name）
+//   台灣生物多樣性網絡 TBN API 對本站伺服器回應 403，因此不使用。
 //
 // 請求（POST JSON）：{ taxa: [{ sci: 'Psilopogon nuchalis', zh: '五色鳥' }, …] }（最多 MAX_TAXA 筆）
-// 回應 JSON：{ results: { [sci]: { protected, protectedScope, endemic, source, id } }, pending: [sci…] }
+// 回應 JSON：{ results: { [sci]: { protected, protectedScope, endemic, endemicRank, source, id } }, pending: [sci…] }
 //   protected      'I' | 'II' | 'III' | 'CHPA'（文資法珍貴稀有植物）| null（查得、非保育類）
-//   protectedScope 'species' | 'subspecies' | null
-//   endemic        true | false | null（名錄沒有資料）
-//   source         'TaiCOL' | 'TBN' | null（兩個名錄都查不到）
-//   pending        時間內沒查完的學名，前端稍後再查
+//   protectedScope 'self'（查詢的分類群本身列名）| 'infra'（物種本身沒有、或等級較低，而在臺灣的亞種／變種列名較嚴格的等級）| null
+//   endemic        true | false | null（名錄沒有資料）；只看查詢的分類群本身
+//   endemicRank    'Species' | 'Subspecies' | 'Variety' …（特有的是哪一階層；查詢的是亞種時為特有亞種）| null
+//   source         'TaiCOL' | null（名錄查不到）
+//   pending        名錄沒有回應、時間內沒查完的學名，前端稍後再查
 //
 // 不需通行碼（iNaturalist 面板在輸入通行碼之前就會顯示）；以學名格式檢查、筆數上限、
 // 單一執行個體內的 IP 速率限制與 24 小時快取防止被當成公開代理濫用。
@@ -23,17 +24,17 @@ const MAX_BODY_BYTES = 16 * 1024;
 const CONCURRENCY = 6;                // 同時查詢筆數
 const UPSTREAM_TIMEOUT_MS = 8000;     // 每個上游請求
 const TOTAL_TIMEOUT_MS = 25000;       // 整體上限（Edge 回應標頭須在 40 秒內送出）
-const MAX_UPSTREAM_BYTES = 512 * 1024;
+const MAX_UPSTREAM_BYTES = 1024 * 1024;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CACHE_MAX = 4000;
 const RATE_WINDOW_MS = 5 * 60 * 1000, RATE_MAX = 240;  // 同一來源 IP 每 5 分鐘最多 240 次請求（單一執行個體內；教室共用一個對外 IP 時也夠用）
 
 const TAICOL_API = 'https://api.taicol.tw/v2/taxon';
-const TBN_API = 'https://www.tbn.org.tw/api/v25/taxon';
 const UA = 'Qi-Coexistence-TaxonStatus/1.0 (+https://eco4design.healsdesign.org)';
 
 const SCI_RE = /^[A-Z][a-zë-]+(?: [a-zë-]+){0,3}$/;            // 屬名大寫開頭，最多到亞種／變種（四段）
 const ZH_RE = /^[㐀-鿿豈-﫿·・（）()\-\s A-Za-z]{1,40}$/;
+const LEVEL_ORDER = { I: 1, II: 2, III: 3, CHPA: 4 };          // 數字愈小愈嚴格
 
 const cache = new Map();   // sci → { at, value }
 const rate = new Map();    // ip → [timestamps]
@@ -75,7 +76,12 @@ async function fetchJson(url, deadline) {
     if (len > MAX_UPSTREAM_BYTES) return { err: 'too_large' };
     const text = await res.text();
     if (text.length > MAX_UPSTREAM_BYTES) return { err: 'too_large' };
-    try { return { data: JSON.parse(text) }; } catch (_) { return { err: 'bad_json' }; }
+    let data;
+    try { data = JSON.parse(text); } catch (_) { return { err: 'bad_json' }; }
+    // TaiCOL 以 HTTP 200 回傳參數錯誤：{ status: { code: 400, message } }
+    const code = data && data.status && +data.status.code;
+    if (code && code !== 200) return { err: 'api_' + code };
+    return { data };
   } catch (e) {
     return { err: ac.signal.aborted ? 'timeout' : 'network_error' };
   } finally {
@@ -86,8 +92,11 @@ async function fetchJson(url, deadline) {
 // ── 正規化 ──
 const stripTags = (s) => String(s || '').replace(/<[^>]*>/g, ' ');
 const normName = (s) => stripTags(s).toLowerCase().replace(/\s+/g, ' ').trim();
-// 學名去掉命名者與年代：「Psilopogon nuchalis (Gould, 1863)」→「psilopogon nuchalis」
-const bareName = (s) => normName(s).split(' ').filter(w => /^[a-zë-]+$/.test(w) && !/^(var|subsp|ssp|f)\.?$/.test(w)).slice(0, 4).join(' ');
+// 學名去掉命名者、年代與 var.／subsp.：「Keteleeria davidiana var. formosana」→「keteleeria davidiana formosana」
+const bareName = (s) => normName(s).split(' ').filter(w => /^[a-zë-]+$/.test(w) && !/^(var|subsp|ssp|f|fo|forma)\.?$/.test(w)).slice(0, 4).join(' ');
+const isSpecies = (d) => /^species$/i.test(String(d && d.rank || ''));
+const usable = (arr) => arr.filter(d => d && typeof d === 'object' && !/deleted|刪除/i.test(String(d.taxon_status || '')));
+const recordsOf = (body) => Array.isArray(body?.data) ? body.data : Array.isArray(body?.results) ? body.results : Array.isArray(body) ? body : [];
 
 function truthy(v) {
   if (v === true || v === 1) return true;
@@ -96,18 +105,15 @@ function truthy(v) {
   if (!s || s === 'null' || s === 'none') return null;
   if (['false', '0', 'n', 'no', 'f', '否'].includes(s) || /非特有|non-?endemic|not endemic/.test(s)) return false;
   if (['true', '1', 'y', 'yes', 't', '是'].includes(s) || /特有|endemic/.test(s)) return true;
-  if (/原生|native|外來|alien|歸化|naturali[sz]ed|栽培|cultivated/.test(s)) return false;
   return null;
 }
 
-// 保育等級：TaiCOL 用代碼（I／II／III；「1」是文資法珍貴稀有植物），
-// TBN 用全名（「瀕臨絕種保育類野生動物」「珍貴稀有保育類野生動物」「其他應予保育之野生動物」「文化資產保存法：珍貴稀有植物」，
-// 有時前面加「第一級、」）
-function normProtected(v) {
+// 保育等級：TaiCOL 的 protected 用代碼 I／II／III，「1」是文資法珍貴稀有植物；也容許中文全名的寫法
+function levelOf(v) {
   if (v == null) return null;
   const s = String(Array.isArray(v) ? v.join(' ') : v).trim();
   if (!s || /^(null|none|無|否|false|0|-)$/i.test(s)) return null;
-  if (/CHPA|文化資產|文資|珍貴稀有植物/i.test(s)) return 'CHPA';
+  if (s === '1' || /CHPA|文化資產|文資|珍貴稀有植物/i.test(s)) return 'CHPA';
   const roman = s.match(/(?:^|[^A-Za-z])(III|II|I)(?:[^A-Za-z]|$)/);
   if (roman) return roman[1];
   if (/第一級|瀕臨絕種|第\s*1\s*級/.test(s)) return 'I';
@@ -116,133 +122,100 @@ function normProtected(v) {
   return null;
 }
 
-const recordsOf = (body) => Array.isArray(body?.data) ? body.data : Array.isArray(body?.results) ? body.results : Array.isArray(body) ? body : [];
-
-function pickTaicol(body, sci, zh) {
-  const arr = recordsOf(body).filter(d => d && !/deleted|刪除/i.test(String(d.taxon_status || '')));
-  const target = bareName(sci);
+function pickByName(arr, target) {
   const nameOf = (d) => bareName(d.simple_name || d.scientific_name || d.formatted_name || d.name || '');
-  const synonymsOf = (d) => String(stripTags(d.synonyms || d.formatted_synonyms || '')).split(/[,;，、]/).map(bareName).filter(Boolean);
-  const accepted = (d) => !d.taxon_status || /accepted|有效/i.test(String(d.taxon_status));
-  let rec = arr.find(d => nameOf(d) === target && accepted(d)) || arr.find(d => nameOf(d) === target)
-         || arr.find(d => synonymsOf(d).includes(target));
-  if (!rec && zh) rec = arr.find(d => d.common_name_c === zh || String(d.alternative_name_c || '').split(/[,;，、]/).map(s => s.trim()).includes(zh));
-  return rec || null;
+  return arr.find(d => nameOf(d) === target && /accepted|有效/i.test(String(d.taxon_status || 'accepted'))) || arr.find(d => nameOf(d) === target) || null;
+}
+function pickBySynonym(arr, target) {
+  const syn = (d) => stripTags(d.synonyms || d.formatted_synonyms || '').split(/[,;，、]/).map(bareName).filter(Boolean);
+  return arr.find(d => syn(d).includes(target)) || null;
+}
+function pickByZh(arr, zh) {
+  const alt = (d) => String(d.alternative_name_c || '').split(/[,;，、]/).map(s => s.trim());
+  const hits = arr.filter(d => d.common_name_c === zh || alt(d).includes(zh));
+  return hits.find(isSpecies) || hits[0] || null;
 }
 
-function fromTaicol(rec) {
-  const p = rec.protected ?? rec.protected_category ?? rec.conservation;
-  const prot = String(p ?? '').trim() === '1' ? 'CHPA' : normProtected(p);
-  return {
-    protected: prot,
-    protectedScope: prot ? 'species' : null,
-    endemic: truthy(rec.is_endemic ?? rec.endemic),
-    source: 'TaiCOL',
-    id: rec.taxon_id || null,
-  };
-}
-
-function pickTbn(body, sci, zh) {
-  const arr = recordsOf(body);
-  const target = bareName(sci);
-  const nameOf = (d) => bareName(d.simplifiedScientificName || d.scientificName || d.taxonName || '');
-  let rec = arr.find(d => nameOf(d) === target);
-  if (!rec && zh) rec = arr.find(d => String(d.vernacularName || '').split(/[,;，、]/).map(s => s.trim()).includes(zh));
-  return rec || null;
-}
-
-function fromTbn(rec) {
-  let prot = normProtected(rec.protectedStatusTW);
-  let scope = prot ? 'species' : null;
-  if (!prot && Array.isArray(rec.children)) {
-    const order = { I: 1, II: 2, III: 3, CHPA: 4 };
-    const childLevels = rec.children.map(c => normProtected(c.protectedStatusTW)).filter(Boolean).sort((a, b) => order[a] - order[b]);
-    if (childLevels.length) { prot = childLevels[0]; scope = 'subspecies'; }
+// 查詢的分類群本身＋（若是種）在臺灣的亞種、變種 → 卡片要標的等級
+function summarize(base, group) {
+  const baseName = bareName(base.simple_name || '');
+  const infra = isSpecies(base)
+    ? group.filter(d => d !== base && !isSpecies(d) && d.is_in_taiwan !== false &&
+        (d.parent_taxon_id === base.taxon_id || bareName(d.simple_name || '').startsWith(baseName + ' ')))
+    : [];
+  let level = levelOf(base.protected);
+  let scope = level ? 'self' : null;
+  for (const d of infra) {
+    const l = levelOf(d.protected);
+    if (l && (!level || LEVEL_ORDER[l] < LEVEL_ORDER[level])) { level = l; scope = 'infra'; }
   }
+  const endemic = truthy(base.is_endemic);
   return {
-    protected: prot,
+    protected: level,
     protectedScope: scope,
-    endemic: truthy(rec.endemism),
-    source: 'TBN',
-    id: rec.taiCOLTaxonID || rec.taiColNameCode || rec.taxonUUID || null,
+    endemic,
+    endemicRank: endemic ? (String(base.rank || '') || null) : null,
+    source: 'TaiCOL',
+    id: base.taxon_id || null,
   };
 }
+
+const EMPTY = { protected: null, protectedScope: null, endemic: null, endemicRank: null, source: null, id: null };
 
 async function lookup(sci, zh, deadline, debug) {
   const trace = debug ? [] : null;
-  const note = (q, r) => { if (trace) trace.push({ q, err: r.err || null, raw: r.data ? JSON.stringify(r.data).slice(0, 3000) : null }); };
-  let result = null;
-  let failed = false;   // 有名錄沒有回應（逾時、錯誤）：結果可能不完整
+  const note = (q, r) => { if (trace) trace.push({ q, err: r.err || null, n: r.data ? recordsOf(r.data).length : null }); };
+  const enc = encodeURIComponent;
+  const target = bareName(sci);
+  let failed = false;   // 名錄沒有回應（逾時、錯誤）：結果可能不完整
+  let base = null, group = null, r;
 
-  // 1) TaiCOL：學名，查無再用中文俗名
-  let tc = await fetchJson(`${TAICOL_API}?scientific_name=${encodeURIComponent(sci)}`, deadline);
-  note('taicol:sci', tc);
-  let rec = tc.data ? pickTaicol(tc.data, sci, zh) : null;
-  if (!rec && zh && !tc.err) {
-    tc = await fetchJson(`${TAICOL_API}?common_name=${encodeURIComponent(zh)}`, deadline);
-    note('taicol:zh', tc);
-    rec = tc.data ? pickTaicol(tc.data, sci, zh) : null;
+  // 1) 該分類群與其下的亞種、變種
+  r = await fetchJson(`${TAICOL_API}?taxon_group=${enc(sci)}&limit=50`, deadline);
+  note('group', r);
+  if (r.err) failed = true;
+  else {
+    const arr = usable(recordsOf(r.data));
+    base = pickByName(arr, target);
+    if (base) group = arr;
   }
-  if (tc.err) failed = true;
-  if (rec) result = fromTaicol(rec);
+  // 2) 名錄的有效名不是這個學名：用 scientific_name（可對到異名）
+  if (!base && !failed) {
+    r = await fetchJson(`${TAICOL_API}?scientific_name=${enc(sci)}`, deadline);
+    note('sci', r);
+    if (r.err) failed = true;
+    else { const arr = usable(recordsOf(r.data)); base = pickByName(arr, target) || pickBySynonym(arr, target); }
+  }
+  // 3) 還是查無：用中文俗名
+  if (!base && !failed && zh) {
+    r = await fetchJson(`${TAICOL_API}?common_name=${enc(zh)}`, deadline);
+    note('zh', r);
+    if (r.err) failed = true;
+    else base = pickByZh(usable(recordsOf(r.data)), zh);
+  }
+  if (!base) return failed ? { pending: true, trace } : { value: EMPTY, trace };
 
-  // 2) TBN：TaiCOL 查無、查詢失敗，或物種層級沒有保育等級時（可能以亞種列名）
-  if (!result || !result.protected) {
-    let tb = await fetchJson(`${TBN_API}?name=${encodeURIComponent(sci)}&withChildren=1`, deadline);
-    note('tbn:sci', tb);
-    let rb = tb.data ? pickTbn(tb.data, sci, zh) : null;
-    if (!rb && zh && !tb.err) {
-      tb = await fetchJson(`${TBN_API}?name=${encodeURIComponent(zh)}&withChildren=1`, deadline);
-      note('tbn:zh', tb);
-      rb = tb.data ? pickTbn(tb.data, sci, zh) : null;
-    }
-    if (tb.err) failed = true;
-    if (rb) {
-      const t = fromTbn(rb);
-      if (!result) result = t;
-      else {
-        if (t.protected) { result.protected = t.protected; result.protectedScope = t.protectedScope; result.source = 'TaiCOL+TBN'; }
-        if (result.endemic == null && t.endemic != null) result.endemic = t.endemic;
-      }
-    }
+  // 4) 經由異名或俗名對到的種：補查其下的亞種、變種
+  if (!group && isSpecies(base) && base.simple_name) {
+    r = await fetchJson(`${TAICOL_API}?taxon_group=${enc(base.simple_name)}&limit=50`, deadline);
+    note('group2', r);
+    if (r.err) failed = true;
+    else group = usable(recordsOf(r.data));
   }
-  // 什麼都沒查到、且有名錄沒有回應 → 不回答，讓前端稍後再查；查到部分結果則回傳但不快取
-  if (!result && failed) return { pending: true, trace };
-  return { value: result || { protected: null, protectedScope: null, endemic: null, source: null, id: null }, transient: failed, trace };
+  return { value: summarize(base, group || [base]), transient: failed, trace };
 }
 
 export default async (request, context) => {
   const url = new URL(request.url);
   const ip = context?.ip || request.headers.get('x-nf-client-connection-ip') || 'unknown';
 
-  // 暫時偵錯（合併前移除）：GET ?debug=raw&host=taicol|tbn&<白名單參數> → 上游狀態碼、標頭與回應前段
-  if (request.method === 'GET' && url.searchParams.get('debug') === 'raw') {
-    if (rateLimited(ip)) return json({ error: 'Too many requests' }, 429);
-    const host = url.searchParams.get('host');
-    const base = host === 'tbn' ? TBN_API : TAICOL_API;
-    const allow = ['taxon_group', 'rank', 'parent_taxon_id', 'scientific_name', 'common_name', 'is_in_taiwan', 'limit', 'taxon_id', 'name', 'withChildren', 'uuid'];
-    const q = new URLSearchParams();
-    for (const k of allow) if (url.searchParams.has(k)) q.set(k, url.searchParams.get(k).slice(0, 80));
-    const ua = url.searchParams.get('ua') === 'none' ? {} : { 'user-agent': UA };
-    try {
-      const res = await fetch(`${base}?${q}`, { headers: { ...ua, accept: url.searchParams.get('accept') || 'application/json' } });
-      const text = await res.text();
-      const h = {};
-      for (const k of ['server', 'cf-ray', 'content-type', 'x-cache', 'via', 'www-authenticate']) if (res.headers.get(k)) h[k] = res.headers.get(k);
-      return json({ status: res.status, headers: h, body: text.slice(0, 200000), length: text.length });
-    } catch (e) {
-      return json({ error: String(e && e.message || e) });
-    }
-  }
-
-  // 偵錯：GET /api/taxon-status?debug=1&sci=…&zh=…（回傳上游原始回應片段，供調整解析規則）
+  // 暫時偵錯（合併前移除）：GET ?debug=1&sci=…&zh=…
   if (request.method === 'GET' && url.searchParams.get('debug') === '1') {
     if (rateLimited(ip)) return json({ error: 'Too many requests' }, 429);
     const sci = (url.searchParams.get('sci') || '').trim();
     const zh = (url.searchParams.get('zh') || '').trim();
     if (!SCI_RE.test(sci)) return json({ error: 'Bad scientific name' }, 400);
-    const r = await lookup(sci, ZH_RE.test(zh) ? zh : '', Date.now() + TOTAL_TIMEOUT_MS, true);
-    return json(r);
+    return json(await lookup(sci, ZH_RE.test(zh) ? zh : '', Date.now() + TOTAL_TIMEOUT_MS, true));
   }
 
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
