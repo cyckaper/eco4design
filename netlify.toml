@@ -35,6 +35,11 @@
   path = "/api/verify"
   function = "verify"
 
+# iNaturalist 卡片的保育類與特有種標示（代查臺灣物種名錄 TaiCOL；不需金鑰）
+[[edge_functions]]
+  path = "/api/taxon-status"
+  function = "taxon-status"
+
 # 可用模型與建議模型（由 Anthropic Models API 取得，快取 6 小時）
 # 選填環境變數：RECOMMENDED_MODEL（指定建議模型，例如 claude-opus-5-5；須是目前可用的模型）
 [[edge_functions]]

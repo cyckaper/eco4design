@@ -239,6 +239,13 @@
   .inat-name { font-family: var(--serif); font-size: 12.5px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
   .inat-sci { font-family: var(--display); font-style: italic; font-size: 10.5px; color: var(--moss-light); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
   .inat-count { font-size: 10px; color: var(--clay); font-family: var(--serif); margin-top: 1px; }
+  .inat-badges { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: 1px; }
+  .inat-badges:empty { display: none; }
+  .inat-badge { font-family: var(--body); font-size: 9.5px; font-weight: 600; line-height: 1; padding: 2px 5px; border-radius: 8px; white-space: nowrap; cursor: help; }
+  .inat-badge.endemic { background: var(--gold-pale); color: #5f4e16; border: 1px solid var(--gold); }
+  .inat-badge.protected { background: var(--clay-pale); color: #7a3a1f; border: 1px solid var(--clay-light); }
+  .inat-legend { font-size: 10.5px; color: var(--ink-soft); font-family: var(--serif); margin: 8px 0 0; line-height: 1.6; }
+  .inat-legend .inat-badge { cursor: default; display: inline-block; margin: 0 3px 0 0; }
   .inat-add { background: var(--moss); color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-size: 14px; line-height: 1; transition: all 0.15s; padding: 0; font-weight: 600; }
   .inat-add:hover { background: var(--clay); transform: scale(1.15); }
   .inat-item.added .inat-add { background: var(--moss-light); cursor: default; transform: none; }
@@ -461,7 +468,7 @@
       <button type="button" id="langZh" class="lang-btn active">中文</button>
       <button type="button" id="langEn" class="lang-btn">EN</button>
     </div>
-    <div class="tag">🌿 Qi-Coexistence Workflow · <span class="app-version">v1.31</span></div>
+    <div class="tag">🌿 Qi-Coexistence Workflow · <span class="app-version">v1.33</span></div>
     <h1 class="title">棲<span class="dot">·</span>共生</h1>
     <p class="subtitle">
       生態基地分析工作流工具——選擇位置、設定焦點物種與基地條件，自動生成結構化提示詞送入 Claude 進行完整的生態共存設計分析。
@@ -545,6 +552,7 @@
       </div>
       <div id="inatStatus" class="inat-status">📍 請先選擇基地位置，會自動載入鄰近觀察記錄</div>
       <div id="inatResults" class="inat-results"></div>
+      <p id="inatLegend" class="inat-legend" style="display:none"></p>
       <p class="inat-attribution">
         資料來源 © <a href="https://www.inaturalist.org/" target="_blank" rel="noopener">iNaturalist</a> 貢獻者 ·
         CC BY-NC · 點選圖片可開啟該物種頁面
@@ -820,7 +828,7 @@
       <span class="footer-sep">·</span>
       <button type="button" class="footer-link" id="feedbackBtn">💬 提供回饋</button>
       <span class="footer-sep">·</span>
-      <span class="footer-version app-version">v1.31</span>
+      <span class="footer-version app-version">v1.33</span>
     </div>
     <div class="footer-text">
       棲共生 Qi-Coexistence · 景觀生態設計工作流 ·
@@ -911,6 +919,18 @@
   let inatCache = {};
   let inatTimer = null;
   let inatLastSummary = null;
+  let inatSummarySeq = 0;              // 提示詞用的全部類群清單：較新的一次更新優先
+  // 保育類與特有種標示（卡片上）
+  const taxonStatus = new Map();       // 學名 → { protected, protectedScope, endemic, endemicRank, source }（查無時各欄為 null）
+  const taxonStatusAsked = new Set();  // 已送出查詢、尚未回來的學名
+  const TAXON_STATUS_BATCH = 30;       // 快速輪每批筆數（與 /api/taxon-status 的每次上限一致）
+  const TAXON_INFRA_BATCH = 8;         // 補查亞種、變種的每批筆數（每筆約 2–4 秒）
+  const PROTECTED_LABEL = {
+    I:    { zh: '保育 I',   en: 'Protected I',   tipZh: '《野生動物保育法》第一級：瀕臨絕種野生動物',       tipEn: 'Wildlife Conservation Act, Category I: endangered' },
+    II:   { zh: '保育 II',  en: 'Protected II',  tipZh: '《野生動物保育法》第二級：珍貴稀有野生動物',       tipEn: 'Wildlife Conservation Act, Category II: rare and valuable' },
+    III:  { zh: '保育 III', en: 'Protected III', tipZh: '《野生動物保育法》第三級：其他應予保育之野生動物', tipEn: 'Wildlife Conservation Act, Category III: other conservation-deserving wildlife' },
+    CHPA: { zh: '珍貴稀有植物', en: 'Rare plant', tipZh: '《文化資產保存法》珍貴稀有植物', tipEn: 'Cultural Heritage Preservation Act: rare and valuable plant' },
+  };
 
   // ========== OSM Overpass ==========
   const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
@@ -1618,6 +1638,188 @@
   }
 
   // ========== iNaturalist data ==========
+  const inatKey = (lat, lon, radius, quality, taxon) => `${lat}_${lon}_${radius}_${quality}_${taxon}`;
+
+  // species_counts 查詢（畫面清單與提示詞共用）；taxon 空字串＝全部類群
+  async function fetchInatCounts(lat, lon, radius, quality, taxon) {
+    // preferred_place_id=7887 是 Taiwan：優先回傳台灣在地俗名，並附上物種在臺灣的身分（establishment_means：原生／特有／外來）
+    let url = `${INAT_API}?lat=${lat}&lng=${lon}&radius=${radius}` +
+              `&per_page=100&locale=zh-TW&preferred_place_id=${TAIWAN_PLACE_ID}`;
+    if (quality === 'research') url += '&quality_grade=research';
+    if (taxon) url += `&iconic_taxa=${taxon}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      let errDetail = '';
+      try {
+        const errBody = await res.text();
+        errDetail = errBody.slice(0, 200);
+      } catch (_) {}
+      throw new Error(`HTTP ${res.status}${errDetail ? ' · ' + errDetail : ''}`);
+    }
+    const data = await res.json();
+    data.__fetchedAt = new Date().toISOString();   // 擷取時間：寫進報告的「資料來源」
+    return data;
+  }
+
+  function buildInatSummary(data, radius, quality, taxon) {
+    return {
+      total: data.total_results,          // 末端分類群數（不是觀察筆數）
+      speciesCount: data.results.length,  // 本頁列出的分類群數（≤100）
+      radius, quality,
+      taxon,                              // 空字串＝全部類群；只有取不到全部類群清單時才會是篩選中的類群
+      fetchedAt: data.__fetchedAt || null,
+      topSpecies: data.results.slice(0, 20).map(r => ({
+        name: r.taxon?.preferred_common_name || r.taxon?.name || 'Unknown',
+        sci: r.taxon?.name || '',
+        count: r.count,
+        iconic: r.taxon?.iconic_taxon_name || 'Animalia'
+      }))
+    };
+  }
+
+  // 提示詞的在地觀察脈絡固定用「全部類群」：類群篩選只改變畫面上的卡片，不改變送給模型的清單。
+  // 篩選中時另取（或由快取取得）同一位置、半徑、品質的全部類群清單；取不到時才退回篩選中的清單，並在提示詞註明。
+  async function refreshInatSummary(displayData) {
+    const seq = ++inatSummarySeq;
+    const lat = state.lat, lon = state.lon;
+    if (lat == null) { inatLastSummary = null; updatePrompt(); return; }
+    const radius = document.getElementById('inatRadius').value;
+    const quality = document.getElementById('inatQuality').value;
+    const taxon = document.getElementById('inatTaxon').value;
+    const allKey = inatKey(lat, lon, radius, quality, '');
+    const has = d => !!(d && Array.isArray(d.results) && d.results.length);
+    let all = inatCache[allKey] || null;
+    if (!all) {
+      try {
+        all = await fetchInatCounts(lat, lon, radius, quality, '');
+        inatCache[allKey] = all;
+      } catch (e) {
+        console.warn('iNat all-taxa list for the prompt failed:', e);
+        all = null;
+      }
+      if (seq !== inatSummarySeq || lat !== state.lat || lon !== state.lon) return;   // 期間已換位置或條件
+    }
+    if (has(all)) inatLastSummary = buildInatSummary(all, radius, quality, '');
+    else if (!all && taxon && has(displayData)) inatLastSummary = buildInatSummary(displayData, radius, quality, taxon);
+    else inatLastSummary = null;
+    updatePrompt();
+  }
+
+  // 臺灣特有：iNaturalist 的 establishment_means（限 Taiwan place 7887 的紀錄）→ 回傳分類階層（species／subspecies…），不是特有時回傳空字串
+  function inatEndemic(t) {
+    const em = t && t.establishment_means;
+    return em && em.establishment_means === 'endemic' && em.place && +em.place.id === TAIWAN_PLACE_ID ? String(t.rank || 'species') : '';
+  }
+
+  const ENDEMIC_LABEL = {
+    species:    { zh: '特有',     en: 'Endemic',      tipZh: '臺灣特有種',   tipEn: 'Endemic to Taiwan' },
+    subspecies: { zh: '特有亞種', en: 'Endemic ssp.', tipZh: '臺灣特有亞種', tipEn: 'Subspecies endemic to Taiwan' },
+    variety:    { zh: '特有變種', en: 'Endemic var.', tipZh: '臺灣特有變種', tipEn: 'Variety endemic to Taiwan' },
+  };
+
+  function badgeHtml(sci, inatRank) {
+    const en = LANG === 'en';
+    const st = sci ? taxonStatus.get(sci) : null;
+    const out = [];
+    // 特有：臺灣物種名錄有記載時以名錄為準（iNaturalist 的地區清單由社群維護，偶有誤植）；名錄查無時才用 iNaturalist
+    let rank = '', srcs = [];
+    if (st && st.source === 'TaiCOL' && st.endemic != null) {
+      if (st.endemic === true) { rank = String(st.endemicRank || 'species').toLowerCase(); srcs = inatRank ? ['iNaturalist', 'TaiCOL'] : ['TaiCOL']; }
+    } else if (inatRank) { rank = String(inatRank).toLowerCase(); srcs = ['iNaturalist']; }
+    if (rank) {
+      const L = ENDEMIC_LABEL[rank] || { zh: '特有', en: 'Endemic', tipZh: '臺灣特有（種下分類群）', tipEn: 'Endemic to Taiwan (infraspecific taxon)' };
+      const src = srcs.join(en ? ', ' : '、');
+      out.push(`<span class="inat-badge endemic" title="${escapeHtml(en ? `${L.tipEn} (source: ${src})` : `${L.tipZh}（來源：${src}）`)}">${en ? L.en : L.zh}</span>`);
+    }
+    const p = st && st.protected ? PROTECTED_LABEL[st.protected] : null;
+    if (p) {
+      const scope = st.protectedScope === 'infra' ? (en ? '; listed below species level (the subspecies or variety in Taiwan)' : '；以臺灣的亞種或變種列名') : '';
+      const tip = (en ? p.tipEn : p.tipZh) + scope + (en ? ` (source: ${st.source})` : `（來源：${st.source}）`);
+      out.push(`<span class="inat-badge protected" title="${escapeHtml(tip)}">${en ? p.en : p.zh}</span>`);
+    }
+    return out.join('');
+  }
+
+  function applyTaxonBadges() {
+    document.querySelectorAll('#inatResults .inat-item[data-sci]').forEach(item => {
+      const box = item.querySelector('.inat-badges');
+      if (box) box.innerHTML = badgeHtml(item.dataset.sci, item.dataset.endemic || '');
+    });
+  }
+
+  // 保育類與特有種：由 /api/taxon-status 代查 TaiCOL 臺灣物種名錄，結果留在本頁記憶體。
+  // 先快速查全部（物種層級）讓卡片馬上有標示；需要看臺灣亞種、變種的少數物種（較慢）再分小批補查。
+  async function requestTaxonStatus(results) {
+    const want = [], seen = new Set();
+    for (const r of results || []) {
+      const t = r && r.taxon;
+      const sci = String((t && t.name) || '').trim();
+      if (!/^[A-Z][a-zë-]+ [a-zë-]+/.test(sci)) continue;   // 只查種與種下分類群（屬以上不查）
+      if (seen.has(sci) || taxonStatus.has(sci) || taxonStatusAsked.has(sci)) continue;
+      seen.add(sci);
+      want.push({ sci, zh: String(t.preferred_common_name || '').trim().slice(0, 40) });
+    }
+    if (!want.length) return;
+    want.forEach(x => taxonStatusAsked.add(x.sci));
+    const NONE = { protected: null, endemic: null, source: null };
+    const post = async (batch, infra) => {
+      const res = await fetch('/api/taxon-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taxa: batch, infra })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    };
+    // 一輪：依序送出各批（不同時送，避免名錄伺服器過載），回傳還要再查的
+    const round = async (list, size, infra) => {
+      const again = [];
+      for (let i = 0; i < list.length; i += size) {
+        const batch = list.slice(i, i + size);
+        try {
+          const body = await post(batch, infra);
+          const found = (body && body.results) || {};
+          const pending = new Set((body && body.pending) || []);
+          for (const x of batch) {
+            const v = found[x.sci];
+            if (v) { taxonStatus.set(x.sci, v); if (v.partial) again.push(x); }
+            else if (pending.has(x.sci)) again.push(x);   // 名錄暫時沒有回應
+            else taxonStatus.set(x.sci, NONE);
+          }
+        } catch (e) {
+          console.warn('taxon-status lookup failed:', e);
+          again.push(...batch);
+        }
+        applyTaxonBadges();
+      }
+      return again;
+    };
+    try {
+      let queue = await round(want, TAXON_STATUS_BATCH, false);
+      for (let n = 0; n < 2 && queue.length; n++) {
+        await new Promise(r => setTimeout(r, 800));
+        queue = await round(queue, TAXON_INFRA_BATCH, true);
+      }
+      queue.forEach(x => { if (!taxonStatus.has(x.sci)) taxonStatus.set(x.sci, NONE); });   // 查不到的本頁不再查；partial 的保留物種層級結果
+    } finally {
+      want.forEach(x => taxonStatusAsked.delete(x.sci));
+    }
+  }
+
+  function renderInatLegend(show) {
+    const el = document.getElementById('inatLegend');
+    if (!el) return;
+    if (!show) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    const en = LANG === 'en';
+    const filtered = !!document.getElementById('inatTaxon').value;
+    el.innerHTML = en
+      ? `<span class="inat-badge endemic">Endemic</span> endemic to Taiwan　<span class="inat-badge protected">Protected I–III</span> Wildlife Conservation Act category　<span class="inat-badge protected">Rare plant</span> Cultural Heritage Preservation Act<br>From TaiCOL, the Catalogue of Life in Taiwan (iNaturalist’s endemic flag is used when TaiCOL has no record); hover a badge for details. For reference only; the official lists prevail.` +
+        (filtered ? '<br>The analysis prompt always uses the all-taxa list; this filter only changes the cards shown here.' : '')
+      : `<span class="inat-badge endemic">特有</span>臺灣特有種　<span class="inat-badge protected">保育 I–III</span>《野生動物保育法》保育類等級　<span class="inat-badge protected">珍貴稀有植物</span>《文化資產保存法》<br>依 TaiCOL 臺灣物種名錄（名錄查無時參考 iNaturalist 的特有種標示）；滑鼠移到標籤上可看說明。僅供參考，以主管機關公告為準。` +
+        (filtered ? '<br>分析提示詞固定使用全部類群的觀察清單；類群篩選只改變這裡顯示的卡片。' : '');
+    el.style.display = '';
+  }
+
   async function loadInat(force = false) {
     const status = document.getElementById('inatStatus');
     const results = document.getElementById('inatResults');
@@ -1626,13 +1828,14 @@
       status.textContent = LANG==='en' ? '📍 Select a site location first — nearby observations load automatically' : '📍 請先選擇基地位置，會自動載入鄰近觀察記錄';
       status.classList.remove('error');
       results.innerHTML = '';
+      renderInatLegend(false);
       return;
     }
 
     const radius = document.getElementById('inatRadius').value;
     const quality = document.getElementById('inatQuality').value;
     const taxon = document.getElementById('inatTaxon').value;
-    const cacheKey = `${state.lat}_${state.lon}_${radius}_${quality}_${taxon}`;
+    const cacheKey = inatKey(state.lat, state.lon, radius, quality, taxon);
 
     if (!force && inatCache[cacheKey]) {
       renderInat(inatCache[cacheKey]);
@@ -1642,25 +1845,11 @@
     status.classList.remove('error');
     status.textContent = LANG==='en' ? '⏳ Loading nearby observations from iNaturalist…' : '⏳ 正在從 iNaturalist 載入鄰近觀察記錄...';
     results.innerHTML = '';
+    renderInatLegend(false);
+    if (force) delete inatCache[inatKey(state.lat, state.lon, radius, quality, '')];   // 重新查詢時，提示詞用的全部類群清單也一併更新
 
     try {
-      // preferred_place_id=7887 是 Taiwan，用來優先回傳台灣在地俗名
-      let url = `${INAT_API}?lat=${state.lat}&lng=${state.lon}&radius=${radius}` +
-                `&per_page=100&locale=zh-TW&preferred_place_id=${TAIWAN_PLACE_ID}`;
-      if (quality === 'research') url += '&quality_grade=research';
-      if (taxon) url += `&iconic_taxa=${taxon}`;
-
-      const res = await fetch(url);
-      if (!res.ok) {
-        let errDetail = '';
-        try {
-          const errBody = await res.text();
-          errDetail = errBody.slice(0, 200);
-        } catch (_) {}
-        throw new Error(`HTTP ${res.status}${errDetail ? ' · ' + errDetail : ''}`);
-      }
-      const data = await res.json();
-      data.__fetchedAt = new Date().toISOString();   // 擷取時間：寫進報告的「資料來源」
+      const data = await fetchInatCounts(state.lat, state.lon, radius, quality, taxon);
       inatCache[cacheKey] = data;
       renderInat(data);
     } catch (e) {
@@ -1673,6 +1862,8 @@
       else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) hint = '——網路連線問題';
       status.textContent = LANG==='en' ? `❌ Load failed: ${msg}${hint}` : `❌ 載入失敗：${msg}${hint}`;
       console.error('iNat fetch error:', e, 'URL was:', `${INAT_API}?lat=${state.lat}&lng=${state.lon}&radius=${radius}`);
+      renderInatLegend(false);
+      refreshInatSummary(null);   // 不沿用其他基地或其他條件的舊清單
     }
   }
 
@@ -1686,7 +1877,8 @@
     if (!data.results || !data.results.length) {
       status.textContent = LANG==='en' ? '🔍 No observations in this radius. Try a larger radius or switch to all grades.' : '🔍 此範圍內無觀察記錄。試試擴大半徑或切換到「全部」品質。';
       container.innerHTML = '';
-      inatLastSummary = null;
+      renderInatLegend(false);
+      refreshInatSummary(data);   // 篩選的類群沒有紀錄時，提示詞仍可用全部類群
       return;
     }
 
@@ -1698,21 +1890,8 @@
       ? `✅ ${data.total_results} taxa observed (mostly species); showing the ${data.results.length} most-observed (${obsShown} observations) · radius ${radius} km`
       : `✅ 共 ${data.total_results} 個分類群（多為種）有觀察紀錄；列出觀察筆數最多的 ${data.results.length} 個（合計 ${obsShown} 筆觀察）・半徑 ${radius} km`;
 
-    // Build summary for prompt
-    inatLastSummary = {
-      total: data.total_results,          // 末端分類群數（不是觀察筆數）
-      speciesCount: data.results.length,  // 本頁列出的分類群數（≤100）
-      radius: radius,
-      quality: document.getElementById('inatQuality').value,
-      taxon: document.getElementById('inatTaxon').value,
-      fetchedAt: data.__fetchedAt || null,
-      topSpecies: data.results.slice(0, 20).map(r => ({
-        name: r.taxon?.preferred_common_name || r.taxon?.name || 'Unknown',
-        sci: r.taxon?.name || '',
-        count: r.count,
-        iconic: r.taxon?.iconic_taxon_name || 'Animalia'
-      }))
-    };
+    // 提示詞的在地觀察脈絡：固定取全部類群（類群篩選只影響畫面清單）
+    refreshInatSummary(data);
 
     // Group by iconic taxon
     const groups = {};
@@ -1750,6 +1929,8 @@
 
           const item = document.createElement('div');
           item.className = 'inat-item' + (isAdded ? ' added' : '');
+          if (sciName) item.dataset.sci = sciName;
+          if (inatEndemic(t)) item.dataset.endemic = inatEndemic(t);
 
           const photoHtml = photo
             ? `<img class="inat-photo" src="${photo}" alt="${displayName}" loading="lazy">`
@@ -1760,7 +1941,7 @@
             <div class="inat-info">
               <div class="inat-name"></div>
               <div class="inat-sci"></div>
-              <div class="inat-count">${r.count} 筆</div>
+              <div class="inat-count">${r.count} 筆<span class="inat-badges"></span></div>
             </div>
             <button class="inat-add" title="加入焦點物種">＋</button>
           `;
@@ -1768,6 +1949,7 @@
           if (chName && sciName && chName !== sciName) {
             item.querySelector('.inat-sci').textContent = sciName;
           }
+          item.querySelector('.inat-badges').innerHTML = badgeHtml(sciName, inatEndemic(t));
           item.querySelector('.inat-add').dataset.name = displayName;
 
           item.querySelector('.inat-add').addEventListener('click', (e) => {
@@ -1794,6 +1976,8 @@
         groupEl.appendChild(items);
         container.appendChild(groupEl);
       });
+    renderInatLegend(true);
+    requestTaxonStatus(data.results);
   }
 
   function updateInatAddedState() {
@@ -2203,6 +2387,7 @@ out tags center;`;
     state.activities = [];
     state.useScale = '';
     inatLastSummary = null;
+    inatSummarySeq++;   // 舊基地進行中的全部類群查詢不再寫回
     osmLastSummary = null;
 
     // 更新 UI
@@ -2583,13 +2768,18 @@ ${N.act}.2 Activity × zone compatibility (<h3>): <table class="compat">. The fi
 
     // iNaturalist／OSM 脈絡：依介面語言輸出標題與單位
     const sep = en ? ', ' : '、';
+    // 正常情況固定是全部類群；只有取不到全部類群清單、退回篩選中的清單時，才在標題註明類群
+    const inatTaxLbl = inatLastSummary && inatLastSummary.taxon
+      ? String((INAT_TAXON_INFO[inatLastSummary.taxon] && (en ? INAT_TAXON_INFO[inatLastSummary.taxon].en : INAT_TAXON_INFO[inatLastSummary.taxon].label)) || inatLastSummary.taxon).replace(/^[^\p{L}]+/u, '')
+      : '';
+    const inatFilterNote = inatTaxLbl ? (en ? ` · ${inatTaxLbl} only (all-taxa list unavailable)` : ` · 僅${inatTaxLbl}（未能取得全部類群清單）`) : '';
     const inatContext = inatLastSummary && state.lat != null
       ? (en
-        ? `\n\n📡 iNaturalist LOCAL OBSERVATIONS (radius ${inatLastSummary.radius} km · ${inatLastSummary.quality === 'research' ? 'research grade' : 'all grades'})
+        ? `\n\n📡 iNaturalist LOCAL OBSERVATIONS (radius ${inatLastSummary.radius} km · ${inatLastSummary.quality === 'research' ? 'research grade' : 'all grades'}${inatFilterNote})
 ${inatLastSummary.total} taxa (mostly species) with observations; the most-observed ones are listed with their observation counts
 Representative species (by number of observations):
 ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.sci && s.sci !== s.name ? ` (${s.sci})` : ''} — ${s.count} obs.`).join('\n')}`
-        : `\n\n📡 iNaturalist 在地觀察脈絡（半徑 ${inatLastSummary.radius} km · ${inatLastSummary.quality === 'research' ? '研究級' : '全部'}）
+        : `\n\n📡 iNaturalist 在地觀察脈絡（半徑 ${inatLastSummary.radius} km · ${inatLastSummary.quality === 'research' ? '研究級' : '全部'}${inatFilterNote}）
 共 ${inatLastSummary.total} 個分類群（多為種）有觀察紀錄；以下列出觀察筆數最多者及其觀察筆數
 代表性出現物種（依觀察筆數排序）:
 ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.sci && s.sci !== s.name ? ` (${s.sci})` : ''} — ${s.count} 筆`).join('\n')}`)
@@ -3021,6 +3211,8 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
     state.specialNotes = '';
     state.activities = []; state.useScale = '';
     inatLastSummary = null;
+    inatLastData = null;   // 切換介面語言時不再重繪舊基地的卡片
+    inatSummarySeq++;   // 進行中的全部類群查詢不再寫回
     osmLastSummary = null;
     document.getElementById('lat').value = '';
     document.getElementById('lon').value = '';
@@ -3029,6 +3221,7 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
     document.getElementById('useScale').value = '';
     document.getElementById('inatStatus').textContent = '📍 請先選擇基地位置，會自動載入鄰近觀察記錄';
     document.getElementById('inatResults').innerHTML = '';
+    renderInatLegend(false);
     document.getElementById('osmStatus').textContent = '📍 請先選擇基地位置，會自動偵測周邊森林、水體、保護區、聚落、步道';
     document.getElementById('osmResults').innerHTML = '';
     // 清除分析結果預覽（並中止進行中的文獻查證）
@@ -8894,7 +9087,7 @@ ${block}`;
   // ========== About & Feedback ==========
   // 將此處 email 改成您自己的（接收回饋用）
   const FEEDBACK_EMAIL = 'cycland@ntu.edu.tw';
-  const APP_VERSION = 'v1.32'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
+  const APP_VERSION = 'v1.33'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
   document.querySelectorAll('.app-version').forEach(el => { el.textContent = APP_VERSION; });
 
   function openAboutModal() {

@@ -80,8 +80,14 @@ your-repo/
 ├── README.md
 ├── SETUP.md
 └── netlify/
-    └── edge-functions/
-        └── analyze.js
+    ├── edge-functions/
+    │   ├── analyze.js
+    │   ├── models.js
+    │   ├── taxon-status.js
+    │   └── verify.js
+    └── shared/
+        ├── model-catalog.js
+        └── sse-relay.js
 ```
 
 **Netlify 端設定**（Site configuration → Build & deploy）：
@@ -110,8 +116,8 @@ your-repo/
 複製 `.env.example` 成 `.env` 填入真值即可，`.gitignore` 已排除它。
 
 部署後檢查：
-1. 頁首版號應顯示 **v1.28**
-2. Netlify Dashboard → Edge Functions 應看到 `analyze`
+1. 頁首版號應顯示 **v1.33**
+2. Netlify Dashboard → Edge Functions 應看到 `analyze`、`models`、`taxon-status`、`verify`
 
 ---
 
