@@ -212,6 +212,19 @@ export default async (request, context) => {
   const url = new URL(request.url);
   const ip = context?.ip || request.headers.get('x-nf-client-connection-ip') || 'unknown';
 
+  // 暫時偵錯（合併前移除）：GET ?debug=time&group=…[&rank=…][&limit=…] → taxon_group 查詢耗時
+  if (request.method === 'GET' && url.searchParams.get('debug') === 'time') {
+    if (rateLimited(ip)) return json({ error: 'Too many requests' }, 429);
+    const g = (url.searchParams.get('group') || '').trim();
+    if (!SCI_RE.test(g)) return json({ error: 'Bad name' }, 400);
+    const q = new URLSearchParams({ taxon_group: g });
+    for (const k of ['rank', 'limit', 'is_in_taiwan']) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k).slice(0, 20));
+    const t0 = Date.now();
+    const r = await fetchJson(`${TAICOL_API}?${q}`, Date.now() + TOTAL_TIMEOUT_MS);
+    return json({ ms: Date.now() - t0, err: r.err || null, n: r.data ? recordsOf(r.data).length : null,
+      names: r.data ? recordsOf(r.data).map(d => `${d.simple_name} ${d.rank} ${d.protected}`) : null });
+  }
+
   // 暫時偵錯（合併前移除）：GET ?debug=1&sci=…&zh=…
   if (request.method === 'GET' && url.searchParams.get('debug') === '1') {
     if (rateLimited(ip)) return json({ error: 'Too many requests' }, 429);
