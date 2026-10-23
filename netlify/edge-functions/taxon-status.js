@@ -231,19 +231,6 @@ export default async (request, context) => {
   const url = new URL(request.url);
   const ip = context?.ip || request.headers.get('x-nf-client-connection-ip') || 'unknown';
 
-  // 暫時偵錯（合併前移除）：GET ?debug=1&sci=…&zh=…
-  if (request.method === 'GET' && url.searchParams.get('debug') === '1') {
-    if (rateLimited(ip)) return json({ error: 'Too many requests' }, 429);
-    const sci = (url.searchParams.get('sci') || '').trim();
-    const zh = (url.searchParams.get('zh') || '').trim();
-    if (!SCI_RE.test(sci)) return json({ error: 'Bad scientific name' }, 400);
-    const trace = [], deadline = Date.now() + TOTAL_TIMEOUT_MS;
-    const b = await findBase(sci, ZH_RE.test(zh) ? zh : '', deadline, trace);
-    if (b.err || !b.base) return json({ base: b, trace });
-    const g = needsInfra(b.base) ? await findGroup(b.base.simple_name, deadline, trace) : null;
-    return json({ value: summarize(b.base, (g && g.group) || [b.base]), base: b.base, group: g, trace });
-  }
-
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   if (rateLimited(ip)) return json({ error: 'Too many requests' }, 429);
 
