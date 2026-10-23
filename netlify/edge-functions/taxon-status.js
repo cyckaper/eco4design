@@ -215,6 +215,26 @@ export default async (request, context) => {
   const url = new URL(request.url);
   const ip = context?.ip || request.headers.get('x-nf-client-connection-ip') || 'unknown';
 
+  // 暫時偵錯（合併前移除）：GET ?debug=raw&host=taicol|tbn&<白名單參數> → 上游狀態碼、標頭與回應前段
+  if (request.method === 'GET' && url.searchParams.get('debug') === 'raw') {
+    if (rateLimited(ip)) return json({ error: 'Too many requests' }, 429);
+    const host = url.searchParams.get('host');
+    const base = host === 'tbn' ? TBN_API : TAICOL_API;
+    const allow = ['taxon_group', 'rank', 'parent_taxon_id', 'scientific_name', 'common_name', 'is_in_taiwan', 'limit', 'taxon_id', 'name', 'withChildren', 'uuid'];
+    const q = new URLSearchParams();
+    for (const k of allow) if (url.searchParams.has(k)) q.set(k, url.searchParams.get(k).slice(0, 80));
+    const ua = url.searchParams.get('ua') === 'none' ? {} : { 'user-agent': UA };
+    try {
+      const res = await fetch(`${base}?${q}`, { headers: { ...ua, accept: url.searchParams.get('accept') || 'application/json' } });
+      const text = await res.text();
+      const h = {};
+      for (const k of ['server', 'cf-ray', 'content-type', 'x-cache', 'via', 'www-authenticate']) if (res.headers.get(k)) h[k] = res.headers.get(k);
+      return json({ status: res.status, headers: h, body: text.slice(0, 6000), length: text.length });
+    } catch (e) {
+      return json({ error: String(e && e.message || e) });
+    }
+  }
+
   // 偵錯：GET /api/taxon-status?debug=1&sci=…&zh=…（回傳上游原始回應片段，供調整解析規則）
   if (request.method === 'GET' && url.searchParams.get('debug') === '1') {
     if (rateLimited(ip)) return json({ error: 'Too many requests' }, 429);
