@@ -923,8 +923,8 @@
   // 保育類與特有種標示（卡片上）
   const taxonStatus = new Map();       // 學名 → { protected, protectedScope, endemic, endemicRank, source }（查無時各欄為 null）
   const taxonStatusAsked = new Set();  // 已送出查詢、尚未回來的學名
-  const taxonStatusTries = new Map();  // 學名 → 名錄沒有回應的次數（達 3 次就不再查，本頁不標示）
-  const TAXON_STATUS_BATCH = 30;       // 與 /api/taxon-status 的每次上限一致
+  const TAXON_STATUS_BATCH = 30;       // 快速輪每批筆數（與 /api/taxon-status 的每次上限一致）
+  const TAXON_INFRA_BATCH = 8;         // 補查亞種、變種的每批筆數（每筆約 2–4 秒）
   const PROTECTED_LABEL = {
     I:    { zh: '保育 I',   en: 'Protected I',   tipZh: '《野生動物保育法》第一級：瀕臨絕種野生動物',       tipEn: 'Wildlife Conservation Act, Category I: endangered' },
     II:   { zh: '保育 II',  en: 'Protected II',  tipZh: '《野生動物保育法》第二級：珍貴稀有野生動物',       tipEn: 'Wildlife Conservation Act, Category II: rare and valuable' },
@@ -1747,7 +1747,8 @@
     });
   }
 
-  // 保育類與特有種：由 /api/taxon-status 代查 TaiCOL 臺灣物種名錄，結果留在本頁記憶體
+  // 保育類與特有種：由 /api/taxon-status 代查 TaiCOL 臺灣物種名錄，結果留在本頁記憶體。
+  // 先快速查全部（物種層級）讓卡片馬上有標示；需要看臺灣亞種、變種的少數物種（較慢）再分小批補查。
   async function requestTaxonStatus(results) {
     const want = [], seen = new Set();
     for (const r of results || []) {
@@ -1760,38 +1761,49 @@
     }
     if (!want.length) return;
     want.forEach(x => taxonStatusAsked.add(x.sci));
-    const batches = [];
-    for (let i = 0; i < want.length; i += TAXON_STATUS_BATCH) batches.push(want.slice(i, i + TAXON_STATUS_BATCH));
-    await Promise.all(batches.map(async batch => {
-      try {
-        const res = await fetch('/api/taxon-status', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ taxa: batch })
-        });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const body = await res.json();
-        const found = (body && body.results) || {};
-        const pending = new Set((body && body.pending) || []);
-        batch.forEach(({ sci }) => {
-          if (found[sci]) taxonStatus.set(sci, found[sci]);
-          else if (!pending.has(sci)) taxonStatus.set(sci, { protected: null, endemic: null, source: null });
-          else giveUpAfterTries(sci);   // pending：名錄暫時沒有回應，下次載入清單時再查
-        });
-      } catch (e) {
-        console.warn('taxon-status lookup failed:', e);
-        batch.forEach(({ sci }) => giveUpAfterTries(sci));
-      } finally {
-        batch.forEach(({ sci }) => taxonStatusAsked.delete(sci));
+    const NONE = { protected: null, endemic: null, source: null };
+    const post = async (batch, infra) => {
+      const res = await fetch('/api/taxon-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taxa: batch, infra })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    };
+    // 一輪：依序送出各批（不同時送，避免名錄伺服器過載），回傳還要再查的
+    const round = async (list, size, infra) => {
+      const again = [];
+      for (let i = 0; i < list.length; i += size) {
+        const batch = list.slice(i, i + size);
+        try {
+          const body = await post(batch, infra);
+          const found = (body && body.results) || {};
+          const pending = new Set((body && body.pending) || []);
+          for (const x of batch) {
+            const v = found[x.sci];
+            if (v) { taxonStatus.set(x.sci, v); if (v.partial) again.push(x); }
+            else if (pending.has(x.sci)) again.push(x);   // 名錄暫時沒有回應
+            else taxonStatus.set(x.sci, NONE);
+          }
+        } catch (e) {
+          console.warn('taxon-status lookup failed:', e);
+          again.push(...batch);
+        }
+        applyTaxonBadges();
       }
-      applyTaxonBadges();
-    }));
-  }
-
-  function giveUpAfterTries(sci) {
-    const n = (taxonStatusTries.get(sci) || 0) + 1;
-    taxonStatusTries.set(sci, n);
-    if (n >= 3) taxonStatus.set(sci, { protected: null, endemic: null, source: null });
+      return again;
+    };
+    try {
+      let queue = await round(want, TAXON_STATUS_BATCH, false);
+      for (let n = 0; n < 2 && queue.length; n++) {
+        await new Promise(r => setTimeout(r, 800));
+        queue = await round(queue, TAXON_INFRA_BATCH, true);
+      }
+      queue.forEach(x => { if (!taxonStatus.has(x.sci)) taxonStatus.set(x.sci, NONE); });   // 查不到的本頁不再查；partial 的保留物種層級結果
+    } finally {
+      want.forEach(x => taxonStatusAsked.delete(x.sci));
+    }
   }
 
   function renderInatLegend(show) {

@@ -3,18 +3,21 @@
 //       與「臺灣特有種」，協助使用者依保育意義挑選焦點物種，而不是只看觀察筆數。
 //
 // 查詢來源：臺灣物種名錄 TaiCOL API v2（api.taicol.tw/v2/taxon；公開、不需金鑰，但不支援瀏覽器跨網域呼叫，所以由本站代查）
-//   1. scientific_name=<學名>（可對到異名）；查無時改用中文俗名（common_name）
-//   2. 物種已列 II／III 級，或紅皮書受脅卻沒有保育等級時，再以 taxon_group 取其下的亞種、變種
-//      （保育類有時以臺灣的亞種列名較嚴格的等級，例如石虎）
+//   1. scientific_name=<學名>（可對到異名；約 0.1–0.3 秒）；查無時改用中文俗名（common_name）
+//   2. 物種已列 II／III 級，或國家紅皮書受脅卻沒有保育等級時，再以 taxon_group 取其下在臺灣的亞種、變種
+//      （保育類有時以臺灣的亞種列名較嚴格的等級，例如石虎：豹貓 II、臺灣的亞種 I）。
+//      taxon_group 一次要 2–4 秒、同時多筆更慢，所以只在這些情形才查，且分開一輪（infra）進行。
 //   台灣生物多樣性網絡 TBN API 對本站伺服器回應 403，因此不使用。
 //
-// 請求（POST JSON）：{ taxa: [{ sci: 'Psilopogon nuchalis', zh: '五色鳥' }, …] }（最多 MAX_TAXA 筆）
-// 回應 JSON：{ results: { [sci]: { protected, protectedScope, endemic, endemicRank, source, id } }, pending: [sci…] }
+// 請求（POST JSON）：{ taxa: [{ sci: 'Psilopogon nuchalis', zh: '五色鳥' }, …], infra: true|false }（最多 MAX_TAXA 筆）
+//   infra: false 只查第 1 步（快速）；需要查亞種的物種回傳 partial: true，前端再以 infra: true 補查
+// 回應 JSON：{ results: { [sci]: { protected, protectedScope, endemic, endemicRank, source, id, partial? } }, pending: [sci…] }
 //   protected      'I' | 'II' | 'III' | 'CHPA'（文資法珍貴稀有植物）| null（查得、非保育類）
 //   protectedScope 'self'（查詢的分類群本身列名）| 'infra'（物種本身沒有、或等級較低，而在臺灣的亞種／變種列名較嚴格的等級）| null
 //   endemic        true | false | null（名錄沒有資料）；只看查詢的分類群本身
 //   endemicRank    'Species' | 'Subspecies' | 'Variety' …（特有的是哪一階層；查詢的是亞種時為特有亞種）| null
 //   source         'TaiCOL' | null（名錄查不到）
+//   partial        true：還沒查臺灣的亞種、變種（目前是物種層級的結果）
 //   pending        名錄沒有回應、時間內沒查完的學名，前端稍後再查
 //
 // 不需通行碼（iNaturalist 面板在輸入通行碼之前就會顯示）；以學名格式檢查、筆數上限、
@@ -22,9 +25,10 @@
 
 const MAX_TAXA = 30;                  // 每次請求最多查詢筆數（前端分批送出）
 const MAX_BODY_BYTES = 16 * 1024;
-const CONCURRENCY = 6;                // 同時查詢筆數
+const BASE_CONCURRENCY = 6;           // 第 1 步同時查詢筆數
+const INFRA_CONCURRENCY = 3;          // 第 2 步（taxon_group，較慢）同時查詢筆數
 const UPSTREAM_TIMEOUT_MS = 8000;     // 每個上游請求
-const TOTAL_TIMEOUT_MS = 25000;       // 整體上限（Edge 回應標頭須在 40 秒內送出）
+const TOTAL_TIMEOUT_MS = 20000;       // 整體上限（Edge 回應標頭須在 40 秒內送出）
 const MAX_UPSTREAM_BYTES = 1024 * 1024;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CACHE_MAX = 4000;
@@ -37,8 +41,10 @@ const SCI_RE = /^[A-Z][a-zë-]+(?: [a-zë-]+){0,3}$/;            // 屬名大寫
 const ZH_RE = /^[㐀-鿿豈-﫿·・（）()\-\s A-Za-z]{1,40}$/;
 const LEVEL_ORDER = { I: 1, II: 2, III: 3, CHPA: 4 };          // 數字愈小愈嚴格
 
-const cache = new Map();   // sci → { at, value }
-const rate = new Map();    // ip → [timestamps]
+const resultCache = new Map();   // sci → 完整結果
+const baseCache = new Map();     // sci → { base }（base 為 null＝名錄查無）
+const groupCache = new Map();    // 有效名 → 該種與其下分類群
+const rate = new Map();          // ip → [timestamps]
 
 const json = (obj, status = 200, extra = {}) => new Response(JSON.stringify(obj), {
   status,
@@ -54,15 +60,15 @@ function rateLimited(ip) {
   return list.length > RATE_MAX;
 }
 
-function cacheGet(sci) {
-  const hit = cache.get(sci);
+function cacheGet(map, key) {
+  const hit = map.get(key);
   if (!hit) return undefined;
-  if (Date.now() - hit.at > CACHE_TTL_MS) { cache.delete(sci); return undefined; }
+  if (Date.now() - hit.at > CACHE_TTL_MS) { map.delete(key); return undefined; }
   return hit.value;
 }
-function cacheSet(sci, value) {
-  cache.set(sci, { at: Date.now(), value });
-  if (cache.size > CACHE_MAX) { for (const k of cache.keys()) { cache.delete(k); if (cache.size <= CACHE_MAX * 0.8) break; } }
+function cacheSet(map, key, value) {
+  map.set(key, { at: Date.now(), value });
+  if (map.size > CACHE_MAX) { for (const k of map.keys()) { map.delete(k); if (map.size <= CACHE_MAX * 0.8) break; } }
 }
 
 async function fetchJson(url, deadline) {
@@ -90,6 +96,13 @@ async function fetchJson(url, deadline) {
   }
 }
 
+// 依序處理 items、同時最多 n 筆
+async function pool(items, n, fn) {
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const it = items[next++]; await fn(it); } };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+}
+
 // ── 正規化 ──
 const stripTags = (s) => String(s || '').replace(/<[^>]*>/g, ' ');
 const normName = (s) => stripTags(s).toLowerCase().replace(/\s+/g, ' ').trim();
@@ -98,6 +111,11 @@ const bareName = (s) => normName(s).split(' ').filter(w => /^[a-zë-]+$/.test(w)
 const isSpecies = (d) => /^species$/i.test(String(d && d.rank || ''));
 const usable = (arr) => arr.filter(d => d && typeof d === 'object' && !/deleted|刪除/i.test(String(d.taxon_status || '')));
 const recordsOf = (body) => Array.isArray(body?.data) ? body.data : Array.isArray(body?.results) ? body.results : Array.isArray(body) ? body : [];
+// 只留判斷需要的欄位（TaiCOL 每筆另含 higher_taxa 等，約 3 KB）
+const slim = (d) => d && {
+  taxon_id: d.taxon_id || null, simple_name: d.simple_name || '', rank: d.rank || '', parent_taxon_id: d.parent_taxon_id || null,
+  protected: d.protected ?? null, is_endemic: d.is_endemic ?? null, redlist: d.redlist ?? null, is_in_taiwan: d.is_in_taiwan ?? null,
+};
 
 function truthy(v) {
   if (v === true || v === 1) return true;
@@ -137,11 +155,20 @@ function pickByZh(arr, zh) {
   return hits.find(isSpecies) || hits[0] || null;
 }
 
+// 需要看臺灣的亞種、變種的情形：物種已列 II／III 級（亞種可能更嚴格），
+// 或國家紅皮書列為受脅（NCR／NEN／NVU）或接近受脅（NNT）卻沒有保育等級
+function needsInfra(base) {
+  if (!isSpecies(base)) return false;
+  const level = levelOf(base.protected);
+  if (level === 'II' || level === 'III') return true;
+  return !level && /^N(CR|EN|VU|NT)$/i.test(String(base.redlist || '').trim());
+}
+
 // 查詢的分類群本身＋（若是種）在臺灣的亞種、變種 → 卡片要標的等級
 function summarize(base, group) {
   const baseName = bareName(base.simple_name || '');
   const infra = isSpecies(base)
-    ? group.filter(d => d !== base && !isSpecies(d) && d.is_in_taiwan !== false &&
+    ? group.filter(d => d.taxon_id !== base.taxon_id && !isSpecies(d) && d.is_in_taiwan !== false &&
         (d.parent_taxon_id === base.taxon_id || bareName(d.simple_name || '').startsWith(baseName + ' ')))
     : [];
   let level = levelOf(base.protected);
@@ -163,67 +190,46 @@ function summarize(base, group) {
 
 const EMPTY = { protected: null, protectedScope: null, endemic: null, endemicRank: null, source: null, id: null };
 
-// 需要看臺灣的亞種、變種的情形：物種已列 II／III 級（亞種可能更嚴格，例如石虎：豹貓 II、臺灣的亞種 I），
-// 或國家紅皮書列為受脅（NCR／NEN／NVU）或接近受脅（NNT）卻沒有保育等級。
-// TaiCOL 的 taxon_group 查詢一次要 2–4 秒，只在這些情形才查，其餘物種只用一次 scientific_name 查詢（約 0.1–0.3 秒）。
-function needsInfra(base) {
-  if (!isSpecies(base)) return false;
-  const level = levelOf(base.protected);
-  if (level === 'II' || level === 'III') return true;
-  return !level && /^N(CR|EN|VU|NT)$/i.test(String(base.redlist || '').trim());
+// 第 1 步：名錄中的這個分類群 → { base }（查無時 base 為 null）或 { err }
+async function findBase(sci, zh, deadline, trace) {
+  const cached = cacheGet(baseCache, sci);
+  if (cached !== undefined) return cached;
+  const note = (q, r, t0) => { if (trace) trace.push({ q, err: r.err || null, n: r.data ? recordsOf(r.data).length : null, ms: Date.now() - t0 }); };
+  const target = bareName(sci);
+  let t0 = Date.now();
+  let r = await fetchJson(`${TAICOL_API}?scientific_name=${encodeURIComponent(sci)}`, deadline);
+  note('sci', r, t0);
+  if (r.err) return { err: r.err };
+  let arr = usable(recordsOf(r.data));
+  let base = pickByName(arr, target) || pickBySynonym(arr, target);
+  if (!base && zh) {
+    t0 = Date.now();
+    r = await fetchJson(`${TAICOL_API}?common_name=${encodeURIComponent(zh)}`, deadline);
+    note('zh', r, t0);
+    if (r.err) return { err: r.err };
+    base = pickByZh(usable(recordsOf(r.data)), zh);
+  }
+  const out = { base: slim(base) || null };
+  cacheSet(baseCache, sci, out);
+  return out;
 }
 
-async function lookup(sci, zh, deadline, debug) {
-  const trace = debug ? [] : null;
-  const note = (q, r, t0) => { if (trace) trace.push({ q, err: r.err || null, n: r.data ? recordsOf(r.data).length : null, ms: Date.now() - t0 }); };
-  const enc = encodeURIComponent;
-  const target = bareName(sci);
-  let failed = false;   // 名錄沒有回應（逾時、錯誤）：結果可能不完整
-  let base = null, group = null, r, t0;
-
-  // 1) 學名（有效名或異名）
-  t0 = Date.now();
-  r = await fetchJson(`${TAICOL_API}?scientific_name=${enc(sci)}`, deadline);
-  note('sci', r, t0);
-  if (r.err) failed = true;
-  else { const arr = usable(recordsOf(r.data)); base = pickByName(arr, target) || pickBySynonym(arr, target); }
-  // 2) 查無：中文俗名
-  if (!base && !failed && zh) {
-    t0 = Date.now();
-    r = await fetchJson(`${TAICOL_API}?common_name=${enc(zh)}`, deadline);
-    note('zh', r, t0);
-    if (r.err) failed = true;
-    else base = pickByZh(usable(recordsOf(r.data)), zh);
-  }
-  if (!base) return failed ? { pending: true, trace } : { value: EMPTY, trace };
-
-  // 3) 必要時取其下在臺灣的亞種、變種
-  if (needsInfra(base) && base.simple_name) {
-    t0 = Date.now();
-    r = await fetchJson(`${TAICOL_API}?taxon_group=${enc(base.simple_name)}&limit=50`, deadline);
-    note('group', r, t0);
-    if (r.err) failed = true;
-    else group = usable(recordsOf(r.data));
-  }
-  return { value: summarize(base, group || [base]), transient: failed, trace };
+// 第 2 步：該種與其下分類群 → { group } 或 { err }
+async function findGroup(name, deadline, trace) {
+  const cached = cacheGet(groupCache, name);
+  if (cached !== undefined) return cached;
+  const t0 = Date.now();
+  const r = await fetchJson(`${TAICOL_API}?taxon_group=${encodeURIComponent(name)}&limit=50`, deadline);
+  if (trace) trace.push({ q: 'group', err: r.err || null, n: r.data ? recordsOf(r.data).length : null, ms: Date.now() - t0 });
+  if (r.err) return { err: r.err };
+  const out = { group: usable(recordsOf(r.data)).map(slim) };
+  cacheSet(groupCache, name, out);
+  return out;
 }
 
 export default async (request, context) => {
   const url = new URL(request.url);
   const ip = context?.ip || request.headers.get('x-nf-client-connection-ip') || 'unknown';
-
-  // 暫時偵錯（合併前移除）：GET ?debug=time&group=…[&rank=…][&limit=…] → taxon_group 查詢耗時
-  if (request.method === 'GET' && url.searchParams.get('debug') === 'time') {
-    if (rateLimited(ip)) return json({ error: 'Too many requests' }, 429);
-    const g = (url.searchParams.get('group') || '').trim();
-    if (!SCI_RE.test(g)) return json({ error: 'Bad name' }, 400);
-    const q = new URLSearchParams({ taxon_group: g });
-    for (const k of ['rank', 'limit', 'is_in_taiwan']) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k).slice(0, 20));
-    const t0 = Date.now();
-    const r = await fetchJson(`${TAICOL_API}?${q}`, Date.now() + TOTAL_TIMEOUT_MS);
-    return json({ ms: Date.now() - t0, err: r.err || null, n: r.data ? recordsOf(r.data).length : null,
-      names: r.data ? recordsOf(r.data).map(d => `${d.simple_name} ${d.rank} ${d.protected}`) : null });
-  }
 
   // 暫時偵錯（合併前移除）：GET ?debug=1&sci=…&zh=…
   if (request.method === 'GET' && url.searchParams.get('debug') === '1') {
@@ -231,7 +237,11 @@ export default async (request, context) => {
     const sci = (url.searchParams.get('sci') || '').trim();
     const zh = (url.searchParams.get('zh') || '').trim();
     if (!SCI_RE.test(sci)) return json({ error: 'Bad scientific name' }, 400);
-    return json(await lookup(sci, ZH_RE.test(zh) ? zh : '', Date.now() + TOTAL_TIMEOUT_MS, true));
+    const trace = [], deadline = Date.now() + TOTAL_TIMEOUT_MS;
+    const b = await findBase(sci, ZH_RE.test(zh) ? zh : '', deadline, trace);
+    if (b.err || !b.base) return json({ base: b, trace });
+    const g = needsInfra(b.base) ? await findGroup(b.base.simple_name, deadline, trace) : null;
+    return json({ value: summarize(b.base, (g && g.group) || [b.base]), base: b.base, group: g, trace });
   }
 
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -244,6 +254,7 @@ export default async (request, context) => {
   const list = Array.isArray(body?.taxa) ? body.taxa : null;
   if (!list) return json({ error: 'Missing taxa' }, 400);
   if (list.length > MAX_TAXA) return json({ error: `At most ${MAX_TAXA} taxa per request` }, 413);
+  const withInfra = body.infra !== false;
 
   const seen = new Set();
   const items = [];
@@ -258,25 +269,41 @@ export default async (request, context) => {
   const deadline = Date.now() + TOTAL_TIMEOUT_MS;
   const results = {};
   const pending = [];
-  const queue = [];
+  const todo = [];
   for (const it of items) {
-    const hit = cacheGet(it.sci);
+    const hit = cacheGet(resultCache, it.sci);
     if (hit !== undefined) results[it.sci] = hit;
-    else queue.push(it);
+    else todo.push(it);
   }
 
-  let next = 0;
-  async function worker() {
-    while (next < queue.length) {
-      const it = queue[next++];
-      if (Date.now() > deadline - 500) { pending.push(it.sci); continue; }
-      const r = await lookup(it.sci, it.zh, deadline, false);
-      if (r.pending) { pending.push(it.sci); continue; }
-      results[it.sci] = r.value;
-      if (!r.transient) cacheSet(it.sci, r.value);
-    }
+  // 第 1 步（快速）
+  const bases = new Map();
+  await pool(todo, BASE_CONCURRENCY, async (it) => {
+    if (Date.now() > deadline - 500) { pending.push(it.sci); return; }
+    const b = await findBase(it.sci, it.zh, deadline, null);
+    if (b.err) { pending.push(it.sci); return; }
+    if (!b.base) { results[it.sci] = EMPTY; cacheSet(resultCache, it.sci, EMPTY); return; }
+    bases.set(it.sci, b.base);
+  });
+
+  // 第 2 步（只在 infra 輪、且需要時）
+  const groups = new Map();
+  if (withInfra) {
+    const need = [...bases].filter(([, base]) => needsInfra(base));
+    await pool(need, INFRA_CONCURRENCY, async ([sci, base]) => {
+      if (Date.now() > deadline - 1500) return;
+      const g = await findGroup(base.simple_name, deadline, null);
+      if (!g.err) groups.set(sci, g.group);
+    });
   }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+
+  for (const [sci, base] of bases) {
+    const needed = needsInfra(base);
+    const group = groups.get(sci);
+    const value = summarize(base, group || [base]);
+    if (needed && !group) results[sci] = { ...value, partial: true };   // 亞種、變種還沒查：前端稍後以 infra 輪補查
+    else { results[sci] = value; cacheSet(resultCache, sci, value); }
+  }
 
   return json({ results, pending });
 };
