@@ -468,7 +468,7 @@
       <button type="button" id="langZh" class="lang-btn active">中文</button>
       <button type="button" id="langEn" class="lang-btn">EN</button>
     </div>
-    <div class="tag">🌿 Qi-Coexistence Workflow · <span class="app-version">v1.33</span></div>
+    <div class="tag">🌿 Qi-Coexistence Workflow · <span class="app-version">v1.34</span></div>
     <h1 class="title">棲<span class="dot">·</span>共生</h1>
     <p class="subtitle">
       生態基地分析工作流工具——選擇位置、設定焦點物種與基地條件，自動生成結構化提示詞送入 Claude 進行完整的生態共存設計分析。
@@ -828,7 +828,7 @@
       <span class="footer-sep">·</span>
       <button type="button" class="footer-link" id="feedbackBtn">💬 提供回饋</button>
       <span class="footer-sep">·</span>
-      <span class="footer-version app-version">v1.33</span>
+      <span class="footer-version app-version">v1.34</span>
     </div>
     <div class="footer-text">
       棲共生 Qi-Coexistence · 景觀生態設計工作流 ·
@@ -933,9 +933,11 @@
   };
 
   // ========== OSM Overpass ==========
-  const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
-  // 主伺服器忙碌（429 查詢過於頻繁、502/503/504、逾時、連線失敗）時依序改用的公用備用伺服器（資料同為 OpenStreetMap）
-  const OVERPASS_MIRRORS = ['https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
+  // 先走本站代查（/api/osm）：可使用帶金鑰的 overpass.ch 專屬額度、送出 Overpass 規範要求的可識別
+  // User-Agent（瀏覽器不允許設定）、並對相同查詢共用快取，大幅減少對公用伺服器的請求。
+  const OVERPASS_API = '/api/osm';
+  // 代查不可用（未部署、或上游全忙）時依序改用的公用備用伺服器（資料同為 OpenStreetMap）
+  const OVERPASS_MIRRORS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
   let osmSeq = 0, osmCtl = null;
   const OSM_CATEGORIES = {
     protected:  { icon: '🛡️', name: '保護區', en: 'Protected areas' },
@@ -2095,7 +2097,9 @@ out tags center;`;
         });
         if (seq !== osmSeq) return;
         // 忙碌或伺服器錯誤 → 換下一台；其他錯誤（查詢本身有問題）不換
-        if (!res.ok) { lastErr = { status: res.status }; if ([429, 502, 503, 504].includes(res.status)) continue; break; }
+        // 本站代查（i === 0）不論什麼原因失敗都改試公用伺服器：代查尚未部署（404）或被擋時，
+        // OSM 查詢仍照常運作。公用伺服器則只在忙碌類的狀態碼才換下一台。
+        if (!res.ok) { lastErr = { status: res.status }; if (i === 0 || [429, 502, 503, 504].includes(res.status)) continue; break; }
         const data = await res.json();
         if (seq !== osmSeq) return;
         if (Array.isArray(data.elements)) data.elements = data.elements.filter(inRadius);
@@ -9087,7 +9091,7 @@ ${block}`;
   // ========== About & Feedback ==========
   // 將此處 email 改成您自己的（接收回饋用）
   const FEEDBACK_EMAIL = 'cycland@ntu.edu.tw';
-  const APP_VERSION = 'v1.33'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
+  const APP_VERSION = 'v1.34'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
   document.querySelectorAll('.app-version').forEach(el => { el.textContent = APP_VERSION; });
 
   function openAboutModal() {
