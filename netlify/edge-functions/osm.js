@@ -23,7 +23,19 @@
 // 不需通行碼（OSM 面板在輸入通行碼之前就會顯示）；以查詢格式檢查、大小上限與 IP 速率限制防止被當成公開代理濫用。
 
 const MAX_BODY_BYTES = 8 * 1024;        // Overpass QL 查詢；本站產生的約 0.8 KB
-const UPSTREAM_TIMEOUT_MS = 28000;      // 單一上游（上游查詢本身上限 25 秒＋傳輸）
+
+// Netlify Edge Function 必須在 40 秒內送出回應標頭，否則整個函式被平台中止（前端收到 500）。
+// 因此所有嘗試共用一個總預算：預算用完就立刻回 503，由前端自行改試公用伺服器。
+// 提早放棄比硬撐好，原因有二：被平台中止時白等近 40 秒，而且 500 不帶任何診斷資訊。
+// 這個設計也讓「快速失敗」與「慢速失敗」得到不同待遇——
+// 上游若秒回 429／503，預算幾乎沒消耗，還能多試幾台；
+// 上游若卡住不回，預算被吃掉，就不再試下一台，直接把棒子交回前端（前端自己也有三台備援）。
+const TOTAL_BUDGET_MS = 30000;          // 全部嘗試合計上限（距平台的 40 秒留足安全邊際）
+const RESPONSE_RESERVE_MS = 1500;       // 保留給解析與回傳，不計入上游等待
+const MIN_ATTEMPT_MS = 6000;            // 剩餘預算不足此值就不開始新的嘗試
+const UPSTREAM_TIMEOUT_MS = 26000;      // 單一上游上限（容得下上游查詢本身的 25 秒）
+const PUBLIC_TIMEOUT_MS = 12000;        // 公用伺服器給較短的上限：卡住通常等到最後也只拿到忙碌頁，
+                                        // 不如省下預算多試一台。帶金鑰的專屬端點才值得久等。
 const MAX_UPSTREAM_BYTES = 8 * 1024 * 1024;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;   // OSM 的林相、水體、步道不會以小時為單位變動
 const CACHE_MAX = 300;
@@ -81,9 +93,16 @@ function invalidQuery(q) {
   return null;
 }
 
-async function attemptOnce(url, query) {
+// 這一次嘗試能等多久：單台上限與剩餘總預算取小者。
+// 回傳 null 表示預算已不足，不該再開始新的嘗試。
+function attemptBudget(deadline, cap) {
+  const budget = Math.min(cap, deadline - Date.now() - RESPONSE_RESERVE_MS);
+  return budget >= MIN_ATTEMPT_MS ? budget : null;
+}
+
+async function attemptOnce(url, query, budgetMs) {
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), UPSTREAM_TIMEOUT_MS);
+  const timer = setTimeout(() => ac.abort(), budgetMs);
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -120,17 +139,27 @@ async function attemptOnce(url, query) {
   }
 }
 
-async function tryEndpoint(url, query) {
-  let out = await attemptOnce(url, query);
-  // overpass.ch 免費方案在查詢槽都忙碌時回 503，並要求稍候重試（而非換伺服器）
+async function tryEndpoint(url, query, deadline, cap) {
+  const budget = attemptBudget(deadline, cap);
+  if (budget === null) return { ok: false, status: 504, detail: 'skipped: time budget exhausted', skipped: true };
+
+  let out = await attemptOnce(url, query, budget);
+
+  // overpass.ch 免費方案在查詢槽都忙碌時回 503，並要求稍候重試（而非換伺服器）。
+  // 只在「等待 ＋ 一次最短嘗試」仍放得進剩餘預算時才重試。
   if (!out.ok && out.status === 503) {
-    await new Promise(r => setTimeout(r, RETRY_503_MS));
-    out = await attemptOnce(url, query);
+    const retryBudget = attemptBudget(deadline - RETRY_503_MS, cap);
+    if (retryBudget !== null) {
+      await new Promise(r => setTimeout(r, RETRY_503_MS));
+      out = await attemptOnce(url, query, retryBudget);
+    }
   }
   return out;
 }
 
 export default async (request, context) => {
+  const startedAt = Date.now();   // 總時間預算的起點（見 TOTAL_BUDGET_MS）
+
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
@@ -175,17 +204,19 @@ export default async (request, context) => {
     });
   }
 
-  let endpoints = PUBLIC_ENDPOINTS;
+  const endpoints = PUBLIC_ENDPOINTS.map(url => ({ url, cap: PUBLIC_TIMEOUT_MS }));
   try {
     const custom = Deno.env.get('OVERPASS_ENDPOINT');
-    if (custom && /^https:\/\//.test(custom)) endpoints = [custom, ...PUBLIC_ENDPOINTS];
+    // 帶金鑰的專屬端點排在最前面，且給較寬的等待上限
+    if (custom && /^https:\/\//.test(custom)) endpoints.unshift({ url: custom, cap: UPSTREAM_TIMEOUT_MS });
   } catch (_) {}
 
+  const deadline = startedAt + TOTAL_BUDGET_MS;
   const attempts = [];
-  for (const ep of endpoints) {
+  for (const { url: ep, cap } of endpoints) {
     let host = ep;
     try { host = new URL(ep).host; } catch (_) {}   // 只取主機名：金鑰在路徑裡，不可出現在回應或紀錄中
-    const out = await tryEndpoint(ep, query);
+    const out = await tryEndpoint(ep, query, deadline, cap);
     if (out.ok) {
       cacheSet(query, out.body);
       return new Response(out.body, {
@@ -200,10 +231,13 @@ export default async (request, context) => {
       });
     }
     attempts.push({ endpoint: host, status: out.status, detail: out.detail });
+    // 預算用完就不再往下試：剩下的交給前端自己的公用伺服器備援，
+    // 這樣至少能在平台中止之前把帶診斷資訊的 503 送出去。
+    if (out.skipped) break;
   }
 
-  // 全部失敗：回報每一台的狀況（只含主機名）供診斷；前端會再自行改試公用伺服器
-  return json({ error: 'All Overpass endpoints are unavailable', attempts }, 503,
+  // 全部失敗：回報每一台的狀況（只含主機名）與耗時供診斷；前端會再自行改試公用伺服器
+  return json({ error: 'All Overpass endpoints are unavailable', attempts, ms: Date.now() - startedAt }, 503,
     { 'access-control-allow-origin': '*' });
 };
 
