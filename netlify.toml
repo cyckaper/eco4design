@@ -40,6 +40,13 @@
   path = "/api/taxon-status"
   function = "taxon-status"
 
+# OSM 環境脈絡代查（可用帶金鑰的 overpass.ch、送出可識別的 User-Agent、共用快取；不需通行碼）
+# 選填環境變數：OVERPASS_ENDPOINT（完整 interpreter 網址，例如 https://api.overpass.ch/v1/<金鑰>/interpreter；
+#                               未設定時只用公用伺服器）
+[[edge_functions]]
+  path = "/api/osm"
+  function = "osm"
+
 # 可用模型與建議模型（由 Anthropic Models API 取得，快取 6 小時）
 # 選填環境變數：RECOMMENDED_MODEL（指定建議模型，例如 claude-opus-5-5；須是目前可用的模型）
 [[edge_functions]]
