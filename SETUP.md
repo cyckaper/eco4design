@@ -27,9 +27,22 @@
 
 ### 建議再設一個：`OVERPASS_ENDPOINT`（OSM 環境資源查詢）
 
+兩種帶法,挑一種就好。**標頭式比較不容易設錯,建議用這種**:
+
 | Key | Value |
 |---|---|
-| `OVERPASS_ENDPOINT` | `https://api.overpass.ch/v1/<你的金鑰>/interpreter` |
+| `OVERPASS_API_KEY` | 只貼金鑰本身,例如 `k7Qm2xR9vTb4` |
+
+路徑式(金鑰放在網址裡):
+
+| Key | Value |
+|---|---|
+| `OVERPASS_ENDPOINT` | `https://api.overpass.ch/v1/k7Qm2xR9vTb4/interpreter` |
+
+> ⚠️ 上面的 `k7Qm2xR9vTb4` 是**假的範例值**,換成你自己的金鑰。
+> 不要寫成 `/v1/<金鑰>/interpreter` —— 那組角括號是佔位符號,連著貼進去會讓
+> overpass.ch 回 `malformed API key`,而且從錯誤訊息看不出是自己的值有問題。
+> (現在程式會擋下這種值並直接告訴你,不會再讓你猜。)
 
 不設也能用，但會退回公用 Overpass 伺服器——那些伺服器常常壅塞，
 一天失敗好幾次就是這個原因（實測過整整一分鐘都不回應）。
@@ -48,8 +61,15 @@ const r = await fetch('/api/osm', { method:'POST',
 console.log(r.status, r.headers.get('x-osm-source'));
 ```
 
-`x-osm-source` 要顯示 `api.overpass.ch`。若顯示 `overpass-api.de`，表示變數沒設或沒重新部署。
-（這個標頭只給主機名，不會洩漏金鑰。）
+`x-osm-source` 要顯示 `api.overpass.ch`。另外看 `x-osm-keyed`：
+
+| 看到 | 意思 |
+|---|---|
+| `x-osm-keyed: yes` ＋ `x-osm-source: api.overpass.ch` | 設定正確，金鑰確實在用 |
+| `x-osm-keyed: no` | 變數沒設、沒重新部署，或值的格式有問題——看回應裡的 `config` 欄位，會寫明原因 |
+| `x-osm-keyed: yes` 但 `attempts` 裡 `api.overpass.ch → 401` | 金鑰被拒（值不完整或帳號未啟用） |
+
+這些標頭只給主機名與 yes/no，不會洩漏金鑰。
 
 ---
 

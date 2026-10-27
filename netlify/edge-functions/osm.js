@@ -18,7 +18,9 @@
 //   任一台忙碌（429／5xx／逾時／回傳非 JSON）就換下一台；全部失敗才回 503。
 //
 // 選填環境變數：
-//   OVERPASS_ENDPOINT  完整的 interpreter 網址，例如 https://api.overpass.ch/v1/<金鑰>/interpreter
+//   OVERPASS_API_KEY   只填金鑰本身（建議；以 X-API-Key 標頭送出，不會因網址拼錯而失敗）
+//   OVERPASS_ENDPOINT  完整的 interpreter 網址，例如 https://api.overpass.ch/v1/k7Qm2xR9vTb4/interpreter
+//                      （k7Qm2xR9vTb4 是假的範例值；不要留 < > 角括號）
 //                      未設定時只用公用伺服器（仍可運作，只是沒有專屬額度）。
 // 不需通行碼（OSM 面板在輸入通行碼之前就會顯示）；以查詢格式檢查、大小上限與 IP 速率限制防止被當成公開代理濫用。
 
@@ -104,7 +106,7 @@ function attemptBudget(deadline) {
   return budget >= MIN_ATTEMPT_MS ? budget : null;
 }
 
-async function attemptOnce(url, query, budgetMs) {
+async function attemptOnce(url, query, budgetMs, apiKey) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), budgetMs);
   try {
@@ -115,6 +117,8 @@ async function attemptOnce(url, query, budgetMs) {
         'user-agent': UA,
         'referer': SITE,
         'accept': 'application/json',
+        // overpass.ch 接受金鑰放路徑或放這個標頭；標頭這條路不會因為路徑拼錯而失敗
+        ...(apiKey ? { 'x-api-key': apiKey } : {}),
       },
       body: 'data=' + encodeURIComponent(query),
       signal: ac.signal,
@@ -143,11 +147,11 @@ async function attemptOnce(url, query, budgetMs) {
   }
 }
 
-async function tryEndpoint(url, query, deadline) {
+async function tryEndpoint(url, query, deadline, apiKey) {
   const budget = attemptBudget(deadline);
   if (budget === null) return { ok: false, status: 504, detail: 'skipped: time budget exhausted', skipped: true };
 
-  let out = await attemptOnce(url, query, budget);
+  let out = await attemptOnce(url, query, budget, apiKey);
 
   // overpass.ch 免費方案在查詢槽都忙碌時回 503，並要求稍候重試（而非換伺服器）。
   // 只在「等待 ＋ 一次最短嘗試」仍放得進剩餘預算時才重試。
@@ -155,7 +159,7 @@ async function tryEndpoint(url, query, deadline) {
     const retryBudget = attemptBudget(deadline - RETRY_503_MS);
     if (retryBudget !== null) {
       await new Promise(r => setTimeout(r, RETRY_503_MS));
-      out = await attemptOnce(url, query, retryBudget);
+      out = await attemptOnce(url, query, retryBudget, apiKey);
     }
   }
   return out;
@@ -195,6 +199,44 @@ export default async (request, context) => {
   const bad = invalidQuery(query);
   if (bad) return json({ error: `Rejected query: ${bad}` }, 400);
 
+  // 設定狀態要能被看見。原本格式不對就無聲忽略，結果是「設了卻沒生效」只能靠猜，
+  // 而這個變數通常是在手機上貼進 Netlify 介面的，貼值帶換行或前後空白很常見。
+  let endpoints = PUBLIC_ENDPOINTS;
+  let keyed = false;
+  let configNote = null;
+  let keyedEndpoint = null;   // 唯一能收到金鑰標頭的端點，絕不外送到公用伺服器
+  let apiKey = null;
+  try {
+    // 金鑰有兩種帶法（overpass.ch 的 401 內文自己列出這兩條）：
+    //   路徑式：OVERPASS_ENDPOINT = https://api.overpass.ch/v1/<金鑰>/interpreter
+    //   標頭式：OVERPASS_API_KEY = <金鑰>，網址用不含金鑰的端點
+    // 標頭式不會因為路徑拼錯而失敗，設定時比較不容易出錯。
+    apiKey = (Deno.env.get('OVERPASS_API_KEY') || '').trim() || null;
+    if (apiKey && /[<>\s]/.test(apiKey)) { apiKey = null; configNote = 'OVERPASS_API_KEY looks malformed (stray brackets or spaces) — ignoring it'; }
+
+    let custom = (Deno.env.get('OVERPASS_ENDPOINT') || '').trim();
+    if (!custom && apiKey) custom = 'https://api.overpass.ch/v1/interpreter';   // 標頭式的預設端點
+
+    if (!custom) {
+      // 不要蓋掉上面關於金鑰格式的說明
+      configNote = configNote
+        || 'neither OVERPASS_ENDPOINT nor OVERPASS_API_KEY set in this deployment — using public servers only';
+    } else if (/[<>]/.test(custom)) {
+      // 實際踩過：設定時把說明文件裡的 <金鑰> 佔位符號連角括號一起貼進來。
+      // 送出去只會換回 overpass.ch 一句 malformed API key，看不出是自己的值有問題，
+      // 所以在這裡就擋下並說明白。
+      configNote = 'OVERPASS_ENDPOINT still contains < > placeholder brackets — '
+        + 'remove them so the path reads /v1/YOUR_KEY/interpreter; using public servers only';
+    } else if (/^https:\/\/\S+$/.test(custom)) {
+      endpoints = [custom, ...PUBLIC_ENDPOINTS];   // 帶金鑰的專屬端點優先
+      keyedEndpoint = custom;
+      keyed = true;
+    } else {
+      // 不回報值本身：金鑰就在路徑裡
+      configNote = 'OVERPASS_ENDPOINT is set but unusable (expected one https:// URL) — using public servers only';
+    }
+  } catch (_) {}
+
   const cached = cacheGet(query);
   if (cached) {
     return new Response(cached, {
@@ -204,22 +246,17 @@ export default async (request, context) => {
         'cache-control': 'no-store',
         'access-control-allow-origin': '*',
         'x-osm-cache': 'hit',
+        'x-osm-keyed': keyed ? 'yes' : 'no',
       },
     });
   }
-
-  let endpoints = PUBLIC_ENDPOINTS;
-  try {
-    const custom = Deno.env.get('OVERPASS_ENDPOINT');
-    if (custom && /^https:\/\//.test(custom)) endpoints = [custom, ...PUBLIC_ENDPOINTS];  // 帶金鑰的專屬端點優先
-  } catch (_) {}
 
   const deadline = startedAt + TOTAL_BUDGET_MS;
   const attempts = [];
   for (const ep of endpoints) {
     let host = ep;
     try { host = new URL(ep).host; } catch (_) {}   // 只取主機名：金鑰在路徑裡，不可出現在回應或紀錄中
-    const out = await tryEndpoint(ep, query, deadline);
+    const out = await tryEndpoint(ep, query, deadline, ep === keyedEndpoint ? apiKey : null);
     if (out.ok) {
       cacheSet(query, out.body);
       return new Response(out.body, {
@@ -230,6 +267,7 @@ export default async (request, context) => {
           'access-control-allow-origin': '*',
           'x-osm-source': host,
           'x-osm-cache': 'miss',
+          'x-osm-keyed': keyed ? 'yes' : 'no',
         },
       });
     }
@@ -240,8 +278,9 @@ export default async (request, context) => {
   }
 
   // 全部失敗：回報每一台的狀況（只含主機名）與耗時供診斷；前端會再自行改試公用伺服器
-  return json({ error: 'All Overpass endpoints are unavailable', attempts, ms: Date.now() - startedAt }, 503,
-    { 'access-control-allow-origin': '*' });
+  return json({ error: 'All Overpass endpoints are unavailable', attempts, ms: Date.now() - startedAt,
+                keyed, ...(configNote ? { config: configNote } : {}) }, 503,
+    { 'access-control-allow-origin': '*', 'x-osm-keyed': keyed ? 'yes' : 'no' });
 };
 
 export const config = { path: '/api/osm' };

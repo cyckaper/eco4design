@@ -41,7 +41,8 @@
   function = "taxon-status"
 
 # OSM 環境脈絡代查（可用帶金鑰的 overpass.ch、送出可識別的 User-Agent、共用快取；不需通行碼）
-# 選填環境變數：OVERPASS_ENDPOINT（完整 interpreter 網址，例如 https://api.overpass.ch/v1/<金鑰>/interpreter；
+# 選填環境變數：OVERPASS_API_KEY（只填金鑰本身，建議）或 OVERPASS_ENDPOINT（完整 interpreter 網址，
+#                例如 https://api.overpass.ch/v1/k7Qm2xR9vTb4/interpreter，該值為假的範例、不要留角括號；
 #                               未設定時只用公用伺服器）
 [[edge_functions]]
   path = "/api/osm"
