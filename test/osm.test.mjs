@@ -221,6 +221,44 @@ p = await probe('https://extra-site.netlify.app');
 check('環境變數追加後放行', p.status === 200, JSON.stringify(p));
 delete globalThis.Deno;
 
+// ── 12. GET ?data= 也要支援（基地分析工作站就是這樣呼叫 Overpass 的）────────
+// 代查要能當上游的等價替代品，各站才只需換端點常數，不必改查詢組裝邏輯。
+let getSeen = null;
+globalThis.fetch = async (url, opts) => {
+  getSeen = { url, method: opts.method, body: opts.body };
+  return new Response(JSON.stringify({ elements: [{ type: 'way', id: 3 }] }),
+    { status: 200, headers: { 'content-type': 'application/json' } });
+};
+const gq = QUERY.replace('24.77', '23.11');   // 用前面測試都沒用過的座標，避免撞到模組內的快取
+let gres = await handler(new Request(
+  'https://eco4design.healsdesign.org/api/osm?data=' + encodeURIComponent(gq),
+  { method: 'GET', headers: { origin: 'https://map.healsdesign.org' } }), { ip: '12.12.12.12' });
+let gbody = await gres.json();
+check('GET ?data= 回 200（且非快取）', gres.status === 200 && gres.headers.get('x-osm-cache') === 'miss',
+  gres.status + ' / ' + gres.headers.get('x-osm-cache'));
+check('GET 也回傳上游資料', Array.isArray(gbody.elements) && gbody.elements.length === 1, JSON.stringify(gbody));
+check('GET 收到的查詢已正確解碼', getSeen.body === 'data=' + encodeURIComponent(gq), String(getSeen.body).slice(0, 60));
+check('不論前端用 GET，轉給上游一律用 POST', getSeen.method === 'POST', getSeen.method);
+
+gres = await handler(new Request('https://eco4design.healsdesign.org/api/osm?data=' + encodeURIComponent(gq),
+  { method: 'GET', headers: { origin: 'https://evil.example.com' } }), { ip: '12.12.12.13' });
+check('GET 同樣受來源限制', gres.status === 403, gres.status);
+
+gres = await handler(new Request('https://eco4design.healsdesign.org/api/osm?data=nonsense',
+  { method: 'GET' }), { ip: '12.12.12.14' });
+check('GET 的查詢同樣要通過格式檢查', gres.status === 400, gres.status);
+
+gres = await handler(new Request('https://eco4design.healsdesign.org/api/osm',
+  { method: 'DELETE' }), { ip: '12.12.12.15' });
+check('其他方法仍回 405', gres.status === 405, gres.status);
+
+// GitHub Pages 來源（基地分析工作站的第二個部署位置）
+globalThis.fetch = async () => new Response(JSON.stringify({ elements: [] }),
+  { status: 200, headers: { 'content-type': 'application/json' } });
+gres = await handler(new Request('https://eco4design.healsdesign.org/api/osm?data=' + encodeURIComponent(QUERY.replace('24.77','23.12')),
+  { method: 'GET', headers: { origin: 'https://cyckaper.github.io' } }), { ip: '12.12.12.16' });
+check('GitHub Pages 來源放行', gres.status === 200, gres.status);
+
 globalThis.fetch = realFetch;
 console.log(results.join('\n'));
 console.log(`\n${results.length - failed}/${results.length} 通過`);

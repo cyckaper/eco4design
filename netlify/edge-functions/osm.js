@@ -74,7 +74,8 @@ const UA = `Qi-Coexistence-OSM/1.0 (+${SITE})`;
 // 要人另外去設環境變數省事）。要臨時追加不必改程式：設 OSM_ALLOWED_ORIGINS。
 const DEFAULT_ALLOWED_ORIGINS = [
   '*.healsdesign.org',
-  'cycling-roadbook.netlify.app',   // 小布路書
+  'cycling-roadbook.netlify.app',   // 小布路書（無自訂網域）
+  'cyckaper.github.io',             // 基地分析工作站另有 GitHub Pages 部署
 ];
 const DEV_HOSTNAMES = ['localhost', '127.0.0.1'];
 
@@ -231,7 +232,9 @@ export default async (request, context) => {
       headers: { ...cors, 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type' },
     });
   }
-  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405, cors);
+  if (request.method !== 'POST' && request.method !== 'GET') {
+    return json({ error: 'Method not allowed' }, 405, cors);
+  }
 
   // 在轉給上游之前就擋下：這一步才是真正保住 overpass.ch 額度的地方
   if (rejected) return json({ error: 'Origin not allowed', origin: rejected }, 403);
@@ -239,17 +242,26 @@ export default async (request, context) => {
   const ip = (context && context.ip) || request.headers.get('x-nf-client-connection-ip') || 'unknown';
   if (rateLimited(ip)) return json({ error: 'Too many requests' }, 429, cors);
 
-  let raw;
-  try { raw = await request.text(); } catch (_) { return json({ error: 'Cannot read request body' }, 400, cors); }
-  if (raw.length > MAX_BODY_BYTES) return json({ error: 'Query too large' }, 413, cors);
+  // Overpass 原生介面同時接受 GET ?data=<查詢> 與 POST data=<查詢>，兩種都支援，
+  // 這一層才是真正可以替換上游網址的「等價替代品」：各站不必改查詢組裝的邏輯，
+  // 只要換掉端點常數。（基地分析工作站用 GET，分區與動線與棲共生用 POST。）
+  let query;
+  if (request.method === 'GET') {
+    query = new URL(request.url).searchParams.get('data') || '';   // searchParams 已自動解碼
+    if (query.length > MAX_BODY_BYTES) return json({ error: 'Query too large' }, 413, cors);
+  } else {
+    let raw;
+    try { raw = await request.text(); } catch (_) { return json({ error: 'Cannot read request body' }, 400, cors); }
+    if (raw.length > MAX_BODY_BYTES) return json({ error: 'Query too large' }, 413, cors);
 
-  // 與 Overpass 原生介面一致：body 為 data=<查詢>；也接受直接送查詢本身。
-  // 前端以 encodeURIComponent 編碼（空白為 %20），因此不把 '+' 視為空白，
-  // 以免查詢中的正規表示式量詞（例如 [a-z]+）被改掉。
-  let query = raw;
-  if (/^data=/.test(raw)) {
-    try { query = decodeURIComponent(raw.slice(5)); }
-    catch (_) { return json({ error: 'Malformed body encoding' }, 400, cors); }
+    // body 為 data=<查詢>；也接受直接送查詢本身。
+    // 前端以 encodeURIComponent 編碼（空白為 %20），因此不把 '+' 視為空白，
+    // 以免查詢中的正規表示式量詞（例如 [a-z]+）被改掉。
+    query = raw;
+    if (/^data=/.test(raw)) {
+      try { query = decodeURIComponent(raw.slice(5)); }
+      catch (_) { return json({ error: 'Malformed body encoding' }, 400, cors); }
+    }
   }
 
   const bad = invalidQuery(query);
