@@ -180,12 +180,16 @@ const probe = async (o) => {
   const before = upstreamCalls;
   const r = await handler(withOrigin(o), { ip: '11.11.11.' + (n % 200) });
   return { status: r.status, acao: r.headers.get('access-control-allow-origin'),
+           expose: r.headers.get('access-control-expose-headers'),
            hitUpstream: upstreamCalls > before };
 };
 
 let p = await probe('https://map.healsdesign.org');
 check('自家網域（基地分析工作站）放行', p.status === 200, JSON.stringify(p));
 check('放行時回對應的 origin 而非 *', p.acao === 'https://map.healsdesign.org', p.acao);
+check('x-osm-* 標頭宣告為跨來源可讀（否則別站讀到的全是 null）',
+  /x-osm-source/.test(p.expose || '') && /x-osm-keyed/.test(p.expose || '') && /x-osm-cache/.test(p.expose || ''),
+  p.expose);
 
 p = await probe('https://zoning8circulation.healsdesign.org');
 check('自家網域（分區與動線）放行', p.status === 200, JSON.stringify(p));

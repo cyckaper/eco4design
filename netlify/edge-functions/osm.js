@@ -223,6 +223,10 @@ export default async (request, context) => {
   const cors = {
     'access-control-allow-origin': origin && !rejected ? origin : '*',
     'vary': 'origin',   // 不同來源的回應不可互相混用
+    // 跨來源的 JavaScript 預設讀不到自訂回應標頭。不宣告公開的話，
+    // 別站拿到的 x-osm-* 全是 null——而這三個標頭正是用來確認
+    // 金鑰有沒有生效、走了哪一台、是否命中快取的唯一依據。
+    'access-control-expose-headers': 'x-osm-source, x-osm-cache, x-osm-keyed',
   };
 
   if (request.method === 'OPTIONS') {
