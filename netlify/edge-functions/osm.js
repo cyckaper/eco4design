@@ -58,6 +58,46 @@ const PUBLIC_ENDPOINTS = [
 const SITE = 'https://eco4design.healsdesign.org';
 const UA = `Qi-Coexistence-OSM/1.0 (+${SITE})`;
 
+// 這個端點同時服務多個站台（棲共生、基地分析工作站、分區與動線、小布路書……），
+// 所以不能再用 access-control-allow-origin: '*' —— 那等於開放代理，任何人都能拿去燒額度。
+//
+// 光靠 CORS 標頭擋是沒用的：查詢用的 content-type 是 CORS 安全名單內的
+// application/x-www-form-urlencoded，瀏覽器不會發預檢，請求會直接打到這裡、
+// 照樣轉給上游吃掉額度，只是回應被瀏覽器攔住不給讀。因此不允許的來源必須在
+// 轉給上游之前就回 403。
+//
+// 比對用 hostname（不管連接埠）。'*.' 開頭是子網域通配；其餘為精確比對，
+// 並額外接受 Netlify 的分支部署網址（main--站名.netlify.app）——以 '--' 為界，
+// 所以別人註冊 xx站名.netlify.app 不會因此被放行。
+// 自家站台。'*.healsdesign.org' 一併涵蓋七站與未來新站；
+// 沒有自訂網域、只有 netlify.app 的站台要逐一列出（這些不是機密，寫在這裡比
+// 要人另外去設環境變數省事）。要臨時追加不必改程式：設 OSM_ALLOWED_ORIGINS。
+const DEFAULT_ALLOWED_ORIGINS = [
+  '*.healsdesign.org',
+  'cycling-roadbook.netlify.app',   // 小布路書
+];
+const DEV_HOSTNAMES = ['localhost', '127.0.0.1'];
+
+function hostnameAllowed(hostname, patterns) {
+  if (DEV_HOSTNAMES.includes(hostname)) return true;
+  return patterns.some(p => {
+    if (p.startsWith('*.')) {
+      const base = p.slice(2);
+      return hostname === base || hostname.endsWith('.' + base);
+    }
+    return hostname === p || hostname.endsWith('--' + p);
+  });
+}
+
+// 回傳 null 表示允許；否則回傳不允許的 hostname（供診斷）。
+// 沒有 Origin 標頭的請求（curl、伺服器端呼叫）無從判斷來源，放行後交給速率限制把關。
+function originRejected(origin, patterns) {
+  if (!origin) return null;
+  let hostname;
+  try { hostname = new URL(origin).hostname; } catch (_) { return 'malformed origin'; }
+  return hostnameAllowed(hostname, patterns) ? null : hostname;
+}
+
 const cache = new Map();   // 查詢字串 → { at, body }
 const rate = new Map();    // ip → [timestamps]
 
@@ -168,24 +208,40 @@ async function tryEndpoint(url, query, deadline, apiKey) {
 export default async (request, context) => {
   const startedAt = Date.now();   // 總時間預算的起點（見 TOTAL_BUDGET_MS）
 
+  // 額外允許的來源（例如沒有自訂網域、只有 netlify.app 的站台），逗號分隔
+  let allowedOrigins = DEFAULT_ALLOWED_ORIGINS;
+  try {
+    const extra = (Deno.env.get('OSM_ALLOWED_ORIGINS') || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
+    if (extra.length) allowedOrigins = [...DEFAULT_ALLOWED_ORIGINS, ...extra];
+  } catch (_) {}
+
+  const origin = request.headers.get('origin');
+  const rejected = originRejected(origin, allowedOrigins);
+  // 允許的來源要回對應的 origin（不能再用 '*'）；沒有 Origin 的請求維持 '*'
+  const cors = {
+    'access-control-allow-origin': origin && !rejected ? origin : '*',
+    'vary': 'origin',   // 不同來源的回應不可互相混用
+  };
+
   if (request.method === 'OPTIONS') {
+    if (rejected) return json({ error: 'Origin not allowed', origin: rejected }, 403);
     return new Response(null, {
       status: 204,
-      headers: {
-        'access-control-allow-origin': '*',
-        'access-control-allow-methods': 'POST, OPTIONS',
-        'access-control-allow-headers': 'content-type',
-      },
+      headers: { ...cors, 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type' },
     });
   }
-  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405, cors);
+
+  // 在轉給上游之前就擋下：這一步才是真正保住 overpass.ch 額度的地方
+  if (rejected) return json({ error: 'Origin not allowed', origin: rejected }, 403);
 
   const ip = (context && context.ip) || request.headers.get('x-nf-client-connection-ip') || 'unknown';
-  if (rateLimited(ip)) return json({ error: 'Too many requests' }, 429);
+  if (rateLimited(ip)) return json({ error: 'Too many requests' }, 429, cors);
 
   let raw;
-  try { raw = await request.text(); } catch (_) { return json({ error: 'Cannot read request body' }, 400); }
-  if (raw.length > MAX_BODY_BYTES) return json({ error: 'Query too large' }, 413);
+  try { raw = await request.text(); } catch (_) { return json({ error: 'Cannot read request body' }, 400, cors); }
+  if (raw.length > MAX_BODY_BYTES) return json({ error: 'Query too large' }, 413, cors);
 
   // 與 Overpass 原生介面一致：body 為 data=<查詢>；也接受直接送查詢本身。
   // 前端以 encodeURIComponent 編碼（空白為 %20），因此不把 '+' 視為空白，
@@ -193,11 +249,11 @@ export default async (request, context) => {
   let query = raw;
   if (/^data=/.test(raw)) {
     try { query = decodeURIComponent(raw.slice(5)); }
-    catch (_) { return json({ error: 'Malformed body encoding' }, 400); }
+    catch (_) { return json({ error: 'Malformed body encoding' }, 400, cors); }
   }
 
   const bad = invalidQuery(query);
-  if (bad) return json({ error: `Rejected query: ${bad}` }, 400);
+  if (bad) return json({ error: `Rejected query: ${bad}` }, 400, cors);
 
   // 設定狀態要能被看見。原本格式不對就無聲忽略，結果是「設了卻沒生效」只能靠猜，
   // 而這個變數通常是在手機上貼進 Netlify 介面的，貼值帶換行或前後空白很常見。
@@ -244,7 +300,7 @@ export default async (request, context) => {
       headers: {
         'content-type': 'application/json; charset=utf-8',
         'cache-control': 'no-store',
-        'access-control-allow-origin': '*',
+        ...cors,
         'x-osm-cache': 'hit',
         'x-osm-keyed': keyed ? 'yes' : 'no',
       },
@@ -264,7 +320,7 @@ export default async (request, context) => {
         headers: {
           'content-type': 'application/json; charset=utf-8',
           'cache-control': 'no-store',
-          'access-control-allow-origin': '*',
+          ...cors,
           'x-osm-source': host,
           'x-osm-cache': 'miss',
           'x-osm-keyed': keyed ? 'yes' : 'no',
@@ -280,7 +336,7 @@ export default async (request, context) => {
   // 全部失敗：回報每一台的狀況（只含主機名）與耗時供診斷；前端會再自行改試公用伺服器
   return json({ error: 'All Overpass endpoints are unavailable', attempts, ms: Date.now() - startedAt,
                 keyed, ...(configNote ? { config: configNote } : {}) }, 503,
-    { 'access-control-allow-origin': '*', 'x-osm-keyed': keyed ? 'yes' : 'no' });
+    { ...cors, 'x-osm-keyed': keyed ? 'yes' : 'no' });
 };
 
 export const config = { path: '/api/osm' };

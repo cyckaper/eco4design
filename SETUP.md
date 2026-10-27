@@ -61,6 +61,41 @@ const r = await fetch('/api/osm', { method:'POST',
 console.log(r.status, r.headers.get('x-osm-source'));
 ```
 
+### 其他站台共用這個代查
+
+`/api/osm` 同時服務多個站台，金鑰與快取只有這一份：
+
+| 站台 | repo |
+|---|---|
+| 棲共生(本站) | eco4design |
+| 基地分析工作站(讀地) | la-maps |
+| 分區與動線 | zoning8circulation |
+| 小布路書 | Cycling-almanac |
+
+其他站台不需要自己放一份 `osm.js`，只要把 Overpass 網址指向
+`https://eco4design.healsdesign.org/api/osm`，並保留公用伺服器作為後備即可。
+
+**來源限制**:只有自家站台能用，否則等於開放代理、額度會被陌生人燒掉。
+預設放行 `*.healsdesign.org` 與 `cycling-roadbook.netlify.app`，本機開發
+(`localhost`／`127.0.0.1`)也放行。要追加站台可改程式裡的預設清單，
+或設環境變數 `OSM_ALLOWED_ORIGINS`(逗號分隔，不必改程式):
+
+```
+OSM_ALLOWED_ORIGINS=some-site.netlify.app,another.example.org
+```
+
+被擋的來源會在**轉給上游之前**就收到 403 —— 這一步才是真正保住額度的地方。
+只靠 CORS 標頭是沒用的：查詢用的 content-type 在 CORS 安全名單內，
+瀏覽器不會發預檢，請求照樣會打到上游、額度照樣被吃，只是回應讀不到。
+
+改動這個代查前請先跑測試(43 項，約 80 秒，不需網路):
+
+```
+node test/osm.test.mjs
+```
+
+---
+
 `x-osm-source` 要顯示 `api.overpass.ch`。另外看 `x-osm-keyed`：
 
 | 看到 | 意思 |
