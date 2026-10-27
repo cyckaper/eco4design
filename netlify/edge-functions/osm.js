@@ -33,9 +33,11 @@ const MAX_BODY_BYTES = 8 * 1024;        // Overpass QL 查詢；本站產生的�
 const TOTAL_BUDGET_MS = 30000;          // 全部嘗試合計上限（距平台的 40 秒留足安全邊際）
 const RESPONSE_RESERVE_MS = 1500;       // 保留給解析與回傳，不計入上游等待
 const MIN_ATTEMPT_MS = 6000;            // 剩餘預算不足此值就不開始新的嘗試
-const UPSTREAM_TIMEOUT_MS = 26000;      // 單一上游上限（容得下上游查詢本身的 25 秒）
-const PUBLIC_TIMEOUT_MS = 12000;        // 公用伺服器給較短的上限：卡住通常等到最後也只拿到忙碌頁，
-                                        // 不如省下預算多試一台。帶金鑰的專屬端點才值得久等。
+// 單一上游上限。設成容得下上游查詢本身的 25 秒，是實測得來的：
+// 2026-10-27 公用伺服器壅塞時，overpass-api.de 花了 25.1 秒才回，但確實回了正確資料。
+// 曾經想「公用伺服器卡住就早點放棄、省下預算多試一台」，實測證明那是錯的——
+// 早放棄等於砍掉一條本來會成功的路，而前端接手後又要重等一次，使用者總共等更久。
+const UPSTREAM_TIMEOUT_MS = 26000;
 const MAX_UPSTREAM_BYTES = 8 * 1024 * 1024;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;   // OSM 的林相、水體、步道不會以小時為單位變動
 const CACHE_MAX = 300;
@@ -95,8 +97,8 @@ function invalidQuery(q) {
 
 // 這一次嘗試能等多久：單台上限與剩餘總預算取小者。
 // 回傳 null 表示預算已不足，不該再開始新的嘗試。
-function attemptBudget(deadline, cap) {
-  const budget = Math.min(cap, deadline - Date.now() - RESPONSE_RESERVE_MS);
+function attemptBudget(deadline) {
+  const budget = Math.min(UPSTREAM_TIMEOUT_MS, deadline - Date.now() - RESPONSE_RESERVE_MS);
   return budget >= MIN_ATTEMPT_MS ? budget : null;
 }
 
@@ -139,8 +141,8 @@ async function attemptOnce(url, query, budgetMs) {
   }
 }
 
-async function tryEndpoint(url, query, deadline, cap) {
-  const budget = attemptBudget(deadline, cap);
+async function tryEndpoint(url, query, deadline) {
+  const budget = attemptBudget(deadline);
   if (budget === null) return { ok: false, status: 504, detail: 'skipped: time budget exhausted', skipped: true };
 
   let out = await attemptOnce(url, query, budget);
@@ -148,7 +150,7 @@ async function tryEndpoint(url, query, deadline, cap) {
   // overpass.ch 免費方案在查詢槽都忙碌時回 503，並要求稍候重試（而非換伺服器）。
   // 只在「等待 ＋ 一次最短嘗試」仍放得進剩餘預算時才重試。
   if (!out.ok && out.status === 503) {
-    const retryBudget = attemptBudget(deadline - RETRY_503_MS, cap);
+    const retryBudget = attemptBudget(deadline - RETRY_503_MS);
     if (retryBudget !== null) {
       await new Promise(r => setTimeout(r, RETRY_503_MS));
       out = await attemptOnce(url, query, retryBudget);
@@ -204,19 +206,18 @@ export default async (request, context) => {
     });
   }
 
-  const endpoints = PUBLIC_ENDPOINTS.map(url => ({ url, cap: PUBLIC_TIMEOUT_MS }));
+  let endpoints = PUBLIC_ENDPOINTS;
   try {
     const custom = Deno.env.get('OVERPASS_ENDPOINT');
-    // 帶金鑰的專屬端點排在最前面，且給較寬的等待上限
-    if (custom && /^https:\/\//.test(custom)) endpoints.unshift({ url: custom, cap: UPSTREAM_TIMEOUT_MS });
+    if (custom && /^https:\/\//.test(custom)) endpoints = [custom, ...PUBLIC_ENDPOINTS];  // 帶金鑰的專屬端點優先
   } catch (_) {}
 
   const deadline = startedAt + TOTAL_BUDGET_MS;
   const attempts = [];
-  for (const { url: ep, cap } of endpoints) {
+  for (const ep of endpoints) {
     let host = ep;
     try { host = new URL(ep).host; } catch (_) {}   // 只取主機名：金鑰在路徑裡，不可出現在回應或紀錄中
-    const out = await tryEndpoint(ep, query, deadline, cap);
+    const out = await tryEndpoint(ep, query, deadline);
     if (out.ok) {
       cacheSet(query, out.body);
       return new Response(out.body, {

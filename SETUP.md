@@ -25,6 +25,32 @@
 
 > 若沒設 `QI_PASSCODE`，通行碼檢查會停用 = **任何人都能用你的帳戶**。務必設定。
 
+### 建議再設一個：`OVERPASS_ENDPOINT`（OSM 環境資源查詢）
+
+| Key | Value |
+|---|---|
+| `OVERPASS_ENDPOINT` | `https://api.overpass.ch/v1/<你的金鑰>/interpreter` |
+
+不設也能用，但會退回公用 Overpass 伺服器——那些伺服器常常壅塞，
+一天失敗好幾次就是這個原因（實測過整整一分鐘都不回應）。
+設了之後走 overpass.ch 的專屬額度，`/api/osm` 會優先打它，失敗才退回公用伺服器。
+
+金鑰在網址路徑裡，所以**只能**放環境變數，不能寫進前端或 repo。
+設定後要 **Trigger deploy → Clear cache and deploy site**。
+
+確認有生效（在站上開 Console 執行）：
+
+```js
+const q = '[out:json][timeout:25];(node["natural"="peak"](24.77,121.53,24.80,121.57););out tags center;';
+const r = await fetch('/api/osm', { method:'POST',
+  headers:{'content-type':'application/x-www-form-urlencoded'},
+  body:'data=' + encodeURIComponent(q) });
+console.log(r.status, r.headers.get('x-osm-source'));
+```
+
+`x-osm-source` 要顯示 `api.overpass.ch`。若顯示 `overpass-api.de`，表示變數沒設或沒重新部署。
+（這個標頭只給主機名，不會洩漏金鑰。）
+
 ---
 
 ## 🛡️ 三道防線（請全部設定）
