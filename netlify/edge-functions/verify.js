@@ -2581,11 +2581,13 @@ const PDF_STREAM_PEEK = 48000;
 // 真實政府報告動輒數 MB。網頁的 400 KB 上限會把 PDF 截斷，
 // 截斷處的串流找不到 endstream，整份就解不出內容（實測三份都是 pdf_no_text）。
 // 讀多一些；解壓與解析本身另有上限，所以 CPU 不隨檔案大小增加。
-const PDF_FETCH_BYTES = 3 * 1024 * 1024;
+// 3 MB 讓部分政府網站下載不完（實測 forest.gov.tw 逾時）。
+// 1.5 MB 足以涵蓋前幾頁與字型物件，又不會拖垮慢速網站。
+const PDF_FETCH_BYTES = 1536 * 1024;
 // PDF 抽取只在預算還過半時才做：留給同一批的其他文獻，
 // 否則第一個 PDF 做完，後面全部回 cpu_budget。
 const PDF_BUDGET_SHARE = 0.5;
-const PDF_RAW_ENOUGH = 9000;         // 累積到這麼多字串引數就停止解壓
+const PDF_RAW_ENOUGH = 4000;         // 累積到這麼多字串引數就停止（4000 個已足夠產生數千字）
 const PDF_MIN_CHARS = 120;
 const PDF_CMAP_CONFLICT_MAX = 0.02;
 const PDF_IMAGE_RE = /\/Subtype\s*\/Image|\/DCTDecode|\/JPXDecode|\/CCITTFaxDecode|\/JBIG2Decode/;
@@ -2756,13 +2758,56 @@ function pdfQuality(text, rate) {
   return null;
 }
 
+// 依物件編號找出它的串流範圍與濾鏡
+function pdfObjStream(latin, num) {
+  const re = new RegExp('(?:^|[^0-9])' + num + '\\s+0\\s+obj\\b');
+  const m = re.exec(latin);
+  if (!m) return null;
+  const from = m.index;
+  const s = latin.indexOf('stream', from);
+  if (s < 0 || s - from > 2000) return null;
+  let a = s + 6;
+  if (latin[a] === '\r') a++;
+  if (latin[a] === '\n') a++;
+  const e = latin.indexOf('endstream', a);
+  if (e < 0) return null;
+  const dict = latin.slice(from, s);
+  const fm = dict.match(/\/Filter\s*(\[[^\]]*\]|\/[A-Za-z0-9]+)/);
+  return { a, b: e, filters: fm ? (fm[1].match(/\/[A-Za-z0-9]+/g) || []).map(x => x.slice(1)) : [] };
+}
+
 async function pdfBodyText(bytes, ctx) {
   const slice = bytes.subarray(0, PDF_FETCH_BYTES);
   const latin = timed(ctx, () => new TextDecoder('latin1').decode(slice));
+
+  // 加密的 PDF（政府文件常設擁有者密碼）串流解不開，不必白費 CPU
+  if (/\/Encrypt\s/.test(latin)) return { none: 'pdf_encrypted' };
+
   const streams = timed(ctx, () => pdfStreams(latin));
   const map = new Map();
   const contents = [];
   let inflated = 0, cmapEntries = 0, conflicts = 0;
+
+  // 先把 /ToUnicode 指到的物件解出來。字型物件常排在內容串流之後，
+  // 若照順序解壓，預算會先被內容吃光、CMap 永遠讀不到
+  // （實測 cmap 0、解碼命中率 0.36，輸出被品質閘門擋下）。
+  const toUni = timed(ctx, () => {
+    const nums = new Set();
+    for (const m of latin.matchAll(/\/ToUnicode\s+(\d+)\s+0\s+R/g)) nums.add(m[1]);
+    return [...nums].slice(0, 8);
+  });
+  for (const num of toUni) {
+    if (ctx.cpuMs > ctx.cpuBudgetMs) break;
+    const st = timed(ctx, () => pdfObjStream(latin, num));
+    if (!st) continue;
+    const raw = await pdfApplyFilters(slice.subarray(st.a, st.b), st.filters, ctx);
+    if (!raw) continue;
+    const text = timed(ctx, () => new TextDecoder('latin1').decode(raw.subarray(0, PDF_STREAM_PEEK)));
+    const before = map.size;
+    conflicts += timed(ctx, () => pdfParseCMap(text, map));
+    cmapEntries += map.size - before;
+  }
+
   for (const st of streams) {
     if (inflated >= PDF_MAX_INFLATED || ctx.cpuMs > ctx.cpuBudgetMs) break;
     const raw = await pdfApplyFilters(slice.subarray(st.a, st.b), st.filters, ctx);
@@ -2795,6 +2840,8 @@ async function pdfBodyText(bytes, ctx) {
   if (!items.length) return { none: 'pdf_no_text', diag: { streams: streams.length, inflated,
     cmap: map.size, conflicts, contents: contents.length, cpu: Math.round(ctx.cpuMs) } };
 
+  // 解碼與品質檢查本身也要算進預算：實測一筆衝到 65 ms，遠超過 40 ms
+  if (ctx.cpuMs > ctx.cpuBudgetMs) return { none: 'pdf_cpu', diag: { streams: streams.length, inflated, cmap: map.size, items: items.length, cpu: Math.round(ctx.cpuMs) } };
   const d = timed(ctx, () => pdfDecode(items, map));
   const text = timed(ctx, () => d.text.replace(/\s+/g, ' ').trim().slice(0, PAGE_TEXT_CHARS));
   const bad = timed(ctx, () => pdfQuality(text, d.rate));
