@@ -2584,6 +2584,12 @@ const PDF_STREAM_PEEK = 48000;
 // 3 MB 讓部分政府網站下載不完（實測 forest.gov.tw 逾時）。
 // 1.5 MB 足以涵蓋前幾頁與字型物件，又不會拖垮慢速網站。
 const PDF_FETCH_BYTES = 1536 * 1024;
+// 只處理小 PDF。把 1.5 MB 解碼成 latin1 字串本身就要幾十毫秒（Deno 上實測
+// 整筆 CPU 衝到 73 ms，上限 40 ms），而超支會中止「整個請求」、不只這一筆。
+// 大檔的正確解法是把 PDF 處理搬到 Netlify Function（Node，秒級 CPU）並用
+// 現成的 PDF 函式庫；在 Edge Function 的 50 ms 內硬做，只會換個地方撞牆。
+// 小 PDF（期刊單篇抽印、公告）在這裡可靠，就先只做這一段。
+const PDF_PARSE_MAX = 300 * 1024;
 // PDF 抽取只在預算還過半時才做：留給同一批的其他文獻，
 // 否則第一個 PDF 做完，後面全部回 cpu_budget。
 const PDF_BUDGET_SHARE = 0.5;
@@ -2783,6 +2789,7 @@ function pdfObjStream(latin, num, idx) {
 }
 
 async function pdfBodyText(bytes, ctx) {
+  if (bytes.length > PDF_PARSE_MAX) return { none: 'pdf_too_large', diag: { bytes: bytes.length, limit: PDF_PARSE_MAX } };
   const slice = bytes.subarray(0, PDF_FETCH_BYTES);
   const latin = timed(ctx, () => new TextDecoder('latin1').decode(slice));
 
