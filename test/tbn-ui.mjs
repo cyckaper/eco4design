@@ -33,7 +33,8 @@ const species = [
     elev: [1100, 1250], blurred: false, uncertainty: 0, sensitive: null },
   { id: 'u2', sci: 'Muntiacus reevesi', zh: '山羌', famSci: 'Cervidae', famZh: '鹿科',
     group: '哺乳類', groupCode: 'mammals', rank: '種', taicol: 't2',
-    protected: '第三級其他應予保育', redlist: 'LC', redlistFull: '暫無危機（LC, Least Concern）',
+    // 線上實測的真實字串（不是文件所列的「第三級其他應予保育」）
+    protected: '其他應予保育之野生動物', redlist: 'LC', redlistFull: '暫無危機（LC, Least Concern）',
     endemic: true, nativeness: '原生', estab: '原生', n: 14, years: [2010, 2023],
     elev: [900, 1400], blurred: true, uncertainty: 5000, sensitive: '敏感' },
   { id: 'u3', sci: 'Bidens pilosa', zh: '大花咸豐草', famSci: 'Asteraceae', famZh: '菊科',
@@ -43,21 +44,37 @@ const species = [
     blurred: false, uncertainty: 10, sensitive: null },
   { id: 'u4', sci: 'Pitta nympha', zh: '八色鳥', famSci: 'Pittidae', famZh: '八色鳥科',
     group: '鳥類', groupCode: 'birds', rank: '種', taicol: 't4',
-    protected: '第二級珍貴稀有', redlist: 'VU', redlistFull: '易危（VU, Vulnerable）',
+    // 線上實測的真實字串（不是文件所列的「第二級珍貴稀有」）
+    protected: '珍貴稀有保育類野生動物', redlist: 'VU', redlistFull: '易危（VU, Vulnerable）',
     endemic: false, nativeness: '原生', estab: null, n: 3, years: [2019, 2019],
     elev: [1000, 1000], blurred: true, uncertainty: 1000, sensitive: '敏感' },
+  // 實測溪頭 3 km 的 619 個分類群裡只有 512 個是種，還有一筆是「真菌界」。
+  // 不標階層的話，報告會把整個真菌界當成一個物種寫進去。
+  { id: 'u5', sci: 'Fungi', zh: '真菌界', famSci: null, famZh: null,
+    group: '真菌類', groupCode: 'fungi', rank: '界', taicol: 't5', protected: null,
+    redlist: null, redlistFull: null, endemic: null, nativeness: null, estab: null,
+    n: 9, years: [2015, 2020], elev: null, blurred: false, uncertainty: null, sensitive: null },
+  { id: 'u6', sci: 'Acraea issoria formosana', zh: '苧麻珍蝶(formosana亞種)',
+    famSci: 'Nymphalidae', famZh: '蛺蝶科', group: '蝶類', groupCode: 'butterflies',
+    rank: '種下階層', taicol: 't6', protected: null, redlist: null, redlistFull: null,
+    endemic: true, nativeness: '原生', estab: '野生', n: 5, years: [2018, 2022],
+    elev: [900, 1100], blurred: false, uncertainty: 50, sensitive: null },
 ];
 
 const payload = {
   source: 'TBN 臺灣生物多樣性網絡',
   sourceUrl: 'https://www.tbn.org.tw/',
   site: { lat: 23.673, lon: 120.795, r: 3 },
-  total: 93632,
-  sample: { perGroup: 100, records: 300, groups: 3, complete: false },
+  total: 92899,            // 各類群 meta.total 之和
+  rangeTotal: 93632,       // 不分類群的真實總筆數（參考文獻的網址是這個查詢）
+  ungrouped: 733,
+  sample: { perGroup: 100, records: 500, groups: 5, complete: false },
   groups: [
     { code: 'birds', zh: '鳥類', total: 73210, sampled: 100, species: 2, partial: true },
     { code: 'angiosperms', zh: '被子植物', total: 9508, sampled: 100, species: 1, partial: true },
     { code: 'mammals', zh: '哺乳類', total: 394, sampled: 100, species: 1, partial: true },
+    { code: 'butterflies', zh: '蝶類', total: 341, sampled: 100, species: 1, partial: true },
+    { code: 'fungi', zh: '真菌類', total: 116, sampled: 100, species: 1, partial: true },
   ],
   species,
   datasets: [
@@ -174,16 +191,22 @@ const dom = await page.evaluate(() => {
     chips: [...document.querySelectorAll('.tbn-chip')].map(c => c.textContent.trim()),
     count: items.length,
     names: items.map(i => (i.querySelector('.tbn-name') || {}).textContent || ''),
+    metas: items.map(i => ((i.querySelector('.tbn-name') || {}).textContent || '') + ' ｜ '
+      + ((i.querySelector('.tbn-meta') || {}).textContent || '')),
     badges: items.map(i => [...i.querySelectorAll('.tbn-badge')].map(b => b.className.replace('tbn-badge ', '') + ':' + b.textContent)),
     attribution: (q('#tbnAttribution') || {}).textContent || '',
     legendVisible: !!q('#tbnLegend') && q('#tbnLegend').style.display !== 'none',
   };
 });
 
-check('四個物種都繪出卡片', dom.count === 4, dom.count);
+check('六個分類群都繪出卡片', dom.count === 6, dom.count);
 check('中文名顯示正確', dom.names.includes('樹鵲') && dom.names.includes('八色鳥'), JSON.stringify(dom.names));
-check('統計列出現原生與外來數量', /原生 3/.test(dom.status) && /外來 1/.test(dom.status), dom.status);
-check('統計列出現總筆數（千分位）', /93,632/.test(dom.status), dom.status);
+check('統計列出現原生與外來數量', /原生 4/.test(dom.status) && /外來 1/.test(dom.status), dom.status);
+// 顯示的是 rangeTotal（與參考文獻網址一致），不是類群總和
+check('統計列用範圍總筆數 93,632（不是類群總和 92,899）',
+  /93,632/.test(dom.status) && !/92,899/.test(dom.status), dom.status);
+// 六個分類群裡只有四個鑑定到種
+check('統計列說明幾個鑑定到種', /4 個鑑定到種/.test(dom.status), dom.status);
 
 // 最要緊的：取樣說明要看得見
 check('取樣說明有顯示', dom.noteVisible, dom.noteVisible);
@@ -194,12 +217,23 @@ const flat = dom.badges.flat().join(' | ');
 check('原生標籤', /native:原生/.test(flat), flat);
 check('外來標籤（外來歸化）', /alien:外來歸化/.test(flat), flat);
 check('特有標籤', /endemic:特有/.test(flat), flat);
-check('保育標籤（第二級 → 保育二）', /protected:保育二/.test(flat), flat);
+// 這是線上實測才抓到的 bug：TBN 回的是「珍貴稀有保育類野生動物」，
+// 原本的 /^第([一二三])級/ 永遠不命中，整串長字會塞爆卡片。
+check('保育標籤（珍貴稀有保育類野生動物 → 保育二）', /protected:保育二/.test(flat), flat);
+check('保育標籤（其他應予保育之野生動物 → 保育三）', /protected:保育三/.test(flat), flat);
+check('保育標籤不是未縮寫的長字串', !/保育類野生動物/.test(flat), flat);
 check('紅皮書受脅等級有標（VU → 易危）', /redlist:易危/.test(flat), flat);
 check('暫無危機（LC）不標成標籤', !/redlist:暫無危機|redlist:LC/.test(flat), flat);
 check('位置模糊標籤', /blurred:位置模糊/.test(flat), flat);
 
-check('類群篩選鈕有出現（全部＋三類群）', dom.chips.length === 4, JSON.stringify(dom.chips));
+check('類群篩選鈕有出現（全部＋五類群）', dom.chips.length === 6, JSON.stringify(dom.chips));
+// 非種層級要標出來，否則「真菌界」會被當成一個物種
+check('界層級的卡片標了「界」', /界/.test(dom.metas.find(m => /真菌界/.test(m)) || ''),
+  JSON.stringify(dom.metas));
+check('種下階層的卡片標了「亞種／變種」',
+  /亞種／變種/.test(dom.metas.find(m => /苧麻珍蝶/.test(m)) || ''), JSON.stringify(dom.metas));
+check('種層級的卡片不加階層標示', !/種$/.test((dom.metas.find(m => /樹鵲/.test(m)) || '').trim()),
+  JSON.stringify(dom.metas.find(m => /樹鵲/.test(m))));
 check('出處含 TBN 與 OGDL', /TBN/.test(dom.attribution) && /OGDL/.test(dom.attribution), dom.attribution);
 check('出處含資料集數量', /2 個資料集/.test(dom.attribution), dom.attribution);
 check('圖例有顯示', dom.legendVisible, dom.legendVisible);
@@ -236,7 +270,10 @@ const prompt = await page.evaluate(() => {
 check('提示詞含 TBN 段落', /TBN 物種紀錄/.test(prompt), prompt.slice(0, 120));
 check('提示詞帶出取樣警告', /這是取樣清單，不是完整名錄/.test(prompt), /取樣/.test(prompt) ? '有取樣字樣但措辭不符' : '完全沒有');
 check('提示詞禁止把分類群數當物種豐富度', /物種豐富度/.test(prompt), '未出現');
-check('提示詞含保育類清單', /八色鳥/.test(prompt) && /保育：第二級珍貴稀有/.test(prompt), '未出現');
+check('提示詞說明幾個鑑定到種、其餘不可當物種',
+  /4 個鑑定到種/.test(prompt) && /不可當成物種寫進報告/.test(prompt), '未出現');
+check('提示詞標出非種層級的分類群', /界層級|亞種／變種層級/.test(prompt), '未出現');
+check('提示詞含保育類清單', /八色鳥/.test(prompt) && /保育：珍貴稀有保育類野生動物/.test(prompt), '未出現');
 check('提示詞含外來種清單', /大花咸豐草/.test(prompt) && /外來歸化/.test(prompt), '未出現');
 check('提示詞含各類群真實筆數', /鳥類 73,210/.test(prompt), '未出現');
 check('提示詞含 APA 參考文獻', /臺灣生物多樣性網絡（無日期）/.test(prompt), '未出現');

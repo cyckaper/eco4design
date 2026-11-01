@@ -2132,6 +2132,30 @@
     NT: { zh: '接近受脅', en: 'NT' }, DD: { zh: '資料不足', en: 'DD' },
   };
 
+  // 保育等級縮寫。TBN 實際回傳的字串與文件所列不同（2026-11-01 線上實測）：
+  //   「珍貴稀有保育類野生動物」、「其他應予保育之野生動物」
+  // 文件寫的是「第二級珍貴稀有」「第三級其他應予保育」。兩種寫法都要認得，
+  // 否則長字串會塞爆卡片，或者標籤完全對不上等級。
+  // 判斷順序要緊：植物那條（《文化資產保存法》珍貴稀有植物）也含「珍貴稀有」，必須先比。
+  function protectedShort(v) {
+    const t = String(v || '');
+    if (/瀕臨絕種|第一級/.test(t)) return { zh: '保育一', en: 'Protected I' };
+    if (/植物|文化資產/.test(t)) return { zh: '珍稀植物', en: 'Rare plant' };
+    if (/珍貴稀有|第二級/.test(t)) return { zh: '保育二', en: 'Protected II' };
+    if (/其他應予保育|第三級/.test(t)) return { zh: '保育三', en: 'Protected III' };
+    return { zh: '保育類', en: 'Protected' };
+  }
+
+  // 不是「種」層級的紀錄要標出來。TBN 有屬、科、甚至界層級的鑑定
+  // （溪頭 3 km 的 619 個分類群裡，只有 512 個是種；還有一筆是「真菌界」）。
+  // 不標的話，報告會把「真菌界」當成一個物種寫進去。
+  const TBN_RANK_MARK = { 種: '', 種下階層: '亞種／變種', 屬: '屬', 科: '科', 目: '目', 綱: '綱', 門: '門', 界: '界' };
+  function rankMark(rank) {
+    if (!rank) return '';
+    const zh = Object.prototype.hasOwnProperty.call(TBN_RANK_MARK, rank) ? TBN_RANK_MARK[rank] : rank;
+    return zh || '';
+  }
+
   function tbnBadges(s) {
     const en = LANG === 'en';
     const out = [];
@@ -2147,8 +2171,8 @@
       out.push(`<span class="tbn-badge endemic" title="${escapeHtml(en ? 'Endemic to Taiwan (source: TBN)' : '臺灣特有（來源：TBN）')}">${en ? 'Endemic' : '特有'}</span>`);
     }
     if (s.protected) {
-      const short = String(s.protected).replace(/^第([一二三])級.*/, '保育$1').replace(/^文化資產.*/, '珍稀植物');
-      out.push(`<span class="tbn-badge protected" title="${escapeHtml((en ? 'Protected status: ' : '保育等級：') + s.protected + (en ? ' (source: TBN)' : '（來源：TBN）'))}">${escapeHtml(en ? 'Protected' : short)}</span>`);
+      const p = protectedShort(s.protected);
+      out.push(`<span class="tbn-badge protected" title="${escapeHtml((en ? 'Protected status: ' : '保育等級：') + s.protected + (en ? ' (source: TBN)' : '（來源：TBN）'))}">${escapeHtml(en ? p.en : p.zh)}</span>`);
     }
     const rl = s.redlist && TBN_REDLIST_SHOW[s.redlist];
     if (rl) {
@@ -2214,10 +2238,12 @@
     const endemics = species.filter(s => s.endemic === true).length;
 
     status.classList.remove('error');
+    const atSpecies = species.filter(s => s.rank === '種').length;
+    const totalShown = data.rangeTotal || data.total;
     status.innerHTML = escapeHtml(en
-      ? `${nf(species.length)} taxa in the sample · ${nf(data.total)} records in TBN within ${data.site.r} km · `
+      ? `${nf(species.length)} taxa in the sample (${nf(atSpecies)} at species rank) · ${nf(totalShown)} records in TBN within ${data.site.r} km · `
         + `${nf(natives)} native, ${nf(aliens)} introduced, ${nf(endemics)} endemic, ${nf(prot)} protected`
-      : `樣本中 ${nf(species.length)} 個分類群 · 半徑 ${data.site.r} 公里內 TBN 共 ${nf(data.total)} 筆紀錄 · `
+      : `樣本中 ${nf(species.length)} 個分類群（其中 ${nf(atSpecies)} 個鑑定到種） · 半徑 ${data.site.r} 公里內 TBN 共 ${nf(totalShown)} 筆紀錄 · `
         + `原生 ${nf(natives)}、外來 ${nf(aliens)}、特有 ${nf(endemics)}、保育類 ${nf(prot)}`);
 
     // 取樣說明：這句話必須看得見。清單是「TBN 回傳的前 N 筆」，
@@ -2267,6 +2293,9 @@
 
       const meta = [];
       meta.push(en ? `${s.n} rec.` : `${s.n} 筆`);
+      // 非種層級要講明，否則「真菌界」會被當成一個物種
+      const rk = rankMark(s.rank);
+      if (rk) meta.push(escapeHtml(en ? String(s.rank) : rk));
       if (s.years) meta.push(s.years[0] === s.years[1] ? String(s.years[0]) : `${s.years[0]}–${s.years[1]}`);
       if (s.famZh || s.famSci) meta.push(escapeHtml(en ? (s.famSci || s.famZh) : (s.famZh || s.famSci)));
 
@@ -2323,7 +2352,7 @@
     const species = Array.isArray(data.species) ? data.species : [];
     if (!species.length) return null;
     const pick = s => ({
-      name: s.zh || s.sci, sci: s.sci, n: s.n, group: s.group,
+      name: s.zh || s.sci, sci: s.sci, n: s.n, group: s.group, rank: s.rank,
       nativeness: s.nativeness, endemic: s.endemic === true,
       protected: s.protected || null, redlist: TBN_REDLIST_SHOW[s.redlist] ? s.redlist : null,
     });
@@ -2332,8 +2361,10 @@
       lat: data.site && data.site.lat,
       lon: data.site && data.site.lon,
       r: data.site && data.site.r,
-      total: data.total,
+      total: data.rangeTotal || data.total,
+      groupTotal: data.total,
       taxa: species.length,
+      atSpecies: species.filter(s => s.rank === '種').length,
       sampled: data.sample && data.sample.records,
       perGroup: data.sample && data.sample.perGroup,
       complete: !!(data.sample && data.sample.complete),
@@ -3273,6 +3304,7 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
       const t = tbnLastSummary;
       const nf = v => Number(v || 0).toLocaleString('en-US');
       const one = x => `${x.name}${x.sci && x.sci !== x.name ? ` (${x.sci})` : ''}`
+        + (x.rank && x.rank !== '種' ? (en ? ` [rank: ${x.rank}]` : `［${rankMark(x.rank) || x.rank}層級］`) : '')
         + (x.nativeness ? ` ${en ? `[${/^原生/.test(x.nativeness) ? 'native' : 'introduced'}]` : `［${x.nativeness}］`}` : '')
         + (x.endemic ? (en ? ' [endemic]' : '［臺灣特有］') : '')
         + (x.protected ? (en ? ` [protected: ${x.protected}]` : `［保育：${x.protected}］`) : '')
@@ -3280,8 +3312,8 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
         + ` — ${x.n}${en ? ' rec.' : ' 筆'}`;
       const L = [];
       L.push(en
-        ? `${nf(t.total)} occurrence records in TBN within ${t.r} km; ${nf(t.taxa)} taxa appear in the list below`
-        : `半徑 ${t.r} km 內 TBN 共 ${nf(t.total)} 筆出現紀錄；下列清單含 ${nf(t.taxa)} 個分類群`);
+        ? `${nf(t.total)} occurrence records in TBN within ${t.r} km; ${nf(t.taxa)} taxa appear in the list below, of which ${nf(t.atSpecies)} are identified to species rank — the rest are genus, family or higher, so do not write them up as species`
+        : `半徑 ${t.r} km 內 TBN 共 ${nf(t.total)} 筆出現紀錄；下列清單含 ${nf(t.taxa)} 個分類群，其中 ${nf(t.atSpecies)} 個鑑定到種——其餘只到屬、科或更高階層，不可當成物種寫進報告`);
       L.push(en
         ? `Of those taxa: ${nf(t.natives)} recorded as native, ${nf(t.aliens)} as introduced, ${nf(t.endemics)} endemic to Taiwan`
         : `其中原生 ${nf(t.natives)}、外來 ${nf(t.aliens)}、臺灣特有 ${nf(t.endemics)}`);
@@ -6546,6 +6578,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     const t = tbnLastSummary;
     if (t && t.taxa) {
       ds.tbn = { lat, lon, radius: +t.r || null, total: +t.total || 0, taxa: +t.taxa || 0,
+        atSpecies: +t.atSpecies || 0,
         perGroup: +t.perGroup || 0, complete: !!t.complete, at: t.fetchedAt || null,
         // 提示詞所附的物種名單（剖面圖伴生物種的依據之一）
         names: (t.top || []).flatMap(x => [x.name, x.sci]).filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 80)) };

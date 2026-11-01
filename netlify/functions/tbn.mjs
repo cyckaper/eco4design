@@ -150,12 +150,13 @@ function badParams(lat, lon, r, limit) {
   return null;
 }
 
+// group 為 null 時不帶 taxonGroup：用來取整個範圍的真實總筆數（見 rangeTotal）
 async function fetchGroup(lon, lat, r, group, limit, deadline) {
   const left = deadline - Date.now();
   if (left < 1500) return { group, error: 'skipped: time budget exhausted' };
 
-  const url = `${API}?circle=${encodeURIComponent(`${lon} ${lat},${r}`)}`
-    + `&limit=${limit}&taxonGroup=${encodeURIComponent(group)}`;
+  const url = `${API}?circle=${encodeURIComponent(`${lon} ${lat},${r}`)}&limit=${limit}`
+    + (group ? `&taxonGroup=${encodeURIComponent(group)}` : '');
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), Math.min(PER_REQUEST_TIMEOUT_MS, left));
   try {
@@ -366,8 +367,14 @@ export default async (request, context) => {
   }
 
   const deadline = startedAt + TOTAL_BUDGET_MS;
-  const results = await pool(groups, CONCURRENCY, g => fetchGroup(lon, lat, r, g, limit, deadline));
+  // 多一個 null：不分類群的查詢，只為了 meta.total（limit=1，payload 極小）
+  const all = await pool([...groups, null], CONCURRENCY,
+    g => fetchGroup(lon, lat, r, g, g === null ? 1 : limit, deadline));
+  const unfiltered = all[all.length - 1];
+  const results = all.slice(0, -1);
   const agg = aggregate(results, limit);
+  const rangeTotal = unfiltered && !unfiltered.error && typeof unfiltered.total === 'number'
+    ? unfiltered.total : null;
 
   // 全部類群都失敗：這是故障，不要回一份空清單裝作沒事
   if (agg.failed.length === groups.length) {
@@ -382,6 +389,10 @@ export default async (request, context) => {
     sourceUrl: 'https://www.tbn.org.tw/',
     site: { lat, lon, r },
     total,                                   // 各類群 meta.total 之和——這個數字是準的
+    // 不分類群的總筆數。通常比 total 略多，差額是沒有 taxonGroup 的紀錄
+    // （溪頭 3 km：93,632 對 92,899，差 733 筆）。參考文獻的網址是這個查詢。
+    rangeTotal,
+    ungrouped: rangeTotal !== null ? Math.max(0, rangeTotal - total) : null,
     sample: { perGroup: limit, records: agg.sampled, groups: agg.groups.length,
               complete: !anyPartial },
     groups: agg.groups,
@@ -392,7 +403,7 @@ export default async (request, context) => {
     // 這段話會原樣顯示在介面與報告上。取樣的性質必須跟著資料一起走，
     // 不能只寫在文件裡——看報告的人看不到文件。
     notes: anyPartial ? [
-      `物種清單是取樣結果：每個類群最多取 ${limit} 筆紀錄，而這個範圍內共有 ${total.toLocaleString('en-US')} 筆。`,
+      `物種清單是取樣結果：每個類群最多取 ${limit} 筆紀錄，而這個範圍內共有 ${(rangeTotal || total).toLocaleString('en-US')} 筆。`,
       '取的是 TBN 回傳的前幾筆，不是隨機樣本，所以清單可以說明「這些物種在這裡有紀錄」，但不能說明「這裡只有這些物種」，也不能用來判斷哪些最常見。',
       '各類群的總筆數（total）取自 TBN 的 meta.total，那個數字是完整範圍的真實筆數。',
     ] : [

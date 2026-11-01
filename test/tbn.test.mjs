@@ -121,6 +121,7 @@ const rec = (over = {}) => ({
   check('模糊化標示保留（blurred）', muntjac && muntjac.blurred === true, muntjac && muntjac.blurred);
   check('座標不確定度保留（5000 m）', muntjac && muntjac.uncertainty === 5000, muntjac && muntjac.uncertainty);
   check('敏感類別保留', muntjac && muntjac.sensitive === '敏感', muntjac && muntjac.sensitive);
+  check('taxonRank 原樣帶出（前端靠它標非種層級）', magpie && magpie.rank === '種', magpie && magpie.rank);
   check('「無」不算敏感', magpie && magpie.sensitive === null, magpie && magpie.sensitive);
 
   check('出處按筆數收集（兩個資料集）', agg.datasets.length === 2, agg.datasets.length);
@@ -132,6 +133,25 @@ const rec = (over = {}) => ({
 
   check('類群筆數用 meta.total（73210）', agg.groups[0].total === 73210, agg.groups[0].total);
   check('取樣數與總筆數不同時標記 partial', agg.groups[0].partial === true, agg.groups[0].partial);
+}
+
+// ── 3b. 線上實測的實際欄位值（文件與實際不符的地方）─────────────────────
+// 2026-11-01 實測 TBN 回的保育等級字串是「珍貴稀有保育類野生動物」、
+// 「其他應予保育之野生動物」，不是文件所列的「第二級珍貴稀有」「第三級其他應予保育」。
+// 後端原樣帶出、不縮寫（縮寫在前端做，兩種寫法都要認得）。
+{
+  const agg = aggregate([{ group: 'birds', total: 3, rows: [
+    rec({ taxonUUID: 'p1', protectedStatusTW: '珍貴稀有保育類野生動物', taxonRank: '種' }),
+    rec({ taxonUUID: 'p2', protectedStatusTW: '其他應予保育之野生動物', taxonRank: '種下階層' }),
+    rec({ taxonUUID: 'p3', taxonRank: '界', vernacularName: '真菌界', protectedStatusTW: null }),
+  ] }], 100);
+  const by = id => agg.species.find(x => x.id === id);
+  check('實測值「珍貴稀有保育類野生動物」原樣帶出',
+    by('p1').protected === '珍貴稀有保育類野生動物', by('p1').protected);
+  check('實測值「其他應予保育之野生動物」原樣帶出',
+    by('p2').protected === '其他應予保育之野生動物', by('p2').protected);
+  check('種下階層的 rank 帶出', by('p2').rank === '種下階層', by('p2').rank);
+  check('界層級的 rank 帶出（真菌界不是一個物種）', by('p3').rank === '界', by('p3').rank);
 }
 
 // ── 4. 失敗的類群不會讓整份結果消失 ─────────────────────────────────────
@@ -220,7 +240,12 @@ const freshSite = (over = {}) => ({ lat: 23.5 + (siteSeq++) * 0.001, lon: 120.5,
   stubFetch(() => okRows(5));
   // 這個案例要比對確切的網址，所以座標寫死；其餘案例用 freshSite()
   await call({ lat: 23.6731, lon: 120.7951, r: 3, groups: 'birds' });
-  check('只查了一個類群（birds）', calls.length === 1, calls.length);
+  // 一個類群 ＋ 一次不分類群的查詢（只為了範圍總筆數）
+  check('查了一個類群外加一次不分類群查詢', calls.length === 2, calls.length);
+  const unf = calls.find(c => !new URL(c.url).searchParams.get('taxonGroup'));
+  check('不分類群的查詢只取 1 筆（payload 極小）',
+    unf && new URL(unf.url).searchParams.get('limit') === '1',
+    unf ? new URL(unf.url).searchParams.get('limit') : '沒發出'); 
   const u = new URL(calls[0].url);
   check('circle 是「經度 緯度,半徑」', u.searchParams.get('circle') === '120.7951 23.6731,3',
     u.searchParams.get('circle'));
@@ -243,10 +268,38 @@ const freshSite = (over = {}) => ({ lat: 23.5 + (siteSeq++) * 0.001, lon: 120.5,
   });
   const r = await call(freshSite());
   const b = await bodyOf(r);
-  check('預設查 21 個類群', calls.length === 21, calls.length);
+  check('預設查 21 個類群外加一次不分類群查詢', calls.length === 22, calls.length);
   check('每個類群各一筆物種 → 21 個物種', b.species.length === 21, b.species.length);
   check('total 是各類群 meta.total 之和', b.total === 73210 + 300 * 20, b.total);
   check('類群按總筆數排序，鳥類在最前', b.groups[0].code === 'birds', b.groups[0].code);
+}
+
+// ── 7b. rangeTotal：不分類群的真實總筆數 ─────────────────────────────────
+// 類群總和與不分類群總數會差一點（沒有 taxonGroup 的紀錄；溪頭 3 km 實測差 733 筆）。
+// 參考文獻附的網址是不分類群的查詢，讀者點進去看到的是後者——
+// 兩個數字不一致，論文裡的引用就站不住腳，所以兩個都要回。
+{
+  stubFetch(url => {
+    const g = new URL(url).searchParams.get('taxonGroup');
+    if (!g) return okJson({ meta: { total: 93632 }, data: [rec()] });     // 不分類群
+    return okJson({ meta: { total: 500 },                                 // 500 > 收到的 100 筆 → partial
+      data: Array.from({ length: 100 }, () => rec({ taxonUUID: 'u-' + g })) });
+  });
+  const b = await bodyOf(await call(freshSite({ groups: 'birds,mammals' })));
+  check('total 是各類群總和（2×500）', b.total === 1000, b.total);
+  check('rangeTotal 是不分類群的總數（93632）', b.rangeTotal === 93632, b.rangeTotal);
+  check('ungrouped 是兩者差額', b.ungrouped === 93632 - 1000, b.ungrouped);
+  check('notes 用 rangeTotal 的數字（與參考文獻網址一致）',
+    b.notes.some(n => n.includes('93,632')), JSON.stringify(b.notes[0]));
+
+  // 不分類群那次失敗時不能拖垮整份結果
+  stubFetch(url => new URL(url).searchParams.get('taxonGroup')
+    ? okRows(5) : new Response('nope', { status: 500 }));
+  const b2 = await bodyOf(await call(freshSite({ groups: 'birds' })));
+  check('不分類群查詢失敗時仍回 200', b2 && b2.species && b2.species.length === 1,
+    JSON.stringify(b2 && b2.error));
+  check('此時 rangeTotal 為 null，total 仍可用', b2.rangeTotal === null && b2.total === 5,
+    b2.rangeTotal + ' / ' + b2.total);
 }
 
 // ── 8. 最要緊的性質：取樣這件事必須跟著資料一起回傳 ─────────────────────
@@ -302,7 +355,8 @@ const freshSite = (over = {}) => ({ lat: 23.5 + (siteSeq++) * 0.001, lon: 120.5,
   let r = await call(site);
   let b = await bodyOf(r);
   const firstCalls = calls.length;
-  check('第一次是 miss', b.cache === 'miss' && firstCalls === 1, b.cache + ' ' + firstCalls);
+  check('第一次是 miss（一個類群 ＋ 一次不分類群 = 2 次上游）',
+    b.cache === 'miss' && firstCalls === 2, b.cache + ' ' + firstCalls);
 
   r = await call(site);
   b = await bodyOf(r);
