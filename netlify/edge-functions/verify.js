@@ -2578,6 +2578,10 @@ const PDF_MAX_INFLATED = 250000;
 // 真實 PDF 的串流大得多，一筆就把整個請求的 CPU 預算吃光
 // （預算是整個請求共用的，而 abstract 模式一次並行四筆）。
 const PDF_STREAM_PEEK = 48000;
+// 真實政府報告動輒數 MB。網頁的 400 KB 上限會把 PDF 截斷，
+// 截斷處的串流找不到 endstream，整份就解不出內容（實測三份都是 pdf_no_text）。
+// 讀多一些；解壓與解析本身另有上限，所以 CPU 不隨檔案大小增加。
+const PDF_FETCH_BYTES = 3 * 1024 * 1024;
 // PDF 抽取只在預算還過半時才做：留給同一批的其他文獻，
 // 否則第一個 PDF 做完，後面全部回 cpu_budget。
 const PDF_BUDGET_SHARE = 0.5;
@@ -2753,7 +2757,7 @@ function pdfQuality(text, rate) {
 }
 
 async function pdfBodyText(bytes, ctx) {
-  const slice = bytes.subarray(0, MAX_PAGE_BYTES);
+  const slice = bytes.subarray(0, PDF_FETCH_BYTES);
   const latin = timed(ctx, () => new TextDecoder('latin1').decode(slice));
   const streams = timed(ctx, () => pdfStreams(latin));
   const map = new Map();
@@ -2802,7 +2806,9 @@ async function pdfBodyText(bytes, ctx) {
 
 // 開啟網頁（或 DOI 導向的頁面）：學術中繼資料的摘要；scholarly 為 false 時沒有摘要就取內文
 async function absFromPage(url, title, ctx, scholarly) {
-  const r = await safeFetch(url, ctx, pageHeaders(), MAX_PAGE_BYTES);
+  // PDF 要讀得比網頁多：先以 HEAD 之外的方式判斷不划算，直接提高上限，
+  // 非 PDF 的回應本來就遠小於此
+  const r = await safeFetch(url, ctx, pageHeaders(), PDF_FETCH_BYTES);
   if (r.error) return { none: r.error };
   if (!r.ok) return { none: httpErrCode(r.status) };
   const head = r.bytes.subarray(0, 5);
@@ -2840,6 +2846,7 @@ async function absByTitle(title, ctx) {
 
 async function abstractFor(item, ctx) {
   const notes = [];
+  let diag = null;        // PDF 抽取失敗時的結構數字：線上出問題時不附這些只能靠猜
   for (const doi of item.dois) {
     for (const f of [absFromOpenAlex, absFromCrossref, absFromSemanticScholar]) {
       if (ctx.expired()) return { id: item.id, kind: 'none', src: '', text: '', note: 'deadline' };
@@ -2856,13 +2863,15 @@ async function abstractFor(item, ctx) {
     if (/^https?:\/\/(?:dx\.)?doi\.org\//i.test(url) && item.dois.length) continue;   // 已依 DOI 查過
     const p = await absFromPage(url, item.title, ctx, false);
     if (p.kind) return { id: item.id, kind: p.kind, src: p.src, text: p.text, note: '' };
+    if (p.diag) diag = p.diag;
     notes.push(p.none);
   }
   if (!ctx.expired()) {
     const a = await absByTitle(item.title, ctx);
     if (a) return { id: item.id, kind: 'abstract', src: a.src, text: a.text, note: '' };
   }
-  return { id: item.id, kind: 'none', src: '', text: '', note: (ctx.expired() ? ['deadline'] : notes).join(',').slice(0, 80) || 'not_found' };
+  return { id: item.id, kind: 'none', src: '', text: '', note: (ctx.expired() ? ['deadline'] : notes).join(',').slice(0, 80) || 'not_found',
+    ...(diag ? { diag } : {}) };
 }
 
 async function abstractMode(body, L, request) {
