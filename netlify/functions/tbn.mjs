@@ -71,7 +71,10 @@ const rate = new Map();
 
 // 只允許自家站台呼叫（與 /api/osm、/api/pdf-text 同一套規則）。
 // TBN 沒有金鑰額度要保護，但仍然不該變成任意人都能拿去打 TBN 的公開代理。
-const ALLOWED_ORIGINS = ['*.healsdesign.org', 'cycling-roadbook.netlify.app', 'cyckaper.github.io'];
+// eco4design.netlify.app 是本站的 netlify.app 網域：分支部署與 deploy preview 都在這裡，
+// 正式站雖走自訂網域，預覽網址卻只有 netlify.app——不列的話預覽版會被自己擋掉。
+const ALLOWED_ORIGINS = ['*.healsdesign.org', 'eco4design.netlify.app',
+  'cycling-roadbook.netlify.app', 'cyckaper.github.io'];
 const DEV_HOSTNAMES = ['localhost', '127.0.0.1'];
 
 export function originRejected(origin) {

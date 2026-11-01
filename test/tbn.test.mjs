@@ -53,6 +53,12 @@ const { default: handler, aggregate, zhPart, statusCode, clean, originRejected }
     originRejected('https://eco4design.healsdesign.org'));
   check('分支部署放行', originRejected('https://main--cycling-roadbook.netlify.app') === null,
     originRejected('https://main--cycling-roadbook.netlify.app'));
+  // 正式站走自訂網域，但預覽網址只有 netlify.app——漏列的話預覽版會被自己擋掉（實際踩過）
+  check('本站 deploy preview 放行',
+    originRejected('https://deploy-preview-20--eco4design.netlify.app') === null,
+    originRejected('https://deploy-preview-20--eco4design.netlify.app'));
+  check('本站 main 分支部署放行', originRejected('https://main--eco4design.netlify.app') === null,
+    originRejected('https://main--eco4design.netlify.app'));
   check('冒牌網域被擋（xxcycling-roadbook）',
     originRejected('https://xxcycling-roadbook.netlify.app') === 'xxcycling-roadbook.netlify.app',
     originRejected('https://xxcycling-roadbook.netlify.app'));

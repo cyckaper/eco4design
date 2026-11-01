@@ -214,6 +214,10 @@ p = await probe('http://cycling-roadbook.netlify.app');
 check('小布路書（netlify.app）預設放行', p.status === 200, JSON.stringify(p));
 p = await probe('https://main--cycling-roadbook.netlify.app');
 check('同站的分支部署網址也放行', p.status === 200, JSON.stringify(p));
+// 棲共生正式站走自訂網域，但分支部署與 deploy preview 只有 netlify.app 網址。
+// 一度漏列，結果預覽版被自己的白名單擋掉（403）。
+p = await probe('https://deploy-preview-20--eco4design.netlify.app');
+check('棲共生的 deploy preview 放行', p.status === 200, JSON.stringify(p));
 p = await probe('https://evilcycling-roadbook.netlify.app');
 check('別人註冊的相似站名不會誤放', p.status === 403, JSON.stringify(p));
 

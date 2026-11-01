@@ -74,6 +74,8 @@ const UA = `Qi-Coexistence-OSM/1.0 (+${SITE})`;
 // 要人另外去設環境變數省事）。要臨時追加不必改程式：設 OSM_ALLOWED_ORIGINS。
 const DEFAULT_ALLOWED_ORIGINS = [
   '*.healsdesign.org',
+  'eco4design.netlify.app',         // 本站的 netlify.app 網域：分支部署與 deploy preview 都在這裡
+                                    // （正式站走 eco4design.healsdesign.org，但預覽網址只有 netlify.app）
   'cycling-roadbook.netlify.app',   // 小布路書（無自訂網域）
   'cyckaper.github.io',             // 基地分析工作站另有 GitHub Pages 部署
 ];

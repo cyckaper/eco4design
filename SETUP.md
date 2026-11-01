@@ -76,7 +76,7 @@ console.log(r.status, r.headers.get('x-osm-source'));
 `https://eco4design.healsdesign.org/api/osm`，並保留公用伺服器作為後備即可。
 
 **來源限制**:只有自家站台能用，否則等於開放代理、額度會被陌生人燒掉。
-預設放行 `*.healsdesign.org` 與 `cycling-roadbook.netlify.app`，本機開發
+預設放行 `*.healsdesign.org`、`eco4design.netlify.app`（分支部署與 deploy preview 用）與 `cycling-roadbook.netlify.app`，本機開發
 (`localhost`／`127.0.0.1`)也放行。要追加站台可改程式裡的預設清單，
 或設環境變數 `OSM_ALLOWED_ORIGINS`(逗號分隔，不必改程式):
 

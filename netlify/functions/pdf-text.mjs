@@ -31,7 +31,10 @@ const UA = 'Qi-Coexistence-RefCheck/1.0 (+https://eco4design.healsdesign.org)';
 // 只允許自家站台呼叫（與 /api/osm 相同規則）。hostname 比對、不管連接埠；
 // '*.' 開頭是子網域通配；其餘精確比對，並額外接受 Netlify 分支部署網址
 // （main--站名.netlify.app）——以 '--' 為界，別人註冊 xx站名.netlify.app 不會被放行。
-const ALLOWED_ORIGINS = ['*.healsdesign.org', 'cycling-roadbook.netlify.app', 'cyckaper.github.io'];
+// eco4design.netlify.app 是本站的 netlify.app 網域：分支部署與 deploy preview 都在這裡，
+// 正式站雖走自訂網域，預覽網址卻只有 netlify.app——不列的話預覽版會被自己擋掉。
+const ALLOWED_ORIGINS = ['*.healsdesign.org', 'eco4design.netlify.app',
+  'cycling-roadbook.netlify.app', 'cyckaper.github.io'];
 const DEV_HOSTNAMES = ['localhost', '127.0.0.1'];
 
 function originRejected(origin) {
