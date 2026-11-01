@@ -345,6 +345,19 @@ const freshSite = (over = {}) => ({ lat: 23.5 + (siteSeq++) * 0.001, lon: 120.5,
   stubFetch(() => new Response('<html>busy</html>', { status: 200, headers: { 'content-type': 'text/html' } }));
   const r3 = await call(freshSite({ groups: 'birds' }));
   check('上游回非 JSON 時視為失敗', r3.status === 503, r3.status);
+  const b3 = await bodyOf(r3);
+  check('上游故障時 reason 標為 upstream', b3.reason === 'upstream', b3.reason);
+
+  // 逾時與上游故障要分得開：紀錄極密集的基地（例如臺大校園 39 萬筆）會逾時，
+  // 這時該告訴 Jake「縮小半徑」，而不是「TBN 無法連線」——處理方式完全不同。
+  stubFetch(() => new Promise((_, rej) => {
+    const e = new Error('aborted'); e.name = 'AbortError'; setTimeout(() => rej(e), 5);
+  }));
+  const r4 = await call(freshSite({ groups: 'birds,mammals' }));
+  const b4 = await bodyOf(r4);
+  check('逾時造成的失敗 reason 標為 time_budget', r4.status === 503 && b4.reason === 'time_budget',
+    r4.status + ' ' + b4.reason);
+  check('逾時的中文訊息叫使用者縮小半徑', /縮小半徑/.test(b4.zh || ''), b4.zh);
 }
 
 // ── 10. 快取：同一基地的重複查詢不再打上游 ──────────────────────────────

@@ -54,9 +54,21 @@ const ALL_GROUPS = Object.keys(GROUPS);
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;              // TBN 的單次上限
-const CONCURRENCY = 6;               // 對 TBN 客氣一點：21 個類群分 4 批，而不是一次 21 條連線
-const PER_REQUEST_TIMEOUT_MS = 9000;
-const TOTAL_BUDGET_MS = 20000;       // 函式上限 26 秒，留時間給彙整與回傳
+// 併發與時間預算是量出來的，不是猜的。2026-11-01 線上實測：
+//   溪頭（半徑 3 km，9.3 萬筆）：每個類群約 2 秒，21 個類群合計 5–6 秒
+//   臺大校園（半徑 2 km，39 萬筆）：多數類群仍約 2 秒，但鳥類 36.5 萬筆要 9 秒，
+//                                   不分類群的那次更久（曾直接逾時）
+// 延遲幾乎與筆數無關，直到結果集非常大才飆高——也就是只有最大的那一兩個類群慢。
+// 原本 concurrency 6 ＋ 預算 20 秒時，臺大校園 21 個類群排不完，全部被跳過而回 503；
+// 那是 Jake 自己的校園，學生一定會用。
+// pool 是工作池（不是固定批次），所以慢的那個只佔住一個名額，其餘繼續流過去：
+// 併發 8 時總時間約是 max(最慢那個, 其餘平均攤完) ≈ 10 秒上下。
+const CONCURRENCY = 8;
+const PER_REQUEST_TIMEOUT_MS = 14000;
+const TOTAL_BUDGET_MS = 23000;       // 函式上限 26 秒，留時間給彙整與回傳
+// 不分類群的那次查詢只是為了 rangeTotal（參考文獻用），可有可無，
+// 所以給它較短的上限——不能讓一個選配的數字吃掉物種清單的時間。
+const RANGE_TOTAL_TIMEOUT_MS = 6000;
 const MAX_GROUP_BYTES = 6 * 1024 * 1024;
 
 // 物種名錄不會以小時為單位變動；一班五十個學生分析同一個基地時，
@@ -151,14 +163,14 @@ function badParams(lat, lon, r, limit) {
 }
 
 // group 為 null 時不帶 taxonGroup：用來取整個範圍的真實總筆數（見 rangeTotal）
-async function fetchGroup(lon, lat, r, group, limit, deadline) {
+async function fetchGroup(lon, lat, r, group, limit, deadline, cap) {
   const left = deadline - Date.now();
   if (left < 1500) return { group, error: 'skipped: time budget exhausted' };
 
   const url = `${API}?circle=${encodeURIComponent(`${lon} ${lat},${r}`)}&limit=${limit}`
     + (group ? `&taxonGroup=${encodeURIComponent(group)}` : '');
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), Math.min(PER_REQUEST_TIMEOUT_MS, left));
+  const timer = setTimeout(() => ac.abort(), Math.min(cap || PER_REQUEST_TIMEOUT_MS, left));
   try {
     const res = await fetch(url, {
       headers: { accept: 'application/json', 'user-agent': UA, referer: SITE },
@@ -369,17 +381,30 @@ export default async (request, context) => {
   const deadline = startedAt + TOTAL_BUDGET_MS;
   // 多一個 null：不分類群的查詢，只為了 meta.total（limit=1，payload 極小）
   const all = await pool([...groups, null], CONCURRENCY,
-    g => fetchGroup(lon, lat, r, g, g === null ? 1 : limit, deadline));
+    g => fetchGroup(lon, lat, r, g, g === null ? 1 : limit, deadline,
+      g === null ? RANGE_TOTAL_TIMEOUT_MS : PER_REQUEST_TIMEOUT_MS));
   const unfiltered = all[all.length - 1];
   const results = all.slice(0, -1);
   const agg = aggregate(results, limit);
   const rangeTotal = unfiltered && !unfiltered.error && typeof unfiltered.total === 'number'
     ? unfiltered.total : null;
 
-  // 全部類群都失敗：這是故障，不要回一份空清單裝作沒事
+  // 全部類群都失敗：這是故障，不要回一份空清單裝作沒事。
+  // 分辨兩種原因：上游真的壞了，或是時間預算不夠（紀錄極密集的基地會這樣）——
+  // 訊息不同，Jake 才知道該重試還是該縮小半徑。
   if (agg.failed.length === groups.length) {
-    return json(503, { error: 'TBN is unavailable', failed: agg.failed.slice(0, 5),
-                       ms: Date.now() - startedAt }, cors);
+    const starved = agg.failed.filter(f => /budget|timeout/.test(f.error || '')).length;
+    const timeRelated = starved > agg.failed.length / 2;
+    return json(503, {
+      error: timeRelated
+        ? 'TBN did not answer in time — this area has a very large number of records; try a smaller radius'
+        : 'TBN is unavailable',
+      reason: timeRelated ? 'time_budget' : 'upstream',
+      zh: timeRelated
+        ? '這個範圍的紀錄筆數太多，TBN 來不及回應——請縮小半徑再試'
+        : 'TBN 目前無法連線',
+      failed: agg.failed.slice(0, 5), ms: Date.now() - startedAt,
+    }, cors);
   }
 
   const total = agg.groups.reduce((a, g) => a + (g.total || 0), 0);

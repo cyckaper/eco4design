@@ -2407,8 +2407,8 @@
 
     status.classList.remove('error');
     status.textContent = en
-      ? '⏳ Querying TBN across all 21 taxon groups… (5–15s)'
-      : '⏳ 正在查詢 TBN 的 21 個類群…（約 5–15 秒）';
+      ? '⏳ Querying TBN across all 21 taxon groups… (5–20s; longer where records are dense)'
+      : '⏳ 正在查詢 TBN 的 21 個類群…（約 5–20 秒，紀錄密集的地區較久）';
     results.innerHTML = '';
     groupsEl.innerHTML = '';
     noteEl.style.display = 'none';
@@ -2429,7 +2429,10 @@
       const body = await res.json().catch(() => null);
       if (seq !== tbnSeq) return;                     // 期間已有新的查詢
       if (!res.ok || !body || body.error) {
-        throw new Error((body && body.error) || ('HTTP ' + res.status));
+        // 代查會附一句中文說明（例如「紀錄太多，請縮小半徑」），有就用它
+        const msg = (body && (LANG === 'en' ? body.error : (body.zh || body.error)))
+          || ('HTTP ' + res.status);
+        throw new Error(msg);
       }
       tbnCache[cacheKey] = body;
       renderTbn(body);
