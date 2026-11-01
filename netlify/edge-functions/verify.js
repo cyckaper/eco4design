@@ -1131,6 +1131,119 @@ function fmtAuthors(list) {
 }
 
 const MAX_META_TITLES = 4;             // 每個題名欄位最多取幾筆（上游可送來上萬筆的陣列）
+
+// 摘要／內文：只看題名無法判斷「這篇文獻是否真的支持報告裡的那句話」，
+// 所以一併取回內容，供後續判讀。長度只要夠判斷主張，不必完整。
+const MAX_ABSTRACT_CHARS = 1500;
+const MIN_ABSTRACT_CHARS = 40;         // 比這更短的多半是 "Abstract" 之類的殘骸，當成沒有
+const MAX_INVERTED_KEYS = 3000;        // OpenAlex 索引最多掃幾個詞（防超大輸入吃光 CPU 預算）
+const MAX_INVERTED_SLOTS = 4000;       // 還原後最多幾個位置
+
+const MAX_BODY_SCAN = 60000;           // 內文抽取最多掃多少字元（主要內容幾乎都在開頭）
+const BODY_MIN_SENTENCE = 40;          // 進入內文的判準：第一個夠長的句子
+
+// 從頁面抽一段可判讀的內文。
+// 不做 readability 那種評分：整個請求只有 40 ms CPU 預算，還要分給所有文獻。
+//
+// 刻意以「區塊標籤」為界，而不是以句子為界。去標籤後的整頁文字會把選單壓成
+// 「首頁 關於我們 聯絡資訊 網站導覽 本研究以…」——中文選單項目之間沒有句末標點，
+// 以句子切會把整條選單當成內文的第一句收進來。
+//
+// 不移除 <form>：臺灣政府網站大量使用 ASP.NET WebForms，整頁內容都包在 <form> 裡，
+// 砍掉它等於把內文全部丟掉。
+const NON_CONTENT_RE = /<(script|style|noscript|nav|header|footer|aside|svg|select|button)\b[^<>]*>[\s\S]*?<\/\1\s*>/gi;
+const BLOCK_END_RE = /<\/(?:p|div|section|article|li|h[1-6]|td|blockquote|dd|figcaption)\s*>/i;
+// 區塊長度門檻要分語系：中文資訊密度高得多，60 字已是一整段正文，
+// 用拉丁文字的門檻會把正常段落當成選單丟掉（實測一段 59 字的中文摘要就這樣被丟掉）。
+const BODY_MIN_CHUNK = 60;             // 拉丁文字
+const BODY_MIN_CHUNK_CJK = 24;         // 中日韓文字
+const BODY_MAX_CHUNKS = 600;
+const minChunkLen = (c) => (CJK_RE.test(c) ? BODY_MIN_CHUNK_CJK : BODY_MIN_CHUNK);
+
+function bodyExcerptFromHtml(html) {
+  if (typeof html !== 'string' || !html) return null;
+  const bi = html.search(/<body\b[^<>]*>/i);
+  const from = bi >= 0 ? bi : 0;
+  const chunks = html.slice(from, from + MAX_BODY_SCAN)
+    .replace(NON_CONTENT_RE, ' ')
+    .split(BLOCK_END_RE);
+  const keep = [];
+  let total = 0;
+  for (let i = 0; i < chunks.length && i < BODY_MAX_CHUNKS && total < MAX_ABSTRACT_CHARS; i++) {
+    const c = cleanText(chunks[i], 600);
+    if (!c || c.length < minChunkLen(c)) continue;
+    keep.push(c);
+    total += c.length;
+  }
+  if (!keep.length) return null;
+  const t = cleanText(keep.join(' '), MAX_ABSTRACT_CHARS);
+  return t && t.length >= MIN_ABSTRACT_CHARS ? t : null;
+}
+
+// 後路：頁面完全不用區塊標籤時，退回以句末標點切句，從第一個夠長的句子開始取。
+// 去標籤後的第一段常是「頁首選單 ＋ 正文第一句」黏在一起（選單項目沒有句讀）。
+// 開頭連續三個以上的短詞視為選單，從它們之後開始取。
+function dropLeadingMenu(s) {
+  const parts = s.split(' ');
+  let i = 0;
+  while (i < parts.length - 1 && parts[i].length <= 6 && !/[，、,:：]/.test(parts[i])) i++;
+  return i >= 3 ? parts.slice(i).join(' ') : s;
+}
+
+function bodyExcerpt(text) {
+  if (typeof text !== 'string' || text.length < MIN_ABSTRACT_CHARS) return null;
+  const sentences = text.slice(0, MAX_BODY_SCAN).split(/(?<=[。．.!?！？；;])\s+/);
+  const out = [];
+  let total = 0;
+  for (const raw of sentences) {
+    const c = (out.length ? raw : dropLeadingMenu(raw.trim())).trim();
+    if (!out.length && c.length < BODY_MIN_SENTENCE) continue;
+    if (c.length < 8) continue;
+    out.push(c);
+    total += c.length;
+    if (total >= MAX_ABSTRACT_CHARS) break;
+  }
+  if (!out.length) return null;
+  const t = cleanText(out.join(' '), MAX_ABSTRACT_CHARS);
+  return t && t.length >= MIN_ABSTRACT_CHARS ? t : null;
+}
+
+// Crossref 的 abstract 是 JATS XML（<jats:p>、<jats:sec><jats:title>…）。
+// cleanText 本來就把標籤換成空白，所以這裡只多做一件事：把章節標題後面補上冒號，
+// 否則 "<jats:title>Methods</jats:title><jats:p>We…" 會變成 "Methods We…"，讀起來像同一句。
+function abstractFromJats(x) {
+  if (typeof x !== 'string' || !x) return null;
+  const pre = x.slice(0, 12 * MAX_ABSTRACT_CHARS).replace(/<\/(?:jats:)?title\s*>/gi, ': ');
+  const t = cleanText(pre, MAX_ABSTRACT_CHARS);
+  if (!t) return null;
+  const body = t.replace(/^(?:abstract|summary|摘要)\s*[:：]?\s*/i, '').trim();
+  return body.length >= MIN_ABSTRACT_CHARS ? body : null;
+}
+
+// OpenAlex 不給 abstract 欄位，只給 abstract_inverted_index：{ 詞: [出現位置…] }。
+// 還原就是把每個詞放回它的位置上。上游可送來很大的索引，所以詞數與位置都設上限。
+function abstractFromInverted(idx) {
+  if (typeof idx === 'string') return abstractFromJats(idx);   // 防他日改回純文字欄位
+  if (!idx || typeof idx !== 'object' || Array.isArray(idx)) return null;
+  const slots = [];
+  let keys = 0, placed = 0;
+  for (const w in idx) {
+    if (++keys > MAX_INVERTED_KEYS) break;
+    const pos = idx[w];
+    if (typeof w !== 'string' || !w || !Array.isArray(pos)) continue;
+    for (let i = 0; i < pos.length; i++) {
+      const p = pos[i];
+      if (!Number.isInteger(p) || p < 0 || p >= MAX_INVERTED_SLOTS) continue;
+      if (slots[p] === undefined) { slots[p] = w; placed++; }
+      if (placed >= MAX_INVERTED_SLOTS) break;
+    }
+    if (placed >= MAX_INVERTED_SLOTS) break;
+  }
+  if (!placed) return null;
+  // 索引可能有缺口（位置不連續），filter 掉未填的槽位
+  const t = cleanText(slots.filter(w => w !== undefined).join(' '), MAX_ABSTRACT_CHARS);
+  return t && t.length >= MIN_ABSTRACT_CHARS ? t : null;
+}
 function metaFromCrossref(m) {
   const main = strList(m.title).slice(0, MAX_META_TITLES), sub = strList(m.subtitle).slice(0, MAX_META_TITLES);
   const titles = [...main];
@@ -1155,6 +1268,8 @@ function metaFromCrossref(m) {
     url: typeof m.URL === 'string' ? m.URL : null,
     volume: typeof m.volume === 'string' ? m.volume.trim() : null,
     firstPage: typeof m.page === 'string' ? m.page.split(/[-–]/)[0].trim() : typeof m['article-number'] === 'string' ? m['article-number'].trim() : null,
+    // CSL-JSON 的 abstract 是純文字，JATS 的處理對它等於只做 cleanText，所以同一條路即可
+    abstract: abstractFromJats(m.abstract),
   };
 }
 
@@ -1180,6 +1295,7 @@ function metaFromOpenAlex(w) {
     url: (loc && typeof loc.landing_page_url === 'string' && loc.landing_page_url) || (typeof w.id === 'string' ? w.id : null),
     volume: w.biblio && typeof w.biblio.volume === 'string' ? w.biblio.volume : null,
     firstPage: w.biblio && typeof w.biblio.first_page === 'string' ? w.biblio.first_page : null,
+    abstract: abstractFromInverted(w.abstract_inverted_index || w.abstract),
   };
 }
 
@@ -1330,6 +1446,12 @@ function analyzeHtml(html) {
     year: dateKey ? yearOf(meta[dateKey]) : null,
     authors,
     citationDoi: normDoi(meta.citation_doi || meta['prism.doi'] || meta['dc.identifier'] || ''),
+    // 判讀「文獻是否支持主張」要看內容，不能只看題名。
+    // meta 裡的摘要最乾淨且零成本（學術頁面常有 citation_abstract）；
+    // 沒有的話才去標籤取內文，那有 CPU 成本，所以做成延遲呼叫。
+    absMeta: cleanText(meta.citation_abstract || meta['dcterms.abstract'] || meta['dc.description'] || '', MAX_ABSTRACT_CHARS) || null,
+    descMeta: cleanText(meta.description || meta['og:description'] || '', MAX_ABSTRACT_CHARS) || null,
+    getBody: () => bodyExcerptFromHtml(html) || bodyExcerpt(getText()),
     html,                     // 僅供內部比對，絕不回傳
     getText,
     getRaw,
@@ -1585,6 +1707,8 @@ function baseCheck(kind, target) {
     foundTitle: null,
     foundYear: null,
     foundAuthors: null,
+    foundAbstract: null,      // 摘要（書目來源）或主要內文（網頁來源）；判讀「文獻是否支持主張」的依據
+    abstractSource: null,     // 內容出處：Crossref／OpenAlex／DataCite／page…
     titleScore: null,
     note: '',
   };
@@ -1622,6 +1746,7 @@ function evaluateMeta(check, meta, cite, ctx, src) {
   check.foundTitle = best ? best.t : null;
   check.foundYear = meta.year;
   check.foundAuthors = fmtAuthors(meta.authors);
+  if (meta.abstract) { check.foundAbstract = meta.abstract; check.abstractSource = meta.abstractSrc || src || null; }
   check.titleScore = best ? best.score : null;
   const ev = { kind: check.kind, check, meta };
   if (!best) { check.status = 'doi_no_metadata'; check.note = msg(L, 'doi_no_metadata'); return { ...ev, cls: 'partial', reason: 'no_metadata' }; }
@@ -1701,6 +1826,21 @@ function evaluatePage(check, an, cite, ctx, fr, origUrl) {
   // 標題就是錯誤訊息的頁面（Page not found）：先判定，免得頁面原樣顯示的網址被當成「內文含有題名」
   if (!isDoi && an.type === 'html' && an.soft404) { check.status = 'soft_404'; check.httpStatus = fr.status; check.note = msg(L, 'soft_404'); return { ...ev, cls: 'negative', reason: 'soft_404' }; }
   if (!isDoi && an.type === 'html' && urlEchoesTitle([origUrl, fr.url], cite)) { check.status = 'http_' + fr.status; check.note = msg(L, 'url_echo'); return { ...ev, cls: 'weak', reason: 'echo' }; }
+  // 取回頁面內容，供後續判讀「這個來源是否真的支持報告裡引用它的那句話」。
+  // 順序：citation_abstract 等學術欄位（最乾淨、零成本）→ 內文 → og:description／description
+  // （後者常是短短一句行銷文案，資訊量最少，所以排最後）。
+  // 去標籤取內文有 CPU 成本，而整個請求的 40 ms 預算是所有文獻共用的：
+  // 預算過半就不再抽內文，寧可少一筆內容，也不要讓後面的文獻因預算耗盡而變成「未能判定」。
+  if (an.type === 'html') {
+    let content = an.absMeta, csrc = 'citation_abstract';
+    if (!content && ctx.cpuMs < ctx.cpuBudgetMs * 0.6) {
+      const b = an.getBody();
+      if (b) { content = b; csrc = 'page_text'; }
+    }
+    if (!content && an.descMeta) { content = an.descMeta; csrc = 'description'; }
+    if (content) { check.foundAbstract = content; check.abstractSource = csrc; }
+  }
+
   // 學術中繼資料（citation_title、dc.title）可用整筆文字比對；一般 <title> 不行（網站名稱常同時是作者）
   let best = null;
   for (const c of an.cands) {
@@ -1890,7 +2030,19 @@ async function checkDoi(doi, cite, ctx) {
   const check = baseCheck('doi', doi);
   // 註冊狀態與 Crossref 書目同時查
   const [h, cr] = await Promise.all([doiHandle(doi, ctx), crossrefWork(doi, ctx)]);
-  if (cr.state === 'ok') return timed(ctx, () => evaluateMeta(check, cr.meta, cite, ctx, 'Crossref'));
+  if (cr.state === 'ok') {
+    // Crossref 有大量文獻沒有摘要（出版社未繳交），OpenAlex 的覆蓋率高得多。
+    // 題名、年份、作者仍以 Crossref 為準，只向 OpenAlex 補摘要這一項，
+    // 並記下它的真正出處，不要讓使用者誤以為是 Crossref 給的。
+    if (!cr.meta.abstract && !ctx.expired()) {
+      const oa = await openalexByDoi(doi, ctx);
+      if (oa.state === 'ok' && oa.meta.abstract) {
+        cr.meta.abstract = oa.meta.abstract;
+        cr.meta.abstractSrc = 'OpenAlex';
+      }
+    }
+    return timed(ctx, () => evaluateMeta(check, cr.meta, cite, ctx, 'Crossref'));
+  }
   if (h.state === 'missing') {
     check.status = 'doi_not_registered';
     check.httpStatus = 404;

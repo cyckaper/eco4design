@@ -6451,6 +6451,11 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       kind: ['doi', 'url', 'search'].includes(c.kind) ? c.kind : 'search',
       target: ids(c.target, 600), status: ids(c.status, 40), httpStatus: int(c.httpStatus),
       foundTitle: str(c.foundTitle, 300), foundYear: int(c.foundYear), foundAuthors: str(c.foundAuthors, 160),
+      // 摘要（Crossref／OpenAlex）或頁面內文：判讀「這篇文獻是否真的支持引用它的那句話」的依據。
+      // 只看題名會放過「題名相符、內容無關」的引用。
+      foundAbstract: str(c.foundAbstract, 1500),
+      abstractSource: ['Crossref', 'OpenAlex', 'DataCite', 'mEDRA', 'JaLC', 'doi.org',
+        'citation_abstract', 'page_text', 'description'].includes(c.abstractSource) ? c.abstractSource : '',
       titleScore: numIn(c.titleScore, -1e9, 1e9) ? Math.max(0, Math.min(1, c.titleScore)) : null,
       note: str(c.note, 240),
     }));
