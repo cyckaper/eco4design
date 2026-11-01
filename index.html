@@ -468,7 +468,7 @@
       <button type="button" id="langZh" class="lang-btn active">中文</button>
       <button type="button" id="langEn" class="lang-btn">EN</button>
     </div>
-    <div class="tag">🌿 Qi-Coexistence Workflow · <span class="app-version">v1.34</span></div>
+    <div class="tag">🌿 Qi-Coexistence Workflow · <span class="app-version">v1.35</span></div>
     <h1 class="title">棲<span class="dot">·</span>共生</h1>
     <p class="subtitle">
       生態基地分析工作流工具——選擇位置、設定焦點物種與基地條件，自動生成結構化提示詞送入 Claude 進行完整的生態共存設計分析。
@@ -828,7 +828,7 @@
       <span class="footer-sep">·</span>
       <button type="button" class="footer-link" id="feedbackBtn">💬 提供回饋</button>
       <span class="footer-sep">·</span>
-      <span class="footer-version app-version">v1.34</span>
+      <span class="footer-version app-version">v1.35</span>
     </div>
     <div class="footer-text">
       棲共生 Qi-Coexistence · 景觀生態設計工作流 ·
@@ -6952,7 +6952,7 @@ ${block}`;
   }
   // 送出改寫請求並讀取 SSE；回傳 { ok, text, stopReason, usage } 或 { ok: false, why, status?, message? }
   async function callRevise(o) {
-    if (o.prompt.length > REVISE_PROMPT_MAX) return { ok: false, why: 'too_long' };
+    if (o.prompt.length > (o.max || REVISE_PROMPT_MAX)) return { ok: false, why: 'too_long' };
     const rc = new AbortController();
     const onAbort = () => rc.abort();
     if (o.signal.aborted) return { ok: false, why: 'aborted' };
@@ -6965,7 +6965,7 @@ ${block}`;
         res = await fetch(API_ENDPOINT, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ passcode: o.passcode, model: o.model, mode: 'revise', prompt: o.prompt }),
+          body: JSON.stringify({ passcode: o.passcode, model: o.model, mode: o.mode || 'revise', prompt: o.prompt }),
           signal: rc.signal,
         });
       } catch (e) { return { ok: false, why: o.signal.aborted ? 'aborted' : 'network', message: e && e.message }; }
@@ -8759,8 +8759,372 @@ ${block}`;
       : t('ℹ️ 這份報告不是由本工具目前的版本組裝，為防止原文件的樣式偽造查證結果，已改用本工具的版面重新排版後再查證（文字與基地地圖保留，原文件的樣式與向量圖形不保留）。'));
     setVerifyStatus(msg, status === 'rules' || !trusted ? 'warn' : 'ok');
     if (target === currentReport) setFilterNotice(...(status === 'rules' ? ['rules', rulesLead(whyCode, aiWhy, uen), partialTail(filter, uen)] : ['hidden']));
+    // 引用句與來源摘要比對（附加步驟：失敗時報告維持上面的查證結果）
+    if (target === currentReport && seq === verifySeq && !opts.noSupport) {
+      try {
+        const r2 = await supportCheck(fin.updated, { lang, uen, passcode, seq, target, ts: ts || (currentReport && currentReport.ts) || null,
+          filter, pre: changed ? pre : prevPre, rec, baseMsg: msg, baseKind: status === 'rules' || !trusted ? 'warn' : 'ok' });
+        if (r2) return r2;
+      } catch (e) {
+        console.error('[support] failed', e);
+        if (seq === verifySeq) { verifyCtl = null; setVerifyBusy(false); }
+      }
+    }
     return rec;
   }
+
+  // ========== 引用句與來源摘要比對（查證與排除之後）==========
+  // 查證只確認來源存在、書目相符；這一步再取得每個保留來源的摘要（書目資料庫或出版頁面的學術中繼資料；
+  // 沒有摘要的網頁取其內文），逐句請模型判斷「引用這個來源的句子是否得到摘要支持」。
+  // 只標示、不刪除：摘要只是全文的摘要，「摘要未提及」不代表原文沒有；與摘要不符的句子在正文加註，附錄列出每一句的結果。
+  const SUP_VERDICTS = ['supported', 'partial', 'not_addressed', 'contradicted'];
+  const SUP_MAX_PER_SOURCE = 8;        // 每個來源最多比對幾句（其餘在附錄註明未比對）
+  const SUP_PROMPT_MAX = 100000;       // 與 analyze.js 的 MAX_SUPPORT_PROMPT_CHARS 一致
+  const SUP_ABS_BATCH = 8;             // 與 verify.js 的 ABS_MAX_ITEMS 一致
+  const SUP_TXT = {
+    zh: {
+      label: { supported: '摘要支持', partial: '部分支持', not_addressed: '摘要未提及', contradicted: '與摘要不符' },
+      cls: { supported: 'vf-ok', partial: 'vf-warn', not_addressed: 'vf-unk', contradicted: 'vf-bad' },
+      head: '引用句與來源摘要比對',
+      lead: '書目查證只確認來源存在、題名與年份作者相符。這一步再取得每個保留來源的摘要（書目資料庫或出版頁面的學術中繼資料；沒有摘要的網頁取其內文），由語言模型逐句判斷引用該來源的句子是否得到摘要支持。判斷只依摘要或網頁內文：「摘要未提及」不代表原文沒有，「部分支持」表示句中有數值、物種、地點或推論不在摘要中；兩者都請閱讀全文確認。與摘要不符的句子已在正文加註。',
+      kind: { abstract: '摘要', page: '網頁內文' },
+      cols: ['來源', '引用句', '結果', '說明'],
+      none: '無法取得摘要或內文、未比對的來源',
+      noneWhy: { pdf: 'PDF 檔，無法自動讀取', blocked_403: '網站拒絕自動存取', timeout: '連線逾時', deadline: '超過時間上限', no_abstract: '出版頁面沒有摘要', no_text: '頁面沒有可讀內文', not_found: '書目資料庫沒有摘要', rate_limited: '網站限流' },
+      noneOther: '無法取得',
+      extra: n => `另有 ${n} 句未比對（每個來源最多比對 ${SUP_MAX_PER_SOURCE} 句），請人工核對。`,
+      mark: '［⚠ 與所引來源摘要不符］',
+      badgeNone: '📄 無摘要可比對',
+      noVerdict: '模型未回覆這一句',
+      summary: (c, nSrc, nNone) => `比對 ${nSrc} 個來源的 ${c.total} 句：${SUP_VERDICTS.filter(v => c[v]).map(v => `${SUP_TXT.zh.label[v]} ${c[v]}`).join('、') || '—'}${nNone ? `；另有 ${nNone} 個來源取不到摘要，未比對` : ''}。`,
+      usage: (m, i, o) => `比對模型：${m}（輸入 ${i.toLocaleString()}／輸出 ${o.toLocaleString()} tokens）。`,
+    },
+    en: {
+      label: { supported: 'Supported by abstract', partial: 'Partly supported', not_addressed: 'Not in abstract', contradicted: 'Conflicts with abstract' },
+      cls: { supported: 'vf-ok', partial: 'vf-warn', not_addressed: 'vf-unk', contradicted: 'vf-bad' },
+      head: 'Citing sentences checked against source abstracts',
+      lead: 'The bibliographic check confirms only that a source exists and that its title, year and authors match. This step retrieves the abstract of each kept source (from bibliographic databases or the publisher page’s scholarly metadata; for web pages without an abstract, the page text) and a language model judges, sentence by sentence, whether the abstract supports the sentence citing it. Judgments rest only on the abstract or page text: “Not in abstract” does not mean the full text lacks it, and “Partly supported” means a number, species, place or inference in the sentence is not in the abstract; read the full text in both cases. Sentences that conflict with the abstract are flagged in the text.',
+      kind: { abstract: 'abstract', page: 'web page text' },
+      cols: ['Source', 'Citing sentence', 'Result', 'Note'],
+      none: 'Sources whose abstract or text could not be retrieved (not checked)',
+      noneWhy: { pdf: 'PDF file, cannot be read automatically', blocked_403: 'site refused automated access', timeout: 'timed out', deadline: 'time limit reached', no_abstract: 'publisher page has no abstract', no_text: 'page has no readable text', not_found: 'no abstract in the bibliographic databases', rate_limited: 'site rate-limited' },
+      noneOther: 'not retrieved',
+      extra: n => `${n} more sentence(s) were not checked (at most ${SUP_MAX_PER_SOURCE} per source); check them by hand.`,
+      mark: '[⚠ conflicts with the cited abstract]',
+      badgeNone: '📄 No abstract to compare',
+      noVerdict: 'No judgment returned for this sentence',
+      summary: (c, nSrc, nNone) => `${c.total} sentence(s) citing ${nSrc} source(s) were checked: ${SUP_VERDICTS.filter(v => c[v]).map(v => `${SUP_TXT.en.label[v]} ${c[v]}`).join(' · ') || '—'}${nNone ? `; ${nNone} source(s) had no retrievable abstract and were not checked` : ''}.`,
+      usage: (m, i, o) => `Model: ${m} (${i.toLocaleString()} input / ${o.toLocaleString()} output tokens).`,
+    },
+  };
+  const supIsDataset = r => /^(?:iNaturalist|OpenStreetMap)\b/i.test(String(r.author || '').trim()) && !(r.allDois || []).length;
+
+  // 正文中引用各文獻的句子：{ ri（文獻索引）, text（送去比對的句子）, unit, end（句尾在單元中的位置，供加註）}
+  function supportStatements(doc, refs) {
+    const root = doc.querySelector('article') || doc.body;
+    if (!root || !refs.length) return [];
+    const list = refs[0].li.parentElement;
+    const caseCells = new Set(caseNameCells(doc));
+    const SKIP = 'ul.refs, ol.refs, section.verification, footer.provenance, script, style, figure, p.note, .hx-wrap, .vf, .vf-detail, .vf-x, .src-flag, h1, h2, h3, h4, h5, h6';
+    const skip = el => el === list || caseCells.has(el) || el.matches(SKIP);
+    // 敘述式引用「作者（年）」（與 checkInTextCitations 相同的規則）
+    const narr = refs.map(r => {
+      const name = String((r.keys && r.keys.firstText) || '').replace(ETAL_RE, '').replace(BRACKET_RE, ' ').trim();
+      if (!name || !r.year) return null;
+      const yr = r.year.nd ? '(?:n\\.\\s?d\\.|無日期|未註明日期)' : r.year.y + (r.year.s ? r.year.s : '[a-z]?');
+      const cjk = /[㐀-鿿]/.test(name);
+      try { return new RegExp((cjk ? '' : '\\b') + escapeRe(name) + '[^()（）]{0,' + (cjk ? 30 : 60) + '}?[（(]\\s*' + yr + '(?![0-9])', cjk ? '' : 'i'); } catch (_) { return null; }
+    });
+    const out = [];
+    textUnits(root, skip).forEach(u => {
+      const text = unitText(u);
+      if (!/[（(]/.test(text)) return;
+      sentenceRanges(text).forEach(([s, e]) => {
+        const sent = text.slice(s, e);
+        const hits = new Set();
+        citationGroups(sent).forEach(g => g.parts.forEach(c => {
+          let best = 0, ids = [];
+          refs.forEach((r, i) => { const sc = citeMatchesRef(c, r); if (sc > best) { best = sc; ids = [i]; } else if (sc && sc === best) ids.push(i); });
+          ids.forEach(i => hits.add(i));
+        }));
+        narr.forEach((re, i) => { if (re && re.test(sent)) hits.add(i); });
+        if (!hits.size) return;
+        let claim = sent.replace(/\s+/g, ' ').trim();
+        // 只有引用、沒有陳述（例如表格的「依據」欄）：改用整列文字
+        const bare = claim.replace(/[（(][^（）()]*[）)]/g, '').replace(/[\s,，、;；.。:：|｜\-–—]+/g, '');
+        if (bare.length < 8) {
+          const tr = u.el.closest ? u.el.closest('tr') : null;
+          if (!tr) return;
+          claim = [...tr.children].map(td => String(td.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean).join(' | ');
+        }
+        claim = clip(claim, 600);
+        hits.forEach(i => out.push({ ri: i, text: claim, unit: u, end: e }));
+      });
+    });
+    return out;
+  }
+
+  // 取得來源摘要：POST /api/verify（mode: 'abstract'），每批 SUP_ABS_BATCH 筆、同時最多 3 批
+  async function fetchAbstracts(refs, lang, passcode, signal) {
+    const map = new Map();
+    let failure = null;
+    const batches = [];
+    for (let i = 0; i < refs.length; i += SUP_ABS_BATCH) batches.push(refs.slice(i, i + SUP_ABS_BATCH));
+    let next = 0;
+    const worker = async () => {
+      while (next < batches.length) {
+        const b = batches[next++];
+        try {
+          const res = await fetch(VERIFY_ENDPOINT, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+            body: JSON.stringify({ passcode, lang, mode: 'abstract', items: b.map(r => ({ id: r.id, dois: (r.allDois || []).slice(0, 2), urls: (r.allUrls || []).slice(0, 3), title: String(r.title || '').slice(0, 300) })) }),
+          });
+          if (!res.ok) { failure = failure || { kind: 'http', status: res.status }; continue; }
+          const j = await res.json();
+          (Array.isArray(j && j.results) ? j.results : []).forEach(x => {
+            if (!x || typeof x.id !== 'string' || !b.some(r => r.id === x.id)) return;
+            const ok = (x.kind === 'abstract' || x.kind === 'page') && typeof x.text === 'string' && x.text.trim().length >= 80;
+            map.set(x.id, { kind: ok ? x.kind : 'none', text: ok ? x.text.replace(/<<<|>>>/g, ' ').slice(0, 6000) : '',
+              src: typeof x.src === 'string' ? x.src.slice(0, 80) : '', note: typeof x.note === 'string' ? x.note.slice(0, 80) : '' });
+          });
+        } catch (e) { failure = failure || { kind: signal.aborted ? 'aborted' : 'network' }; }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    return { map, failure };
+  }
+
+  function buildSupportPrompt(groups, lang) {
+    const en = lang === 'en';
+    const head = [
+      'You are checking whether the sources cited in a landscape-design report support the sentences that cite them.',
+      'For each statement, judge ONLY against the source text given for that source (its abstract, or the text of its web page). Do not use outside knowledge, and do not guess what the full text might say.',
+      '',
+      'Verdicts:',
+      '- "supported": the source text states the claim or directly implies it, including its specific numbers, species, places and direction of effect.',
+      '- "partial": the source text supports part of the claim, but some specific element (a number, species, place, period, or a causal or design conclusion) is not in the source text.',
+      '- "not_addressed": the source text does not address the claim.',
+      '- "contradicted": the source text says something incompatible with the claim.',
+      '',
+      'A statement may cite several sources and combine them: judge whether THIS source supports the part of the statement it can reasonably be cited for. A design recommendation counts as "supported" only if the finding it relies on is in the source text.',
+      en ? 'For each statement give "why": one short sentence in English (at most 30 words) saying what the source text does or does not say.'
+        : 'For each statement give "why": one short sentence in Traditional Chinese as used in Taiwan (at most 40 characters) saying what the source text does or does not say.',
+      'Reply with JSON only, no other text: {"results":[{"id":"S1-1","v":"supported","why":"..."}]}. Include every statement id exactly once.',
+      '',
+      '<<<SOURCES',
+    ].join('\n');
+    const body = groups.map(g => [
+      `[${g.key}] ${g.ref.text}`,
+      `Source text (${g.kind === 'page' ? 'web page text, first part' : 'abstract'}; from ${g.src || 'source'}):`,
+      '"""', g.text, '"""',
+      `Statements citing ${g.key}:`,
+      ...g.stmts.map((st, j) => `${g.key}-${j + 1}: ${st.text}`),
+      '',
+    ].join('\n')).join('\n');
+    return head + '\n' + body + '\nSOURCES>>>';
+  }
+
+  function parseSupport(text, ids) {
+    const a = String(text || '').indexOf('{'), b = String(text || '').lastIndexOf('}');
+    if (a < 0 || b <= a) return null;
+    let j;
+    try { j = JSON.parse(text.slice(a, b + 1)); } catch (_) { return null; }
+    const arr = j && Array.isArray(j.results) ? j.results : null;
+    if (!arr) return null;
+    const out = new Map();
+    arr.forEach(x => {
+      if (!x || typeof x.id !== 'string' || !ids.has(x.id) || out.has(x.id) || !SUP_VERDICTS.includes(x.v)) return;
+      out.set(x.id, { v: x.v, why: typeof x.why === 'string' ? x.why.replace(/\s+/g, ' ').trim().slice(0, 300) : '' });
+    });
+    return out;
+  }
+
+  // 在單元文字的某個位置插入節點（由後往前插入，前面的位置不受影響）
+  function insertAtUnitOffset(u, off, node) {
+    let acc = 0;
+    for (const n of u.nodes) {
+      if (!n.isConnected) return false;
+      const len = n.data.length;
+      if (off <= acc + len) {
+        const r = n.ownerDocument.createRange();
+        r.setStart(n, Math.max(0, Math.min(len, off - acc)));
+        r.collapse(true);
+        r.insertNode(node);
+        return true;
+      }
+      acc += len;
+    }
+    return false;
+  }
+
+  function applySupport(doc, groups, verdicts, noneRefs, ctx) {
+    const en = ctx.lang === 'en', L = SUP_TXT[en ? 'en' : 'zh'];
+    const counts = { total: 0, supported: 0, partial: 0, not_addressed: 0, contradicted: 0 };
+    // 1) 每筆文獻後的標記
+    groups.forEach(g => {
+      const c = { supported: 0, partial: 0, not_addressed: 0, contradicted: 0 };
+      g.stmts.forEach((st, j) => { const r = verdicts.get(`${g.key}-${j + 1}`); if (r) { c[r.v]++; counts[r.v]++; } counts.total++; });
+      const parts = SUP_VERDICTS.filter(v => c[v]).map(v => `${L.label[v]} ${c[v]}`);
+      if (!parts.length) return;
+      const worst = c.contradicted ? 'contradicted' : c.partial ? 'partial' : c.not_addressed ? 'not_addressed' : 'supported';
+      const sp = doc.createElement('span');
+      sp.className = 'vf vf-sup ' + L.cls[worst];
+      sp.textContent = '📄 ' + parts.join(en ? ' · ' : '・');
+      g.ref.li.appendChild(sp);
+    });
+    noneRefs.forEach(x => {
+      const sp = doc.createElement('span');
+      sp.className = 'vf vf-sup vf-unk';
+      sp.textContent = L.badgeNone;
+      x.ref.li.appendChild(sp);
+    });
+    // 2) 正文：與摘要不符的句子加註（同一句只加一次；同一單元由後往前插入）
+    const marks = new Map();
+    groups.forEach(g => g.stmts.forEach((st, j) => {
+      const r = verdicts.get(`${g.key}-${j + 1}`);
+      if (r && r.v === 'contradicted') st.occ.forEach(o => {
+        let arr = marks.get(o.unit);
+        if (!arr) marks.set(o.unit, arr = []);
+        if (!arr.includes(o.end)) arr.push(o.end);
+      });
+    }));
+    let nMarked = 0;
+    marks.forEach((ends, u) => ends.sort((a, b) => b - a).forEach(end => {
+      const sp = doc.createElement('span');
+      sp.className = 'vf vf-bad vf-sup-mark';
+      sp.textContent = L.mark;
+      if (insertAtUnitOffset(u, end, sp)) nMarked++;
+    }));
+    // 3) 附錄：每一句的結果
+    let h = `<h3>${escapeHtml(L.head)}</h3><p class="vf-lead">${escapeHtml(L.lead)}</p>`;
+    h += `<p class="vf-scope">${escapeHtml(L.summary(counts, groups.length, noneRefs.length))}</p>`;
+    if (groups.length) {
+      h += '<table class="vf-table"><thead><tr>' + L.cols.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead><tbody>';
+      groups.forEach(g => g.stmts.forEach((st, j) => {
+        const r = verdicts.get(`${g.key}-${j + 1}`);
+        h += '<tr>' +
+          `<td>${escapeHtml(g.key)} ${escapeHtml(refShortLabel(g.ref, en))}<span class="vf-sub">${escapeHtml(L.kind[g.kind] || '')}${g.src ? ' · ' + escapeHtml(g.src) : ''}</span></td>` +
+          `<td>${escapeHtml(clip(st.text, 320))}</td>` +
+          `<td>${r ? `<span class="vf ${L.cls[r.v]}">${escapeHtml(L.label[r.v])}</span>` : '—'}</td>` +
+          `<td>${escapeHtml(r ? r.why : L.noVerdict)}</td></tr>`;
+      }));
+      h += '</tbody></table>';
+      const extra = groups.reduce((n, g) => n + (g.extra || 0), 0);
+      if (extra) h += `<p class="vf-sub">${escapeHtml(L.extra(extra))}</p>`;
+    }
+    if (noneRefs.length) {
+      h += `<p class="vf-lead"><b>${escapeHtml(L.none)}</b></p><ul class="vf-list">` +
+        noneRefs.map(x => {
+          const why = String(x.note || '').split(',').map(k => L.noneWhy[k.replace(/^doi:/, '')]).filter(Boolean)[0] || L.noneOther;
+          return `<li>${escapeHtml(refShortLabel(x.ref, en))}${en ? ` (${escapeHtml(why)})` : `（${escapeHtml(why)}）`}</li>`;
+        }).join('') + '</ul>';
+    }
+    if (ctx.usage && ctx.model) h += `<p class="vf-sub">${escapeHtml(L.usage(ctx.model, ctx.usage.i || 0, ctx.usage.o || 0))}</p>`;
+    const wrap = doc.createElement('div');
+    wrap.className = 'vf-sup-sec';
+    wrap.innerHTML = h;
+    const sec = doc.querySelector('section.verification');
+    if (sec) sec.appendChild(wrap); else (doc.querySelector('article') || doc.body).appendChild(wrap);
+    return { counts, nMarked };
+  }
+
+  // 查證與排除完成後執行；任何失敗都不改動報告（只在狀態列說明）
+  async function supportCheck(html, o) {
+    const en = o.lang === 'en', uen = o.uen;
+    const say = (m, kind) => { if (o.seq === verifySeq) setVerifyStatus(o.baseMsg ? o.baseMsg + ' ' + m : m, kind || o.baseKind || 'ok'); };
+    const doc = new DOMParser().parseFromString(String(html), 'text/html');
+    const all = parseReferences(doc);
+    const eligible = new Set(all.map((r, i) => i).filter(i => {
+      const r = all[i];
+      return !supIsDataset(r) && ((r.allDois || []).length || (r.allUrls || []).length || String(r.title || '').length >= 10);
+    }));
+    if (!eligible.size) return null;
+    // 依文獻分組；同一句只送一次，但記下每個出現位置（加註用）
+    const byRef = new Map();
+    supportStatements(doc, all).forEach(st => {
+      if (!eligible.has(st.ri)) return;
+      let g = byRef.get(st.ri);
+      if (!g) byRef.set(st.ri, g = { ref: all[st.ri], stmts: [] });
+      let x = g.stmts.find(y => y.text === st.text);
+      if (!x) g.stmts.push(x = { text: st.text, occ: [] });
+      x.occ.push({ unit: st.unit, end: st.end });
+    });
+    if (!byRef.size) return null;
+    const ctl = new AbortController();
+    verifyCtl = ctl;
+    setVerifyBusy(true);
+    try {
+      const cited = [...byRef.values()].map(g => g.ref);
+      say(uen ? `📄 Retrieving the abstracts of ${plural(cited.length, 'cited source')}…` : `📄 正在取得 ${cited.length} 個來源的摘要…`, 'run');
+      const ab = await fetchAbstracts(cited, o.lang, o.passcode, ctl.signal);
+      if (o.seq !== verifySeq) return null;
+      if (!ab.map.size) {
+        if (ab.failure && ab.failure.kind === 'aborted') return null;
+        say(uen ? `⚠️ The abstracts could not be retrieved${ab.failure && ab.failure.status ? ` (HTTP ${ab.failure.status})` : ''}, so citing sentences were not checked against them.`
+          : `⚠️ 無法取得來源摘要${ab.failure && ab.failure.status ? `（HTTP ${ab.failure.status}）` : ''}，未比對引用句與摘要。`, 'warn');
+        return null;
+      }
+      const groups = [], noneRefs = [];
+      let k = 0;
+      [...byRef.values()].forEach(g => {
+        const a = ab.map.get(g.ref.id);
+        if (!a || a.kind === 'none') { noneRefs.push({ ref: g.ref, note: a ? a.note : 'not_found' }); return; }
+        const stmts = g.stmts.slice(0, SUP_MAX_PER_SOURCE);
+        groups.push({ key: 'S' + (++k), ref: g.ref, kind: a.kind, src: a.src, text: a.text, stmts, extra: g.stmts.length - stmts.length });
+      });
+      let verdicts = new Map(), usage = null, model = '';
+      if (groups.length) {
+        // 篇幅控制：先縮短網頁內文，再縮短摘要，最後減少每個來源的句數
+        let prompt = buildSupportPrompt(groups, o.lang);
+        for (const step of [g => { if (g.kind === 'page') g.text = g.text.slice(0, 3000); }, g => { g.text = g.text.slice(0, 2500); },
+          g => { if (g.stmts.length > 4) { g.extra += g.stmts.length - 4; g.stmts = g.stmts.slice(0, 4); } }]) {
+          if (prompt.length <= SUP_PROMPT_MAX) break;
+          groups.forEach(step);
+          prompt = buildSupportPrompt(groups, o.lang);
+        }
+        if (prompt.length > SUP_PROMPT_MAX) { say(uen ? '⚠️ Too many citing sentences to check against abstracts in one request; not checked.' : '⚠️ 引用句過多，無法一次比對摘要，未比對。', 'warn'); return null; }
+        const nStmt = groups.reduce((n, g) => n + g.stmts.length, 0);
+        say(uen ? `📄 Checking ${plural(nStmt, 'citing sentence')} against the abstracts of ${plural(groups.length, 'source')}…` : `📄 正在比對 ${nStmt} 句引用與 ${groups.length} 個來源的摘要…`, 'run');
+        const rv = await callRevise({ mode: 'support', max: SUP_PROMPT_MAX, prompt, model: '', passcode: o.passcode, signal: ctl.signal,
+          onProgress: n => say(uen ? `📄 Checking citing sentences against abstracts… (${n.toLocaleString()} characters)` : `📄 正在比對引用句與摘要…（已產生 ${n.toLocaleString()} 字）`, 'run') });
+        if (o.seq !== verifySeq) return null;
+        if (!rv.ok) {
+          if (rv.why === 'aborted') return null;
+          say(uen ? `⚠️ The check of citing sentences against abstracts failed (${rv.why}${rv.status ? ' ' + rv.status : ''}); the report was not changed.`
+            : `⚠️ 引用句與摘要比對失敗（${rv.why}${rv.status ? ' ' + rv.status : ''}），報告未變動。`, 'warn');
+          return null;
+        }
+        const ids = new Set();
+        groups.forEach(g => g.stmts.forEach((st, j) => ids.add(`${g.key}-${j + 1}`)));
+        const parsed = parseSupport(rv.text, ids);
+        if (!parsed || !parsed.size) {
+          say(uen ? '⚠️ The abstract check returned no usable result; the report was not changed.' : '⚠️ 摘要比對沒有可用的結果，報告未變動。', 'warn');
+          return null;
+        }
+        verdicts = parsed; usage = rv.usage; model = rv.model || '';
+      }
+      const res = applySupport(doc, groups, verdicts, noneRefs, { lang: o.lang, usage, model });
+      const html2 = serializeDoc(doc);
+      const c = res.counts;
+      const rec2 = Object.assign({}, o.rec, { sup: { at: new Date().toISOString(), src: groups.length, none: noneRefs.length, n: c.total,
+        s: c.supported, p: c.partial, na: c.not_addressed, x: c.contradicted, ...(model ? { m: model } : {}), ...(usage ? { i: usage.i, o: usage.o } : {}) } });
+      if (o.target === currentReport) {
+        showResult(html2, { fromVerify: true, noScroll: true, keepScroll: true });
+        currentReport.pre = o.pre || null;
+        currentReport.filter = o.filter;
+      }
+      updateHistoryVerification(o.ts, html, html2, rec2, { filter: o.filter, pre: o.pre });
+      say((uen ? '📄 Abstract check: ' : '📄 摘要比對：') + SUP_TXT[uen ? 'en' : 'zh'].summary(c, groups.length, noneRefs.length) +
+        (res.nMarked ? (uen ? ` ${plural(res.nMarked, 'sentence')} flagged in the text.` : `正文已加註 ${res.nMarked} 處。`) : ''), c.contradicted ? 'warn' : (o.baseKind || 'ok'));
+      return rec2;
+    } finally {
+      if (o.seq === verifySeq) { verifyCtl = null; setVerifyBusy(false); }
+    }
+  }
+
+  // 單元測試用；run：以目前的查證序號執行完整流程（target 不是目前報告時不更新畫面）
+  window.__qiSupport = Object.freeze({ supportStatements, buildSupportPrompt, parseSupport, applySupport, insertAtUnitOffset, SUP_VERDICTS,
+    run: (html, o) => supportCheck(html, Object.assign({ seq: verifySeq }, o)) });
 
   // 單元測試用（純函式；結果框沒有 allow-same-origin，報告內容無法存取本頁）
   window.__qiExclusion = Object.freeze({ classifySource, groundXsecSpecies, searchEvidence, normUrlKey, parseCases, parseReferences, applyExclusionGuards, pruneCitations,
@@ -9091,7 +9455,7 @@ ${block}`;
   // ========== About & Feedback ==========
   // 將此處 email 改成您自己的（接收回饋用）
   const FEEDBACK_EMAIL = 'cycland@ntu.edu.tw';
-  const APP_VERSION = 'v1.34'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
+  const APP_VERSION = 'v1.35'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
   document.querySelectorAll('.app-version').forEach(el => { el.textContent = APP_VERSION; });
 
   function openAboutModal() {

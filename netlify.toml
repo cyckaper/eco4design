@@ -29,7 +29,7 @@
   path = "/api/analyze"
   function = "analyze"
 
-# 參考文獻真實性查核（doi.org／Crossref／OpenAlex／直接開啟網址；不需金鑰）
+# 參考文獻真實性查核（doi.org／Crossref／OpenAlex／直接開啟網址；不需金鑰）；mode: 'abstract' 取得來源摘要供引用句比對
 # 選填環境變數：VERIFY_MAILTO（Crossref／OpenAlex 禮貌池聯絡信箱，可提高查詢額度）
 [[edge_functions]]
   path = "/api/verify"
