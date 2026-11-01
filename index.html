@@ -8783,7 +8783,9 @@ ${block}`;
   const SUP_ABS_BATCH = 8;             // 與 verify.js 的 ABS_MAX_ITEMS 一致
   const SUP_TXT = {
     zh: {
-      label: { supported: '摘要支持', partial: '部分支持', not_addressed: '摘要未提及', contradicted: '與摘要不符' },
+      label: { supported: '支持', partial: '部分支持', not_addressed: '未提及', contradicted: '不符' },
+      kl: { abstract: { supported: '摘要支持', partial: '摘要部分支持', not_addressed: '摘要未提及', contradicted: '與摘要不符' },
+        page: { supported: '內文支持', partial: '內文部分支持', not_addressed: '內文未提及', contradicted: '與內文不符' } },
       cls: { supported: 'vf-ok', partial: 'vf-warn', not_addressed: 'vf-unk', contradicted: 'vf-bad' },
       head: '引用句與來源摘要比對',
       lead: '書目查證只確認來源存在、題名與年份作者相符。這一步再取得每個保留來源的摘要（書目資料庫或出版頁面的學術中繼資料；沒有摘要的網頁取其內文），由語言模型逐句判斷引用該來源的句子是否得到摘要支持。判斷只依摘要或網頁內文：「摘要未提及」不代表原文沒有，「部分支持」表示句中有數值、物種、地點或推論不在摘要中；兩者都請閱讀全文確認。與摘要不符的句子已在正文加註。',
@@ -8793,14 +8795,18 @@ ${block}`;
       noneWhy: { pdf: 'PDF 檔，無法自動讀取', blocked_403: '網站拒絕自動存取', timeout: '連線逾時', deadline: '超過時間上限', no_abstract: '出版頁面沒有摘要', no_text: '頁面沒有可讀內文', not_found: '書目資料庫沒有摘要', rate_limited: '網站限流' },
       noneOther: '無法取得',
       extra: n => `另有 ${n} 句未比對（每個來源最多比對 ${SUP_MAX_PER_SOURCE} 句），請人工核對。`,
-      mark: '［⚠ 與所引來源摘要不符］',
+      mark: { abstract: '［⚠ 與所引來源摘要不符］', page: '［⚠ 與所引來源內文不符］' },
+      uncited: '正文中未找到引用句、未比對的來源（可能只出現在剖面圖、標題，或引用格式無法辨識）',
       badgeNone: '📄 無摘要可比對',
       noVerdict: '模型未回覆這一句',
-      summary: (c, nSrc, nNone) => `比對 ${nSrc} 個來源的 ${c.total} 句：${SUP_VERDICTS.filter(v => c[v]).map(v => `${SUP_TXT.zh.label[v]} ${c[v]}`).join('、') || '—'}${nNone ? `；另有 ${nNone} 個來源取不到摘要，未比對` : ''}。`,
+      summary: (c, nSrc, nNone, nUncited) => `比對 ${nSrc} 個來源的 ${c.total} 句：${SUP_VERDICTS.filter(v => c[v]).map(v => `${SUP_TXT.zh.label[v]} ${c[v]}`).join('、') || '—'}` +
+        `${nNone ? `；另有 ${nNone} 個來源取不到摘要或內文` : ''}${nUncited ? `${nNone ? '、' : '；另有 '}${nUncited} 個來源在正文中找不到引用句` : ''}${nNone || nUncited ? '，未比對' : ''}。`,
       usage: (m, i, o) => `比對模型：${m}（輸入 ${i.toLocaleString()}／輸出 ${o.toLocaleString()} tokens）。`,
     },
     en: {
-      label: { supported: 'Supported by abstract', partial: 'Partly supported', not_addressed: 'Not in abstract', contradicted: 'Conflicts with abstract' },
+      label: { supported: 'supported', partial: 'partly supported', not_addressed: 'not addressed', contradicted: 'conflicting' },
+      kl: { abstract: { supported: 'Supported by abstract', partial: 'Partly supported by abstract', not_addressed: 'Not in abstract', contradicted: 'Conflicts with abstract' },
+        page: { supported: 'Supported by page text', partial: 'Partly supported by page text', not_addressed: 'Not in page text', contradicted: 'Conflicts with page text' } },
       cls: { supported: 'vf-ok', partial: 'vf-warn', not_addressed: 'vf-unk', contradicted: 'vf-bad' },
       head: 'Citing sentences checked against source abstracts',
       lead: 'The bibliographic check confirms only that a source exists and that its title, year and authors match. This step retrieves the abstract of each kept source (from bibliographic databases or the publisher page’s scholarly metadata; for web pages without an abstract, the page text) and a language model judges, sentence by sentence, whether the abstract supports the sentence citing it. Judgments rest only on the abstract or page text: “Not in abstract” does not mean the full text lacks it, and “Partly supported” means a number, species, place or inference in the sentence is not in the abstract; read the full text in both cases. Sentences that conflict with the abstract are flagged in the text.',
@@ -8810,10 +8816,12 @@ ${block}`;
       noneWhy: { pdf: 'PDF file, cannot be read automatically', blocked_403: 'site refused automated access', timeout: 'timed out', deadline: 'time limit reached', no_abstract: 'publisher page has no abstract', no_text: 'page has no readable text', not_found: 'no abstract in the bibliographic databases', rate_limited: 'site rate-limited' },
       noneOther: 'not retrieved',
       extra: n => `${n} more sentence(s) were not checked (at most ${SUP_MAX_PER_SOURCE} per source); check them by hand.`,
-      mark: '[⚠ conflicts with the cited abstract]',
+      mark: { abstract: '[⚠ conflicts with the cited abstract]', page: '[⚠ conflicts with the cited page]' },
+      uncited: 'Sources with no citing sentence found in the text (not checked; they may appear only in a cross-section, a heading, or an unrecognised citation format)',
       badgeNone: '📄 No abstract to compare',
       noVerdict: 'No judgment returned for this sentence',
-      summary: (c, nSrc, nNone) => `${c.total} sentence(s) citing ${nSrc} source(s) were checked: ${SUP_VERDICTS.filter(v => c[v]).map(v => `${SUP_TXT.en.label[v]} ${c[v]}`).join(' · ') || '—'}${nNone ? `; ${nNone} source(s) had no retrievable abstract and were not checked` : ''}.`,
+      summary: (c, nSrc, nNone, nUncited) => `${c.total} sentence(s) citing ${nSrc} source(s) were checked: ${SUP_VERDICTS.filter(v => c[v]).map(v => `${SUP_TXT.en.label[v]} ${c[v]}`).join(' · ') || '—'}` +
+        `${nNone ? `; ${nNone} source(s) had no retrievable abstract or text` : ''}${nUncited ? `; ${nUncited} source(s) had no citing sentence found in the text` : ''}${nNone || nUncited ? ' (not checked)' : ''}.`,
       usage: (m, i, o) => `Model: ${m} (${i.toLocaleString()} input / ${o.toLocaleString()} output tokens).`,
     },
   };
@@ -8958,13 +8966,14 @@ ${block}`;
   }
 
   function applySupport(doc, groups, verdicts, noneRefs, ctx) {
+    const uncitedRefs = ctx.uncited || [];
     const en = ctx.lang === 'en', L = SUP_TXT[en ? 'en' : 'zh'];
     const counts = { total: 0, supported: 0, partial: 0, not_addressed: 0, contradicted: 0 };
     // 1) 每筆文獻後的標記
     groups.forEach(g => {
       const c = { supported: 0, partial: 0, not_addressed: 0, contradicted: 0 };
       g.stmts.forEach((st, j) => { const r = verdicts.get(`${g.key}-${j + 1}`); if (r) { c[r.v]++; counts[r.v]++; } counts.total++; });
-      const parts = SUP_VERDICTS.filter(v => c[v]).map(v => `${L.label[v]} ${c[v]}`);
+      const parts = SUP_VERDICTS.filter(v => c[v]).map(v => `${L.kl[g.kind][v]} ${c[v]}`);
       if (!parts.length) return;
       const worst = c.contradicted ? 'contradicted' : c.partial ? 'partial' : c.not_addressed ? 'not_addressed' : 'supported';
       const sp = doc.createElement('span');
@@ -8985,19 +8994,19 @@ ${block}`;
       if (r && r.v === 'contradicted') st.occ.forEach(o => {
         let arr = marks.get(o.unit);
         if (!arr) marks.set(o.unit, arr = []);
-        if (!arr.includes(o.end)) arr.push(o.end);
+        if (!arr.some(x => x.end === o.end)) arr.push({ end: o.end, kind: g.kind });
       });
     }));
     let nMarked = 0;
-    marks.forEach((ends, u) => ends.sort((a, b) => b - a).forEach(end => {
+    marks.forEach((arr, u) => arr.sort((a, b) => b.end - a.end).forEach(x => {
       const sp = doc.createElement('span');
       sp.className = 'vf vf-bad vf-sup-mark';
-      sp.textContent = L.mark;
-      if (insertAtUnitOffset(u, end, sp)) nMarked++;
+      sp.textContent = L.mark[x.kind] || L.mark.abstract;
+      if (insertAtUnitOffset(u, x.end, sp)) nMarked++;
     }));
     // 3) 附錄：每一句的結果
     let h = `<h3>${escapeHtml(L.head)}</h3><p class="vf-lead">${escapeHtml(L.lead)}</p>`;
-    h += `<p class="vf-scope">${escapeHtml(L.summary(counts, groups.length, noneRefs.length))}</p>`;
+    h += `<p class="vf-scope">${escapeHtml(L.summary(counts, groups.length, noneRefs.length, uncitedRefs.length))}</p>`;
     if (groups.length) {
       h += '<table class="vf-table"><thead><tr>' + L.cols.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead><tbody>';
       groups.forEach(g => g.stmts.forEach((st, j) => {
@@ -9005,7 +9014,7 @@ ${block}`;
         h += '<tr>' +
           `<td>${escapeHtml(g.key)} ${escapeHtml(refShortLabel(g.ref, en))}<span class="vf-sub">${escapeHtml(L.kind[g.kind] || '')}${g.src ? ' · ' + escapeHtml(g.src) : ''}</span></td>` +
           `<td>${escapeHtml(clip(st.text, 320))}</td>` +
-          `<td>${r ? `<span class="vf ${L.cls[r.v]}">${escapeHtml(L.label[r.v])}</span>` : '—'}</td>` +
+          `<td>${r ? `<span class="vf ${L.cls[r.v]}">${escapeHtml(L.kl[g.kind][r.v])}</span>` : '—'}</td>` +
           `<td>${escapeHtml(r ? r.why : L.noVerdict)}</td></tr>`;
       }));
       h += '</tbody></table>';
@@ -9019,6 +9028,8 @@ ${block}`;
           return `<li>${escapeHtml(refShortLabel(x.ref, en))}${en ? ` (${escapeHtml(why)})` : `（${escapeHtml(why)}）`}</li>`;
         }).join('') + '</ul>';
     }
+    if (uncitedRefs.length) h += `<p class="vf-lead"><b>${escapeHtml(L.uncited)}</b></p><ul class="vf-list">` +
+      uncitedRefs.map(r => `<li>${escapeHtml(refShortLabel(r, en))}</li>`).join('') + '</ul>';
     if (ctx.usage && ctx.model) h += `<p class="vf-sub">${escapeHtml(L.usage(ctx.model, ctx.usage.i || 0, ctx.usage.o || 0))}</p>`;
     const wrap = doc.createElement('div');
     wrap.className = 'vf-sup-sec';
@@ -9103,18 +9114,19 @@ ${block}`;
         }
         verdicts = parsed; usage = rv.usage; model = rv.model || '';
       }
-      const res = applySupport(doc, groups, verdicts, noneRefs, { lang: o.lang, usage, model });
+      const uncited = [...eligible].filter(i => !byRef.has(i)).map(i => all[i]);
+      const res = applySupport(doc, groups, verdicts, noneRefs, { lang: o.lang, usage, model, uncited });
       const html2 = serializeDoc(doc);
       const c = res.counts;
       const rec2 = Object.assign({}, o.rec, { sup: { at: new Date().toISOString(), src: groups.length, none: noneRefs.length, n: c.total,
-        s: c.supported, p: c.partial, na: c.not_addressed, x: c.contradicted, ...(model ? { m: model } : {}), ...(usage ? { i: usage.i, o: usage.o } : {}) } });
+        s: c.supported, p: c.partial, na: c.not_addressed, x: c.contradicted, nc: uncited.length, ...(model ? { m: model } : {}), ...(usage ? { i: usage.i, o: usage.o } : {}) } });
       if (o.target === currentReport) {
         showResult(html2, { fromVerify: true, noScroll: true, keepScroll: true });
         currentReport.pre = o.pre || null;
         currentReport.filter = o.filter;
       }
       updateHistoryVerification(o.ts, html, html2, rec2, { filter: o.filter, pre: o.pre });
-      say((uen ? '📄 Abstract check: ' : '📄 摘要比對：') + SUP_TXT[uen ? 'en' : 'zh'].summary(c, groups.length, noneRefs.length) +
+      say((uen ? '📄 Abstract check: ' : '📄 摘要比對：') + SUP_TXT[uen ? 'en' : 'zh'].summary(c, groups.length, noneRefs.length, uncited.length) +
         (res.nMarked ? (uen ? ` ${plural(res.nMarked, 'sentence')} flagged in the text.` : `正文已加註 ${res.nMarked} 處。`) : ''), c.contradicted ? 'warn' : (o.baseKind || 'ok'));
       return rec2;
     } finally {
