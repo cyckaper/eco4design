@@ -19,8 +19,11 @@
 
 const MAX_BYTES = 12 * 1024 * 1024;     // 下載上限：政府報告動輒數 MB，但不接受無上限
 const FETCH_TIMEOUT_MS = 20000;
-const PARSE_TIMEOUT_MS = 20000;
-const MAX_PAGES = 12;                   // 只看前幾頁：摘要與前言都在最前面
+const PARSE_TIMEOUT_MS = 16000;   // 與下載上限相加要留在函式的 26 秒內
+// 只看前幾頁：摘要與前言都在最前面，後面的頁對「是否支持主張」沒有幫助。
+// 線上實測 12 頁要 22 秒（函式上限 26 秒）、另一份直接逾時；5 頁足以涵蓋
+// 題名、作者、摘要與前言，時間降到十秒上下。
+const MAX_PAGES = 5;
 const OUT_MAX = 6000;
 const MIN_CHARS = 120;
 const UA = 'Qi-Coexistence-RefCheck/1.0 (+https://eco4design.healsdesign.org)';
