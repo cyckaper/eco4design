@@ -280,6 +280,54 @@
   .osm-attribution { font-size: 10.5px; color: var(--moss-light); font-family: var(--serif); font-style: italic; margin-top: 10px; text-align: right; }
   .osm-attribution a { color: var(--clay); text-decoration: none; }
 
+  /* TBN 臺灣生物多樣性網絡 panel — inat skeleton, gold-tinted accents */
+  .tbn-panel { border: 1px solid var(--border-soft); background: rgba(226, 213, 178, 0.18); border-radius: 3px; padding: 12px; margin-bottom: 16px; }
+  .tbn-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .tbn-head-title { font-family: var(--serif); font-size: 13.5px; color: var(--moss); font-weight: 500; display: flex; align-items: center; gap: 6px; }
+  .tbn-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .tbn-controls select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 3px; background: rgba(255,255,255,0.6); font-family: var(--body); font-size: 12px; color: var(--ink); }
+  .tbn-controls .btn-mini { padding: 5px 10px; font-size: 11.5px; }
+  .tbn-status { font-family: var(--serif); font-size: 12.5px; color: var(--ink-soft); padding: 9px 12px; background: rgba(226, 213, 178, 0.45); border-radius: 3px; margin-bottom: 10px; line-height: 1.5; }
+  .tbn-status.error { background: var(--clay-pale); color: #7a3a1f; }
+  /* 取樣說明：必須看得見，不能只寫在文件裡——看報告的人看不到文件 */
+  .tbn-note { font-family: var(--serif); font-size: 12px; color: #5f4e16; background: var(--gold-pale); border-left: 3px solid var(--gold); padding: 8px 11px; border-radius: 3px; margin-bottom: 10px; line-height: 1.6; }
+  .tbn-groups { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+  .tbn-chip { font-family: var(--serif); font-size: 11px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,0.55); color: var(--ink-soft); cursor: pointer; transition: all 0.15s; }
+  .tbn-chip:hover { border-color: var(--moss-light); background: rgba(255,255,255,0.9); }
+  .tbn-chip.on { background: var(--moss-pale); border-color: var(--moss); color: var(--moss); font-weight: 500; }
+  .tbn-chip b { font-weight: 600; }
+  .tbn-results { display: flex; flex-direction: column; gap: 14px; max-height: 480px; overflow-y: auto; padding-right: 4px; }
+  .tbn-results::-webkit-scrollbar { width: 6px; }
+  .tbn-results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .tbn-group-head { font-family: var(--serif); font-size: 12.5px; color: var(--moss); margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px dashed var(--border-soft); display: flex; justify-content: space-between; }
+  .tbn-group-head em { font-style: italic; color: var(--moss-light); font-size: 11px; }
+  .tbn-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px; }
+  .tbn-item { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 6px 9px; border: 1px solid var(--border-soft); border-radius: 3px; background: rgba(255,255,255,0.5); transition: all 0.15s; }
+  .tbn-item:hover { background: rgba(255,255,255,0.85); border-color: var(--moss-light); }
+  .tbn-item.added { background: var(--moss-pale); border-color: var(--moss); }
+  .tbn-info { min-width: 0; }
+  .tbn-name { font-family: var(--serif); font-size: 12.5px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
+  .tbn-sci { font-family: var(--display); font-style: italic; font-size: 10.5px; color: var(--moss-light); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
+  .tbn-meta { font-size: 10px; color: var(--clay); font-family: var(--serif); margin-top: 2px; line-height: 1.5; }
+  .tbn-badges { display: inline-flex; gap: 3px; flex-wrap: wrap; margin-left: 5px; vertical-align: 1px; }
+  .tbn-badges:empty { display: none; }
+  .tbn-badge { font-family: var(--body); font-size: 9.5px; font-weight: 600; line-height: 1; padding: 2px 5px; border-radius: 8px; white-space: nowrap; cursor: help; }
+  /* 原生與外來是這個面板最主要的資訊：棲共生要分辨哪些物種屬於這塊地 */
+  .tbn-badge.native { background: var(--moss-pale); color: #2f4524; border: 1px solid var(--moss-light); }
+  .tbn-badge.alien { background: var(--clay-pale); color: #7a3a1f; border: 1px solid var(--clay-light); }
+  .tbn-badge.endemic { background: var(--gold-pale); color: #5f4e16; border: 1px solid var(--gold); }
+  .tbn-badge.protected { background: #fbe4da; color: #7a3a1f; border: 1px solid var(--clay); }
+  .tbn-badge.redlist { background: rgba(255,255,255,0.8); color: var(--ink-soft); border: 1px solid var(--border); }
+  .tbn-badge.blurred { background: var(--bg-alt); color: var(--ink-soft); border: 1px dashed var(--border); }
+  .tbn-add { background: var(--moss); color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-size: 14px; line-height: 1; transition: all 0.15s; padding: 0; font-weight: 600; }
+  .tbn-add:hover { background: var(--clay); transform: scale(1.15); }
+  .tbn-item.added .tbn-add { background: var(--moss-light); cursor: default; transform: none; }
+  .tbn-item.added .tbn-add::before { content: "✓"; }
+  .tbn-legend { font-size: 10.5px; color: var(--ink-soft); font-family: var(--serif); margin: 8px 0 0; line-height: 1.6; }
+  .tbn-legend .tbn-badge { cursor: default; display: inline-block; margin: 0 3px 0 0; }
+  .tbn-attribution { font-size: 10.5px; color: var(--moss-light); font-family: var(--serif); font-style: italic; margin-top: 10px; text-align: right; line-height: 1.6; }
+  .tbn-attribution a { color: var(--clay); text-decoration: none; }
+
   /* OSM detected land-use types — togglable chips */
   .osm-detected-panel { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
   .osm-detected-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; font-family: var(--serif); font-size: 12.5px; color: var(--moss); font-weight: 500; margin-bottom: 8px; }
@@ -556,6 +604,39 @@
       <p class="inat-attribution">
         資料來源 © <a href="https://www.inaturalist.org/" target="_blank" rel="noopener">iNaturalist</a> 貢獻者 ·
         CC BY-NC · 點選圖片可開啟該物種頁面
+      </p>
+    </div>
+
+    <!-- TBN 臺灣生物多樣性網絡 Panel -->
+    <!-- 與 iNaturalist 互補：iNaturalist 是公民科學觀察，TBN 彙整學術調查、標本與政府計畫，
+         而且每筆紀錄自帶原生／外來、保育等級、紅皮書類別——原生與外來正是棲共生要分辨的事。 -->
+    <div class="tbn-panel">
+      <div class="tbn-head">
+        <div class="tbn-head-title">🌾 TBN 臺灣生物多樣性網絡</div>
+        <div class="tbn-controls">
+          <select id="tbnRadius" title="搜尋半徑">
+            <option value="1">1 km</option>
+            <option value="3" selected>3 km</option>
+            <option value="5">5 km</option>
+            <option value="10">10 km</option>
+          </select>
+          <select id="tbnSort" title="排序">
+            <option value="count">依紀錄筆數</option>
+            <option value="native">原生優先</option>
+            <option value="status">保育等級優先</option>
+            <option value="name">依名稱</option>
+          </select>
+          <button class="btn-mini" id="tbnRefresh">🔄 查詢</button>
+        </div>
+      </div>
+      <div id="tbnStatus" class="tbn-status">📍 請先選擇基地位置，會自動載入該範圍的物種紀錄</div>
+      <div id="tbnNote" class="tbn-note" style="display:none"></div>
+      <div id="tbnGroups" class="tbn-groups"></div>
+      <div id="tbnResults" class="tbn-results"></div>
+      <p id="tbnLegend" class="tbn-legend" style="display:none"></p>
+      <p id="tbnAttribution" class="tbn-attribution">
+        資料來源 <a href="https://www.tbn.org.tw/" target="_blank" rel="noopener">TBN 臺灣生物多樣性網絡</a> ·
+        政府資料開放授權條款（OGDL-1.0）
       </p>
     </div>
 
@@ -978,6 +1059,30 @@
   let osmTimer = null;
   let osmLastSummary = null;
 
+  // ── TBN 臺灣生物多樣性網絡 ────────────────────────────────────
+  // 類群代碼 → 中英標籤。代碼送給 /api/tbn，中文標籤以回傳資料的 taxonGroup 為準，
+  // 這裡的只是後備顯示值（某個類群完全沒有紀錄時用得到）。
+  const TBN_GROUP_LABEL = {
+    birds: { zh: '鳥類', en: 'Birds' }, mammals: { zh: '哺乳類', en: 'Mammals' },
+    reptiles: { zh: '爬行類', en: 'Reptiles' }, amphibians: { zh: '兩棲類', en: 'Amphibians' },
+    fishes: { zh: '魚類', en: 'Fishes' }, butterflies: { zh: '蝶類', en: 'Butterflies' },
+    moths: { zh: '蛾類', en: 'Moths' }, dragonflies: { zh: '蜻蛉類', en: 'Dragonflies' },
+    beetles: { zh: '甲蟲類', en: 'Beetles' }, spiders: { zh: '蜘蛛類', en: 'Spiders' },
+    crustaceans: { zh: '蝦蟹類', en: 'Crustaceans' }, snailsshells: { zh: '蝸牛與貝類', en: 'Snails & shells' },
+    otherinsects: { zh: '其他昆蟲', en: 'Other insects' },
+    otherinvertebrates: { zh: '其他無脊椎', en: 'Other invertebrates' },
+    angiosperms: { zh: '被子植物', en: 'Angiosperms' }, gymnosperms: { zh: '裸子植物', en: 'Gymnosperms' },
+    ferns: { zh: '蕨類', en: 'Ferns' }, lycophytes: { zh: '石松類', en: 'Lycophytes' },
+    mosses: { zh: '苔蘚', en: 'Mosses' }, fungi: { zh: '真菌類', en: 'Fungi' },
+    chromista: { zh: '原藻類', en: 'Chromista' },
+  };
+  let tbnCache = {};
+  let tbnTimer = null;
+  let tbnSeq = 0, tbnCtl = null;
+  let tbnLastData = null;        // 切換語言時重繪用
+  let tbnGroupFilter = '';       // 類群篩選：只改變這裡顯示的卡片，不影響提示詞
+  let tbnLastSummary = null;
+
   // ============================================================
   // i18n · 雙語支援（中文 / English）
   // 設計：以中文原文為鍵。切換時走訪 DOM 文字節點與 placeholder/title 替換，
@@ -1359,6 +1464,7 @@
       if (typeof updatePrompt === 'function') updatePrompt();
       if (typeof inatLastData !== 'undefined' && inatLastData && typeof renderInat === 'function') renderInat(inatLastData);
       if (typeof osmLastData !== 'undefined' && osmLastData && typeof renderOsm === 'function') renderOsm(osmLastData, osmLastRadius);
+      if (typeof tbnLastData !== 'undefined' && tbnLastData && typeof renderTbn === 'function') renderTbn(tbnLastData);
     } catch (e) { console.warn('[i18n] re-render partial:', e); }
   }
 
@@ -1637,6 +1743,7 @@
     updatePrompt();
     debounceInat();
     debounceOsm();
+    debounceTbn();
   }
 
   // ========== iNaturalist data ==========
@@ -1960,7 +2067,7 @@
             state.species.push(displayName);
             speciesChip.render();
             updateQuickChips();
-            updateInatAddedState();
+            updateSpeciesAddedState();
             updatePrompt();
             toast(LANG==='en' ? `✅ Added "${displayName}"` : `✅ 已加入「${displayName}」`);
           });
@@ -1982,9 +2089,11 @@
     requestTaxonStatus(data.results);
   }
 
-  function updateInatAddedState() {
-    document.querySelectorAll('.inat-item').forEach(item => {
-      const btn = item.querySelector('.inat-add');
+  // 兩個面板（iNaturalist 與 TBN）的卡片都要跟著「已選物種」同步，
+  // 否則在一邊加入的物種，在另一邊看起來還沒加入。
+  function updateSpeciesAddedState() {
+    document.querySelectorAll('.inat-item, .tbn-item').forEach(item => {
+      const btn = item.querySelector('.inat-add, .tbn-add');
       const name = btn?.dataset.name;
       if (name && state.species.includes(name)) item.classList.add('added');
       else item.classList.remove('added');
@@ -1994,6 +2103,322 @@
   function debounceInat() {
     clearTimeout(inatTimer);
     inatTimer = setTimeout(() => loadInat(false), 1200);
+  }
+
+  // ========== TBN 臺灣生物多樣性網絡 ==========
+  // 為什麼要有這個面板（與 iNaturalist 不重複）：
+  //   iNaturalist 是公民科學觀察，TBN 彙整學術調查、館藏標本與政府計畫資料。
+  //   更重要的是 TBN 每筆紀錄自帶「原生／外來」、保育等級與紅皮書類別——
+  //   原生與外來正是棲共生在問的事（哪些物種屬於這塊地、哪些是外來入侵），
+  //   而 iNaturalist 與 TaiCOL 都不直接給這個欄位。
+  //
+  // 查詢走 /api/tbn（伺服器端代查）。TBN 不開放 CORS，瀏覽器不能直接打；
+  // 代查端點同時逐類群查詢並彙整，見 netlify/functions/tbn.mjs 的說明。
+
+  // 外來與原生的判斷只看 TBN 的 nativeness 欄位，不自己推論
+  function tbnNativeKind(nativeness) {
+    const v = String(nativeness || '');
+    if (!v) return '';
+    if (/^原生/.test(v)) return 'native';
+    if (/^外來|^境外/.test(v)) return 'alien';
+    return '';
+  }
+
+  // 紅皮書等級只標「有意義的那幾級」。暫無危機（LC）佔絕大多數，
+  // 每張卡片都掛一個 LC 只是雜訊，反而讓真正受脅的物種看不出來。
+  const TBN_REDLIST_SHOW = {
+    EX: { zh: '滅絕', en: 'EX' }, EW: { zh: '野外滅絕', en: 'EW' }, RE: { zh: '區域滅絕', en: 'RE' },
+    CR: { zh: '極危', en: 'CR' }, EN: { zh: '瀕危', en: 'EN' }, VU: { zh: '易危', en: 'VU' },
+    NT: { zh: '接近受脅', en: 'NT' }, DD: { zh: '資料不足', en: 'DD' },
+  };
+
+  function tbnBadges(s) {
+    const en = LANG === 'en';
+    const out = [];
+    const kind = tbnNativeKind(s.nativeness);
+    if (kind) {
+      const label = en ? (kind === 'native' ? 'Native' : 'Introduced') : s.nativeness;
+      const tip = en
+        ? `Nativeness per TBN: ${s.nativeness}${s.estab ? ` (establishment: ${s.estab})` : ''}`
+        : `TBN 記載的原生性：${s.nativeness}${s.estab ? `（建立狀態：${s.estab}）` : ''}`;
+      out.push(`<span class="tbn-badge ${kind}" title="${escapeHtml(tip)}">${escapeHtml(label)}</span>`);
+    }
+    if (s.endemic === true) {
+      out.push(`<span class="tbn-badge endemic" title="${escapeHtml(en ? 'Endemic to Taiwan (source: TBN)' : '臺灣特有（來源：TBN）')}">${en ? 'Endemic' : '特有'}</span>`);
+    }
+    if (s.protected) {
+      const short = String(s.protected).replace(/^第([一二三])級.*/, '保育$1').replace(/^文化資產.*/, '珍稀植物');
+      out.push(`<span class="tbn-badge protected" title="${escapeHtml((en ? 'Protected status: ' : '保育等級：') + s.protected + (en ? ' (source: TBN)' : '（來源：TBN）'))}">${escapeHtml(en ? 'Protected' : short)}</span>`);
+    }
+    const rl = s.redlist && TBN_REDLIST_SHOW[s.redlist];
+    if (rl) {
+      out.push(`<span class="tbn-badge redlist" title="${escapeHtml((en ? 'Taiwan Red List: ' : '臺灣紅皮書：') + (s.redlistFull || s.redlist))}">${en ? rl.en : rl.zh}</span>`);
+    }
+    // 座標被模糊化：敏感物種的位置本來就不該被當成精確點位讀
+    if (s.blurred) {
+      out.push(`<span class="tbn-badge blurred" title="${escapeHtml(en
+        ? `Location generalized by TBN${s.uncertainty ? ` (uncertainty up to ${s.uncertainty} m)` : ''} — treat the position as approximate`
+        : `TBN 已將位置模糊化${s.uncertainty ? `（誤差可達 ${s.uncertainty} 公尺）` : ''}，不可當成精確點位`)}">${en ? 'Generalized' : '位置模糊'}</span>`);
+    }
+    return out.join('');
+  }
+
+  function tbnSortSpecies(list, mode) {
+    const arr = list.slice();
+    const statusRank = s => (s.protected ? 0 : 1) * 10 + (TBN_REDLIST_SHOW[s.redlist] ? 0 : 1);
+    const byName = (a, b) => String(a.zh || a.sci || '').localeCompare(String(b.zh || b.sci || ''), 'zh-Hant');
+    if (mode === 'name') return arr.sort(byName);
+    if (mode === 'native') return arr.sort((a, b) =>
+      (tbnNativeKind(a.nativeness) === 'native' ? 0 : 1) - (tbnNativeKind(b.nativeness) === 'native' ? 0 : 1)
+      || (b.n - a.n) || byName(a, b));
+    if (mode === 'status') return arr.sort((a, b) => statusRank(a) - statusRank(b) || (b.n - a.n) || byName(a, b));
+    return arr.sort((a, b) => (b.n - a.n) || byName(a, b));   // 預設：依紀錄筆數
+  }
+
+  function renderTbnLegend(show) {
+    const el = document.getElementById('tbnLegend');
+    if (!el) return;
+    if (!show) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    const en = LANG === 'en';
+    el.innerHTML = en
+      ? `<span class="tbn-badge native">Native</span><span class="tbn-badge alien">Introduced</span> nativeness as recorded by TBN　<span class="tbn-badge endemic">Endemic</span> endemic to Taiwan　<span class="tbn-badge protected">Protected</span> Wildlife Conservation Act / Cultural Heritage Preservation Act　<span class="tbn-badge redlist">VU</span> Taiwan Red List (only threatened categories are shown; Least Concern is omitted)　<span class="tbn-badge blurred">Generalized</span> location generalized for a sensitive species<br>Hover a badge for details. For reference only; the official lists prevail.`
+      : `<span class="tbn-badge native">原生</span><span class="tbn-badge alien">外來</span>TBN 記載的原生性　<span class="tbn-badge endemic">特有</span>臺灣特有　<span class="tbn-badge protected">保育一</span>《野生動物保育法》／《文化資產保存法》　<span class="tbn-badge redlist">易危</span>臺灣紅皮書（只標受脅等級，暫無危機不標）　<span class="tbn-badge blurred">位置模糊</span>敏感物種的座標已被模糊化<br>滑鼠移到標籤上可看說明。僅供參考，以主管機關公告為準。`;
+    el.style.display = '';
+  }
+
+  function renderTbn(data) {
+    tbnLastData = data;
+    const en = LANG === 'en';
+    const status = document.getElementById('tbnStatus');
+    const noteEl = document.getElementById('tbnNote');
+    const groupsEl = document.getElementById('tbnGroups');
+    const container = document.getElementById('tbnResults');
+    container.innerHTML = '';
+    groupsEl.innerHTML = '';
+
+    const species = Array.isArray(data.species) ? data.species : [];
+    if (!species.length) {
+      status.classList.remove('error');
+      status.textContent = en
+        ? `No records in TBN within ${data.site.r} km of this point.`
+        : `TBN 在這個點半徑 ${data.site.r} 公里內沒有紀錄。`;
+      noteEl.style.display = 'none';
+      renderTbnLegend(false);
+      return;
+    }
+
+    const nf = n => Number(n || 0).toLocaleString('en-US');
+    const natives = species.filter(s => tbnNativeKind(s.nativeness) === 'native').length;
+    const aliens = species.filter(s => tbnNativeKind(s.nativeness) === 'alien').length;
+    const prot = species.filter(s => s.protected).length;
+    const endemics = species.filter(s => s.endemic === true).length;
+
+    status.classList.remove('error');
+    status.innerHTML = escapeHtml(en
+      ? `${nf(species.length)} taxa in the sample · ${nf(data.total)} records in TBN within ${data.site.r} km · `
+        + `${nf(natives)} native, ${nf(aliens)} introduced, ${nf(endemics)} endemic, ${nf(prot)} protected`
+      : `樣本中 ${nf(species.length)} 個分類群 · 半徑 ${data.site.r} 公里內 TBN 共 ${nf(data.total)} 筆紀錄 · `
+        + `原生 ${nf(natives)}、外來 ${nf(aliens)}、特有 ${nf(endemics)}、保育類 ${nf(prot)}`);
+
+    // 取樣說明：這句話必須看得見。清單是「TBN 回傳的前 N 筆」，
+    // 不是完整名錄，也不能用來判斷哪些物種最常見。
+    if (Array.isArray(data.notes) && data.notes.length && data.sample && data.sample.complete === false) {
+      noteEl.textContent = (en ? '⚠️ Sampled list — ' : '⚠️ 這是取樣清單——') + data.notes.join(en ? ' ' : '');
+      noteEl.style.display = '';
+    } else {
+      noteEl.style.display = 'none';
+    }
+
+    // 類群摘要：可點選篩選（只改變這裡顯示的卡片，提示詞固定使用全部類群）
+    const groups = (data.groups || []).filter(g => g.species > 0);
+    if (groups.length > 1) {
+      const all = document.createElement('button');
+      all.type = 'button';
+      all.className = 'tbn-chip' + (tbnGroupFilter ? '' : ' on');
+      all.innerHTML = `<b>${en ? 'All' : '全部'}</b> ${nf(species.length)}`;
+      all.addEventListener('click', () => { tbnGroupFilter = ''; renderTbn(data); });
+      groupsEl.appendChild(all);
+      groups.forEach(g => {
+        const lbl = g.zh || (TBN_GROUP_LABEL[g.code] && (en ? TBN_GROUP_LABEL[g.code].en : TBN_GROUP_LABEL[g.code].zh)) || g.code;
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'tbn-chip' + (tbnGroupFilter === g.code ? ' on' : '');
+        chip.innerHTML = `<b>${escapeHtml(lbl)}</b> ${nf(g.species)}`;
+        chip.title = en
+          ? `${nf(g.species)} taxa in the sample, from ${nf(g.sampled)} of ${nf(g.total)} records in TBN`
+          : `樣本中 ${nf(g.species)} 個分類群，取自 TBN 的 ${nf(g.total)} 筆紀錄中的 ${nf(g.sampled)} 筆`;
+        chip.addEventListener('click', () => { tbnGroupFilter = tbnGroupFilter === g.code ? '' : g.code; renderTbn(data); });
+        groupsEl.appendChild(chip);
+      });
+    }
+
+    const shown = tbnGroupFilter ? species.filter(s => s.groupCode === tbnGroupFilter) : species;
+    const sortMode = (document.getElementById('tbnSort') || {}).value || 'count';
+    const sorted = tbnSortSpecies(shown, sortMode);
+
+    const items = document.createElement('div');
+    items.className = 'tbn-items';
+    sorted.forEach(s => {
+      const displayName = s.zh || s.sci;
+      if (!displayName) return;
+      const item = document.createElement('div');
+      item.className = 'tbn-item' + (state.species.includes(displayName) ? ' added' : '');
+      item.dataset.sci = s.sci || '';
+
+      const meta = [];
+      meta.push(en ? `${s.n} rec.` : `${s.n} 筆`);
+      if (s.years) meta.push(s.years[0] === s.years[1] ? String(s.years[0]) : `${s.years[0]}–${s.years[1]}`);
+      if (s.famZh || s.famSci) meta.push(escapeHtml(en ? (s.famSci || s.famZh) : (s.famZh || s.famSci)));
+
+      item.innerHTML = `
+        <div class="tbn-info">
+          <div class="tbn-name"></div>
+          <div class="tbn-sci"></div>
+          <div class="tbn-meta">${meta.join(' · ')}<span class="tbn-badges"></span></div>
+        </div>
+        <button class="tbn-add" title="${escapeHtml(en ? 'Add to focal species' : '加入焦點物種')}">＋</button>
+      `;
+      item.querySelector('.tbn-name').textContent = displayName;
+      if (s.sci && s.sci !== displayName) item.querySelector('.tbn-sci').textContent = s.sci;
+      item.querySelector('.tbn-badges').innerHTML = tbnBadges(s);
+
+      const btn = item.querySelector('.tbn-add');
+      btn.dataset.name = displayName;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (state.species.includes(displayName)) return;
+        state.species.push(displayName);
+        speciesChip.render();
+        updateQuickChips();
+        updateSpeciesAddedState();
+        updatePrompt();
+        toast(en ? `✅ Added "${displayName}"` : `✅ 已加入「${displayName}」`);
+      });
+      items.appendChild(item);
+    });
+    container.appendChild(items);
+
+    // 出處：OGDL-1.0 要求標示來源，而且 Jake 的論文需要可引用的資料集名稱
+    const attr = document.getElementById('tbnAttribution');
+    if (attr) {
+      const ds = (data.datasets || []).length;
+      const lic = (data.licenses || []).join('、');
+      attr.innerHTML = (en
+        ? `Data from <a href="https://www.tbn.org.tw/" target="_blank" rel="noopener">TBN (Taiwan Biodiversity Network)</a> · OGDL-1.0`
+        : `資料來源 <a href="https://www.tbn.org.tw/" target="_blank" rel="noopener">TBN 臺灣生物多樣性網絡</a> · 政府資料開放授權條款（OGDL-1.0）`)
+        + (ds ? escapeHtml(en ? ` · ${ds} dataset${ds > 1 ? 's' : ''}${lic ? ` · ${lic}` : ''}` : ` · 共 ${ds} 個資料集${lic ? ` · ${lic}` : ''}`) : '');
+      if (ds) {
+        attr.title = (data.datasets || []).slice(0, 12)
+          .map(d => `${d.name}${d.publisher ? `（${d.publisher}）` : ''} — ${d.n}`).join('\n');
+      }
+    }
+
+    renderTbnLegend(true);
+    tbnLastSummary = buildTbnSummary(data);
+    updatePrompt();
+  }
+
+  // 送進提示詞的摘要。取樣的性質要跟著資料一起走，否則分析會把取樣清單當成完整名錄。
+  function buildTbnSummary(data) {
+    const species = Array.isArray(data.species) ? data.species : [];
+    if (!species.length) return null;
+    const pick = s => ({
+      name: s.zh || s.sci, sci: s.sci, n: s.n, group: s.group,
+      nativeness: s.nativeness, endemic: s.endemic === true,
+      protected: s.protected || null, redlist: TBN_REDLIST_SHOW[s.redlist] ? s.redlist : null,
+    });
+    return {
+      fetchedAt: Date.now(),
+      lat: data.site && data.site.lat,
+      lon: data.site && data.site.lon,
+      r: data.site && data.site.r,
+      total: data.total,
+      taxa: species.length,
+      sampled: data.sample && data.sample.records,
+      perGroup: data.sample && data.sample.perGroup,
+      complete: !!(data.sample && data.sample.complete),
+      natives: species.filter(s => tbnNativeKind(s.nativeness) === 'native').length,
+      aliens: species.filter(s => tbnNativeKind(s.nativeness) === 'alien').length,
+      endemics: species.filter(s => s.endemic === true).length,
+      // 保育類與受脅物種整份帶進提示詞（數量少、對設計最關鍵）
+      ofConcern: species.filter(s => s.protected || TBN_REDLIST_SHOW[s.redlist]).slice(0, 30).map(pick),
+      alienList: species.filter(s => tbnNativeKind(s.nativeness) === 'alien')
+        .sort((a, b) => b.n - a.n).slice(0, 15).map(pick),
+      top: tbnSortSpecies(species, 'count').slice(0, 20).map(pick),
+      groups: (data.groups || []).filter(g => g.species > 0)
+        .map(g => ({ zh: g.zh || g.code, total: g.total, species: g.species })),
+      datasets: (data.datasets || []).slice(0, 8).map(d => d.name),
+    };
+  }
+
+  async function loadTbn(force = false) {
+    const status = document.getElementById('tbnStatus');
+    const noteEl = document.getElementById('tbnNote');
+    const results = document.getElementById('tbnResults');
+    const groupsEl = document.getElementById('tbnGroups');
+    const en = LANG === 'en';
+
+    if (state.lat == null) {
+      status.textContent = en
+        ? '📍 Select a site location first — species records load automatically'
+        : '📍 請先選擇基地位置，會自動載入該範圍的物種紀錄';
+      status.classList.remove('error');
+      results.innerHTML = '';
+      groupsEl.innerHTML = '';
+      noteEl.style.display = 'none';
+      renderTbnLegend(false);
+      return;
+    }
+
+    const radius = parseInt(document.getElementById('tbnRadius').value, 10);
+    const cacheKey = `${state.lat.toFixed(4)}_${state.lon.toFixed(4)}_${radius}`;
+    if (!force && tbnCache[cacheKey]) { renderTbn(tbnCache[cacheKey]); return; }
+
+    status.classList.remove('error');
+    status.textContent = en
+      ? '⏳ Querying TBN across all 21 taxon groups… (5–15s)'
+      : '⏳ 正在查詢 TBN 的 21 個類群…（約 5–15 秒）';
+    results.innerHTML = '';
+    groupsEl.innerHTML = '';
+    noteEl.style.display = 'none';
+    renderTbnLegend(false);
+
+    // 只採用最新一次查詢：位置或半徑在查詢期間改變時取消前一次
+    const seq = ++tbnSeq;
+    if (tbnCtl) tbnCtl.abort();
+    const ac = tbnCtl = new AbortController();
+    const timeoutId = setTimeout(() => ac.abort(), 30000);
+    try {
+      const res = await fetch('/api/tbn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lat: state.lat, lon: state.lon, r: radius }),
+        signal: ac.signal,
+      });
+      const body = await res.json().catch(() => null);
+      if (seq !== tbnSeq) return;                     // 期間已有新的查詢
+      if (!res.ok || !body || body.error) {
+        throw new Error((body && body.error) || ('HTTP ' + res.status));
+      }
+      tbnCache[cacheKey] = body;
+      renderTbn(body);
+    } catch (e) {
+      if (seq !== tbnSeq) return;
+      if (e && (e.name === 'AbortError' || /abort/i.test(String(e)))) return;   // 被新查詢取消，不是錯誤
+      status.classList.add('error');
+      status.textContent = en
+        ? `⚠️ TBN query failed: ${String(e.message || e)} — the other panels are unaffected.`
+        : `⚠️ TBN 查詢失敗：${String(e.message || e)}——其他面板不受影響。`;
+      tbnLastSummary = null;
+      updatePrompt();
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  function debounceTbn() {
+    clearTimeout(tbnTimer);
+    tbnTimer = setTimeout(() => loadTbn(false), 1200);
   }
 
   // ========== OSM Overpass data ==========
@@ -2393,6 +2818,10 @@ out tags center;`;
     inatLastSummary = null;
     inatSummarySeq++;   // 舊基地進行中的全部類群查詢不再寫回
     osmLastSummary = null;
+    tbnLastSummary = null;
+    tbnLastData = null;
+    tbnGroupFilter = '';
+    tbnSeq++;           // 舊基地進行中的 TBN 查詢不再寫回
 
     // 更新 UI
     document.getElementById('locname').value = '';
@@ -2403,7 +2832,7 @@ out tags center;`;
     if (habitatNeedsChip) habitatNeedsChip.render();
     if (activityChip) activityChip.render();
     updateQuickChips();
-    updateInatAddedState();
+    updateSpeciesAddedState();
 
     // 顯示帶復原按鈕的 toast
     showUndoToast('🔄 新位置，已清空舊基地的物種與條件');
@@ -2437,7 +2866,7 @@ out tags center;`;
       habitatNeedsChip.render();
       activityChip.render();
       updateQuickChips();
-      updateInatAddedState();
+      updateSpeciesAddedState();
       updatePrompt();
       el.classList.remove('show');
       lastClearedSnapshot = null;
@@ -2485,7 +2914,7 @@ out tags center;`;
           state[stateKey].splice(i, 1);
           render();
           updateQuickChips();
-          if (stateKey === 'species') updateInatAddedState();
+          if (stateKey === 'species') updateSpeciesAddedState();
           if (stateKey === 'conditions') updateOsmDetectedChipsState();
           updatePrompt();
         };
@@ -2507,7 +2936,7 @@ out tags center;`;
       if (full && !added) toast(t('⚠️ 未來使用活動最多 10 項（報告每項一列）'), 3500);
       render();
       updateQuickChips();
-      if (stateKey === 'species') updateInatAddedState();
+      if (stateKey === 'species') updateSpeciesAddedState();
       if (stateKey === 'conditions') updateOsmDetectedChipsState();
       updatePrompt();
       return added;
@@ -2535,7 +2964,7 @@ out tags center;`;
           state[stateKey].pop();
           render();
           updateQuickChips();
-          if (stateKey === 'species') updateInatAddedState();
+          if (stateKey === 'species') updateSpeciesAddedState();
           if (stateKey === 'conditions') updateOsmDetectedChipsState();
           updatePrompt();
         }
@@ -2578,7 +3007,7 @@ out tags center;`;
           state[stateKey].push(val);
           chipByCat(cat).render();
           updateQuickChips();
-          if (cat === 'species') updateInatAddedState();
+          if (cat === 'species') updateSpeciesAddedState();
           if (cat === 'conditions') updateOsmDetectedChipsState();
           updatePrompt();
         };
@@ -2612,7 +3041,7 @@ out tags center;`;
         state.species = combo.items.map(termLabel);
         speciesChip.render();
         updateQuickChips();
-        updateInatAddedState();
+        updateSpeciesAddedState();
         updatePrompt();
         toast(LANG==='en' ? `Applied preset "${comboLabel(combo)}"` : `已套用組合「${combo.name}」`);
       };
@@ -2836,6 +3265,57 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
       }
     }
 
+    // TBN 物種脈絡。原生／外來是棲共生最核心的判斷依據，所以排在最前面；
+    // 保育類與受脅物種整份帶進去（數量少、對設計最關鍵）。
+    // 取樣的性質必須明寫，否則分析會把取樣清單當成完整名錄，寫出「基地僅有 N 種」這類錯誤結論。
+    let tbnContext = '';
+    if (tbnLastSummary && state.lat != null) {
+      const t = tbnLastSummary;
+      const nf = v => Number(v || 0).toLocaleString('en-US');
+      const one = x => `${x.name}${x.sci && x.sci !== x.name ? ` (${x.sci})` : ''}`
+        + (x.nativeness ? ` ${en ? `[${/^原生/.test(x.nativeness) ? 'native' : 'introduced'}]` : `［${x.nativeness}］`}` : '')
+        + (x.endemic ? (en ? ' [endemic]' : '［臺灣特有］') : '')
+        + (x.protected ? (en ? ` [protected: ${x.protected}]` : `［保育：${x.protected}］`) : '')
+        + (x.redlist ? (en ? ` [red list: ${x.redlist}]` : `［紅皮書：${x.redlist}］`) : '')
+        + ` — ${x.n}${en ? ' rec.' : ' 筆'}`;
+      const L = [];
+      L.push(en
+        ? `${nf(t.total)} occurrence records in TBN within ${t.r} km; ${nf(t.taxa)} taxa appear in the list below`
+        : `半徑 ${t.r} km 內 TBN 共 ${nf(t.total)} 筆出現紀錄；下列清單含 ${nf(t.taxa)} 個分類群`);
+      L.push(en
+        ? `Of those taxa: ${nf(t.natives)} recorded as native, ${nf(t.aliens)} as introduced, ${nf(t.endemics)} endemic to Taiwan`
+        : `其中原生 ${nf(t.natives)}、外來 ${nf(t.aliens)}、臺灣特有 ${nf(t.endemics)}`);
+      if (!t.complete) {
+        // 這一段是整個 TBN 脈絡最重要的一句話
+        L.push(en
+          ? `⚠️ SAMPLED LIST — not a complete inventory. Up to ${t.perGroup} records were taken per taxon group (${nf(t.sampled)} records in all) out of ${nf(t.total)}, and they are the first records TBN returned, not a random sample. You may state that these taxa are recorded at the site; you may NOT state that these are the only taxa present, nor infer which are most common, nor give the taxon count as the site's species richness. The record totals per group below are TBN's own full-range counts and are accurate.`
+          : `⚠️ 這是取樣清單，不是完整名錄。每個類群最多取 ${t.perGroup} 筆（合計 ${nf(t.sampled)} 筆），取自全部 ${nf(t.total)} 筆，而且取的是 TBN 回傳的前幾筆、不是隨機樣本。可以說「這些分類群在基地有紀錄」，但不可以說「基地只有這些物種」，不可以據此判斷何者最常見，也不可以把分類群數量當成基地的物種豐富度。下列各類群的紀錄筆數取自 TBN 的完整統計，那些數字是準的。`);
+      }
+      if (t.groups && t.groups.length) {
+        L.push((en ? 'Records by taxon group (TBN full counts): ' : '各類群紀錄筆數（TBN 完整統計）：')
+          + t.groups.slice(0, 21).map(g => `${g.zh} ${nf(g.total)}`).join(sep));
+      }
+      if (t.ofConcern && t.ofConcern.length) {
+        L.push((en ? `Protected or red-listed taxa in the sample (${t.ofConcern.length}):` : `樣本中的保育類與紅皮書受脅物種（${t.ofConcern.length} 個）：`)
+          + '\n' + t.ofConcern.map((x, i) => `  ${i + 1}. ${one(x)}`).join('\n'));
+      }
+      if (t.alienList && t.alienList.length) {
+        L.push((en ? `Introduced taxa in the sample (most-recorded first):` : `樣本中的外來種（依紀錄筆數）：`)
+          + '\n' + t.alienList.map((x, i) => `  ${i + 1}. ${one(x)}`).join('\n'));
+      }
+      if (t.top && t.top.length) {
+        L.push((en ? 'Most-recorded taxa in the sample:' : '樣本中紀錄筆數最多的分類群：')
+          + '\n' + t.top.map((x, i) => `  ${i + 1}. ${one(x)}`).join('\n'));
+      }
+      tbnContext = (en
+        ? `\n\n🌾 TBN SPECIES RECORDS (Taiwan Biodiversity Network · radius ${t.r} km)\n`
+        : `\n\n🌾 TBN 物種紀錄（臺灣生物多樣性網絡 · 半徑 ${t.r} km）\n`) + L.join('\n');
+      const dsT = captureDatasets().tbn;
+      if (dsT) tbnContext += en
+        ? `\nNativeness, endemism and conservation status are as recorded by TBN; for reference only, the official lists prevail. If you use this list, cite it in the text as (Taiwan Biodiversity Network, n.d.) and copy this entry into the references unchanged:\n${datasetRefText('tbn', dsT, true)}`
+        : `\n原生性、特有性與保育等級均依 TBN 記載，僅供參考，以主管機關公告為準。若引用上列資料，行內引用寫（臺灣生物多樣性網絡，無日期），並將下列文獻原樣列入參考文獻：\n${datasetRefText('tbn', dsT, false)}`;
+    }
+
     // 剖面模板只送出被選中的 ≤3 個（代碼與 renderCrossSections 接受的完全一致）
     const picked = pickXsecTemplates(state.conditions);
     const metaParts = [coordStr, state.locationName, today].filter(Boolean);
@@ -2868,7 +3348,7 @@ Today's date: ${today}
 ${species}
 
 🌳 SITE CONDITIONS
-${conditions}${habitatNeedsStr}${activitiesStr}${special}${osmContext}${inatContext}${inatCite}
+${conditions}${habitatNeedsStr}${activitiesStr}${special}${osmContext}${inatContext}${inatCite}${tbnContext}
 
 📋 REPORT STRUCTURE (in this order; use the section numbers and names given)
 
@@ -2887,7 +3367,7 @@ ${reportRulesEn({ act: acts.length > 0, nAct: acts.length })}`;
 ${species}
 
 🌳 基地條件
-${conditions}${habitatNeedsStr}${activitiesStr}${special}${osmContext}${inatContext}${inatCite}
+${conditions}${habitatNeedsStr}${activitiesStr}${special}${osmContext}${inatContext}${inatCite}${tbnContext}
 
 📋 報告結構（依序輸出；各節標題的編號與名稱照列）
 
@@ -3135,7 +3615,7 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
     habitatNeedsChip.render();
     activityChip.render();
     updateQuickChips();
-    updateInatAddedState();
+    updateSpeciesAddedState();
     updateOsmDetectedChipsState();
     updatePrompt();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -3218,6 +3698,10 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
     inatLastData = null;   // 切換介面語言時不再重繪舊基地的卡片
     inatSummarySeq++;   // 進行中的全部類群查詢不再寫回
     osmLastSummary = null;
+    tbnLastSummary = null;
+    tbnLastData = null;
+    tbnGroupFilter = '';
+    tbnSeq++;
     document.getElementById('lat').value = '';
     document.getElementById('lon').value = '';
     document.getElementById('locname').value = '';
@@ -3242,7 +3726,7 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
     habitatNeedsChip.render();
     activityChip.render();
     updateQuickChips();
-    updateInatAddedState();
+    updateSpeciesAddedState();
     updateOsmDetectedChipsState();
     updatePrompt();
     toast(t('🗑 表單已重設'));
@@ -6059,6 +6543,13 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     if (o && (o.protectedCount || o.waterCount || o.forestCount || o.settlementCount || o.trailCount || o.naturalCount)) {
       ds.osm = { lat, lon, radius: +o.radius || null, total: +o.total || 0, at: o.fetchedAt || null };
     }
+    const t = tbnLastSummary;
+    if (t && t.taxa) {
+      ds.tbn = { lat, lon, radius: +t.r || null, total: +t.total || 0, taxa: +t.taxa || 0,
+        perGroup: +t.perGroup || 0, complete: !!t.complete, at: t.fetchedAt || null,
+        // 提示詞所附的物種名單（剖面圖伴生物種的依據之一）
+        names: (t.top || []).flatMap(x => [x.name, x.sci]).filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 80)) };
+    }
     return ds;
   }
   // 資料集的網頁連結（讀者可重現）與 API 查詢網址（逐字記錄本工具實際送出的查詢條件）
@@ -6071,6 +6562,9 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       (i.quality === 'research' ? '&quality_grade=research' : '') + (i.taxon ? `&iconic_taxa=${encodeURIComponent(i.taxon)}` : ''));
   }
   const osmWebUrl = o => safeHref(`https://www.openstreetmap.org/?mlat=${o.lat}&mlon=${o.lon}#map=14/${o.lat}/${o.lon}`);
+  // TBN：讀者可自行重現的查詢網址（不分類群的同一圓形範圍，其 meta.total 即報告中的總筆數）
+  const tbnApiUrl = t => safeHref(`https://www.tbn.org.tw/api/v26/occurrence?circle=`
+    + encodeURIComponent(`${(+t.lon).toFixed(5)} ${(+t.lat).toFixed(5)},${t.radius || 1}`) + `&limit=1`);
   // APA 7：內容會變動、無存檔版本的資料庫 → 日期寫 n.d.／無日期，並加擷取日期（Retrieved Month Day, Year, from URL）
   const EN_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   function datasetRefText(kind, d, en) {
@@ -6083,6 +6577,16 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       return en
         ? `iNaturalist. (n.d.). [Species counts of ${grade}observations within ${d.radius} km of ${c}] [Data set]. Retrieved ${EN_MONTHS[M - 1]} ${D}, ${Y}, from ${inatWebUrl(d)} [Database]`
         : `iNaturalist（無日期）。［以 ${c} 為中心半徑 ${d.radius} km 之${grade}觀察物種統計］［資料集］。${Y} 年 ${M} 月 ${D} 日，取自 ${inatWebUrl(d)}［資料庫］`;
+    }
+    if (kind === 'tbn') {
+      // 清單是取樣而來，參考文獻的描述也要說清楚，不能只寫「物種清單」
+      const how = d.complete
+        ? (en ? `all ${d.total} occurrence records` : `全部 ${d.total} 筆出現紀錄`)
+        : (en ? `a sample of ${d.total} occurrence records, up to ${d.perGroup} per taxon group`
+              : `${d.total} 筆出現紀錄之取樣（每類群最多 ${d.perGroup} 筆）`);
+      return en
+        ? `Taiwan Biodiversity Network. (n.d.). [${d.taxa} taxa within ${d.radius} km of ${c}, from ${how}] [Data set]. Retrieved ${EN_MONTHS[M - 1]} ${D}, ${Y}, from ${tbnApiUrl(d)} [Database]`
+        : `臺灣生物多樣性網絡（無日期）。［以 ${c} 為中心半徑 ${d.radius} km 之 ${d.taxa} 個分類群，取自${how}］［資料集］。${Y} 年 ${M} 月 ${D} 日，取自 ${tbnApiUrl(d)}［資料庫］`;
     }
     return en
       ? `OpenStreetMap contributors. (n.d.). [Environmental features within ${d.radius} km of ${c}, queried via the Overpass API] [Data set]. Retrieved ${EN_MONTHS[M - 1]} ${D}, ${Y}, from ${osmWebUrl(d)} [Database]`
@@ -9495,7 +9999,7 @@ ${block}`;
   // ========== About & Feedback ==========
   // 將此處 email 改成您自己的（接收回饋用）
   const FEEDBACK_EMAIL = 'cycland@ntu.edu.tw';
-  const APP_VERSION = 'v1.37'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
+  const APP_VERSION = 'v1.38'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
   document.querySelectorAll('.app-version').forEach(el => { el.textContent = APP_VERSION; });
 
   function openAboutModal() {
@@ -9805,8 +10309,10 @@ ${block}`;
     try{
       var inatSel=document.getElementById('inatRadius');
       var osmSel=document.getElementById('osmRadius');
+      var tbnSel=document.getElementById('tbnRadius');
       if(inatSel) inatSel.value=String(healsPickRadius(center[0],center[1],s.boundary,[1,2,5,10,20]));
       if(osmSel)  osmSel.value =String(healsPickRadius(center[0],center[1],s.boundary,[1,2,5]));
+      if(tbnSel)  tbnSel.value =String(healsPickRadius(center[0],center[1],s.boundary,[1,3,5,10]));
     }catch(e){ console.warn('[heals] radius pick failed', e); }
     try{ state.healsSiteGeo = healsToGeoJSON(s.boundary); }catch(_){ state.healsSiteGeo=null; }
     // 預填地點名稱（不覆蓋使用者已輸入內容）
@@ -10018,6 +10524,11 @@ ${block}`;
     document.getElementById('osmRefresh').addEventListener('click', () => loadOsm(true));
     document.getElementById('osmRadius').addEventListener('change', () => loadOsm(false));
 
+    // TBN controls。排序只改變排列，不必重新查詢，所以直接重繪已載入的資料。
+    document.getElementById('tbnRefresh').addEventListener('click', () => loadTbn(true));
+    document.getElementById('tbnRadius').addEventListener('change', () => { tbnGroupFilter = ''; loadTbn(false); });
+    document.getElementById('tbnSort').addEventListener('change', () => { if (tbnLastData) renderTbn(tbnLastData); });
+
     // Claude API analysis (Step 6)
     setupApiKeyUI();
     document.getElementById('analyzeBtn').addEventListener('click', callClaudeAPI);
@@ -10081,6 +10592,7 @@ ${block}`;
     updatePrompt();
     debounceInat();
     debounceOsm();
+    debounceTbn();
   }
 
   if (document.readyState === 'loading') {

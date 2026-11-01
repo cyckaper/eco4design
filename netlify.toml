@@ -10,9 +10,14 @@
 [build.environment]
   NODE_VERSION = "20"
 
-# PDF 內文抽取放 Netlify Function（Node 執行環境，秒級 CPU）而不是 Edge Function：
-# Edge 每次請求只有 50 ms CPU，而 pdf.js 解析一份報告要 100 ms 上下，
-# 硬塞進 Edge 的結果是連續撞上限（實測曾衝到 73 ms，超支會中止整個請求）。
+# Netlify Functions（Node 執行環境，秒級 CPU）。路由寫在各檔案自己的
+# `export const config = { path }`，不必在這裡逐一列出：
+#   /api/pdf-text  PDF 內文抽取（pdf-text.mjs）
+#   /api/tbn       TBN 臺灣生物多樣性網絡物種查詢（tbn.mjs）
+#
+# 這兩件事放 Function 而不是 Edge Function，都是同一個原因：
+# Edge 每次請求只有 50 ms CPU。pdf.js 解析一份報告要 100 ms 上下（實測曾衝到 73 ms，
+# 超支會中止整個請求）；TBN 要 JSON.parse 約 3 MB、彙整兩千多筆各 64 欄的紀錄，同樣在天花板上。
 [functions]
   directory = "netlify/functions"
 
