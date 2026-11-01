@@ -2758,12 +2758,18 @@ function pdfQuality(text, rate) {
   return null;
 }
 
+// 一次掃出所有 "N 0 obj" 的位置。原本為每個字型各做一次全文正規式，
+// 實測 CPU 衝到 73 ms（上限 40 ms）——超支會害整個請求被平台中止，不只這一筆。
+function pdfObjIndex(latin) {
+  const idx = new Map();
+  for (const m of latin.matchAll(/(\d{1,7})\s+0\s+obj\b/g)) if (!idx.has(m[1])) idx.set(m[1], m.index);
+  return idx;
+}
+
 // 依物件編號找出它的串流範圍與濾鏡
-function pdfObjStream(latin, num) {
-  const re = new RegExp('(?:^|[^0-9])' + num + '\\s+0\\s+obj\\b');
-  const m = re.exec(latin);
-  if (!m) return null;
-  const from = m.index;
+function pdfObjStream(latin, num, idx) {
+  const from = idx.get(String(num));
+  if (from === undefined) return null;
   const s = latin.indexOf('stream', from);
   if (s < 0 || s - from > 2000) return null;
   let a = s + 6;
@@ -2794,11 +2800,16 @@ async function pdfBodyText(bytes, ctx) {
   const toUni = timed(ctx, () => {
     const nums = new Set();
     for (const m of latin.matchAll(/\/ToUnicode\s+(\d+)\s+0\s+R/g)) nums.add(m[1]);
-    return [...nums].slice(0, 8);
+    return [...nums].slice(0, 6);
   });
+  // 只有真的有 /ToUnicode 參照時才建索引（PDF 1.5+ 的字型字典多在壓縮物件串流裡，
+  // 那種情況這裡掃不到，索引也就不必建）
+  const objIdx = toUni.length ? timed(ctx, () => pdfObjIndex(latin)) : null;
   for (const num of toUni) {
-    if (ctx.cpuMs > ctx.cpuBudgetMs) break;
-    const st = timed(ctx, () => pdfObjStream(latin, num));
+    // 留一半預算給內容串流：ToUnicode 這一段吃光預算，內容就一個都解不到
+    // （實測 inflated 0、contents 0）
+    if (ctx.cpuMs > ctx.cpuBudgetMs * 0.5) break;
+    const st = timed(ctx, () => pdfObjStream(latin, num, objIdx));
     if (!st) continue;
     const raw = await pdfApplyFilters(slice.subarray(st.a, st.b), st.filters, ctx);
     if (!raw) continue;
