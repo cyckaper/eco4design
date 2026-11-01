@@ -8792,7 +8792,13 @@ ${block}`;
       kind: { abstract: '摘要', page: '網頁內文' },
       cols: ['來源', '引用句', '結果', '說明'],
       none: '無法取得摘要或內文、未比對的來源',
-      noneWhy: { pdf: 'PDF 檔，無法自動讀取', blocked_403: '網站拒絕自動存取', timeout: '連線逾時', deadline: '超過時間上限', no_abstract: '出版頁面沒有摘要', no_text: '頁面沒有可讀內文', not_found: '書目資料庫沒有摘要', rate_limited: '網站限流' },
+      noneWhy: { pdf: 'PDF 檔，無法自動讀取',
+        pdf_no_text: 'PDF 沒有可取出的文字（可能是掃描影像）',
+        pdf_short: 'PDF 取出的文字過少',
+        pdf_decode: 'PDF 的文字編碼無法解讀',
+        pdf_garbled: 'PDF 取出的文字無法辨識（未採用，以免誤判）',
+        pdf_cmap_conflict: 'PDF 的字型對照表互相衝突（未採用，以免誤判）',
+        blocked_403: '網站拒絕自動存取', timeout: '連線逾時', deadline: '超過時間上限', no_abstract: '出版頁面沒有摘要', no_text: '頁面沒有可讀內文', not_found: '書目資料庫沒有摘要', rate_limited: '網站限流' },
       noneOther: '無法取得',
       extra: n => `另有 ${n} 句未比對（每個來源最多比對 ${SUP_MAX_PER_SOURCE} 句），請人工核對。`,
       mark: { abstract: '［⚠ 與所引來源摘要不符］', page: '［⚠ 與所引來源內文不符］' },
@@ -8813,7 +8819,13 @@ ${block}`;
       kind: { abstract: 'abstract', page: 'web page text' },
       cols: ['Source', 'Citing sentence', 'Result', 'Note'],
       none: 'Sources whose abstract or text could not be retrieved (not checked)',
-      noneWhy: { pdf: 'PDF file, cannot be read automatically', blocked_403: 'site refused automated access', timeout: 'timed out', deadline: 'time limit reached', no_abstract: 'publisher page has no abstract', no_text: 'page has no readable text', not_found: 'no abstract in the bibliographic databases', rate_limited: 'site rate-limited' },
+      noneWhy: { pdf: 'PDF file, cannot be read automatically',
+        pdf_no_text: 'the PDF has no extractable text (it may be a scan)',
+        pdf_short: 'too little text could be extracted from the PDF',
+        pdf_decode: 'the PDF text encoding could not be read',
+        pdf_garbled: 'the text extracted from the PDF was not recognisable, so it was not used',
+        pdf_cmap_conflict: 'the PDF font maps conflict, so the text was not used',
+        blocked_403: 'site refused automated access', timeout: 'timed out', deadline: 'time limit reached', no_abstract: 'publisher page has no abstract', no_text: 'page has no readable text', not_found: 'no abstract in the bibliographic databases', rate_limited: 'site rate-limited' },
       noneOther: 'not retrieved',
       extra: n => `${n} more sentence(s) were not checked (at most ${SUP_MAX_PER_SOURCE} per source); check them by hand.`,
       mark: { abstract: '[⚠ conflicts with the cited abstract]', page: '[⚠ conflicts with the cited page]' },
@@ -9471,7 +9483,7 @@ ${block}`;
   // ========== About & Feedback ==========
   // 將此處 email 改成您自己的（接收回饋用）
   const FEEDBACK_EMAIL = 'cycland@ntu.edu.tw';
-  const APP_VERSION = 'v1.35'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
+  const APP_VERSION = 'v1.36'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
   document.querySelectorAll('.app-version').forEach(el => { el.textContent = APP_VERSION; });
 
   function openAboutModal() {

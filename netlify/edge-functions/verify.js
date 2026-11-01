@@ -2556,13 +2556,233 @@ async function absFromSemanticScholar(doi, ctx) {
   return t.length >= minLen(t, ABS_MIN_CHARS, ABS_MIN_CHARS_CJK) ? { text: t, src: 'Semantic Scholar' } : null;
 }
 
+// ── PDF 內文抽取 ──────────────────────────────────────────────────────────
+// 政府報告、年報、計畫成果多為 PDF。沒有這一層，那些文獻的比對會因為沒有內容
+// 而無法判斷——等於這個功能對它們不生效。
+//
+// 兩個硬性限制決定了做法：
+//   1. 平台每次請求的 CPU 上限 50 ms。因此一律早退：只需要前面幾千字
+//      （摘要與前言都在最前面），400 頁的報告要和 3 頁的花一樣的時間。
+//      實測 40 頁的檔從 33 ms 降到 13 ms。
+//   2. 抽出亂碼比抽不到更糟。亂碼會被送去判讀「文獻是否支持主張」，
+//      可能害正確的引用被誤刪，所以最後要過品質閘門，不過就當作抽不到。
+//
+// 刻意不解析字型物件圖（/Resources → /Font → /ToUnicode）：那是無底洞。
+// 改用自我驗證的解碼——先試 2 位元組，看在 CMap 裡的命中率，低就退回單位元組；
+// 命中率本身就是品質訊號。合併多張 CMap 時偵測衝突：同一字符編號映到不同字，
+// 代表不同字型子集的對照被混在一起，會產出「通順但錯誤」的文字，一律放棄。
+const PDF_MAX_STREAMS = 14;
+const PDF_MAX_INFLATED = 250000;
+const PDF_RAW_ENOUGH = 9000;         // 累積到這麼多字串引數就停止解壓
+const PDF_MIN_CHARS = 120;
+const PDF_CMAP_CONFLICT_MAX = 0.02;
+const PDF_IMAGE_RE = /\/Subtype\s*\/Image|\/DCTDecode|\/JPXDecode|\/CCITTFaxDecode|\/JBIG2Decode/;
+
+// ASCII85（PDF 變體：以 ~> 結尾，z 代表四個零位元組）
+function pdfA85(bytes) {
+  const out = [];
+  let tuple = 0, n = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    const c = bytes[i];
+    if (c === 0x7e) break;
+    if (c <= 0x20) continue;
+    if (c === 0x7a && n === 0) { out.push(0, 0, 0, 0); continue; }
+    if (c < 0x21 || c > 0x75) return null;
+    tuple = tuple * 85 + (c - 0x21); n++;
+    if (n === 5) { out.push((tuple >>> 24) & 255, (tuple >>> 16) & 255, (tuple >>> 8) & 255, tuple & 255); tuple = 0; n = 0; }
+  }
+  if (n > 1) {
+    for (let i = n; i < 5; i++) tuple = tuple * 85 + 84;
+    out.push(...[(tuple >>> 24) & 255, (tuple >>> 16) & 255, (tuple >>> 8) & 255, tuple & 255].slice(0, n - 1));
+  }
+  return Uint8Array.from(out);
+}
+
+async function pdfInflate(bytes) {
+  for (const fmt of ['deflate', 'deflate-raw']) {   // 有些串流是 raw deflate（無 zlib 標頭）
+    try {
+      const ds = new DecompressionStream(fmt);
+      const res = new Response(new Blob([bytes]).stream().pipeThrough(ds));
+      return new Uint8Array(await res.arrayBuffer());
+    } catch (_) { /* 換下一種 */ }
+  }
+  return null;
+}
+
+// 連同串流前面的字典一起取出：要先知道 /Filter 才知道怎麼解，也才能跳過影像串流
+function pdfStreams(latin) {
+  const out = [];
+  let i = 0;
+  while (out.length < PDF_MAX_STREAMS) {
+    const s = latin.indexOf('stream', i);
+    if (s < 0) break;
+    if (latin.startsWith('endstream', s - 3)) { i = s + 6; continue; }
+    let a = s + 6;
+    if (latin[a] === '\r') a++;
+    if (latin[a] === '\n') a++;
+    const e = latin.indexOf('endstream', a);
+    if (e < 0) break;
+    const dict = latin.slice(Math.max(0, s - 600), s);
+    if (!PDF_IMAGE_RE.test(dict)) {
+      const fm = dict.match(/\/Filter\s*(\[[^\]]*\]|\/[A-Za-z0-9]+)/);
+      out.push({ a, b: e, filters: fm ? (fm[1].match(/\/[A-Za-z0-9]+/g) || []).map(x => x.slice(1)) : [] });
+    }
+    i = e + 9;
+  }
+  return out;
+}
+
+// 依序套用濾鏡；不支援的就放棄這個串流（絕不把未解開的位元組當文字）
+async function pdfApplyFilters(bytes, filters, ctx) {
+  let cur = bytes;
+  for (const f of filters) {
+    if (f === 'FlateDecode') cur = await pdfInflate(cur);
+    else if (f === 'ASCII85Decode') cur = timed(ctx, () => pdfA85(cur));
+    else if (f === 'ASCIIHexDecode') cur = timed(ctx, () => {
+      const h = new TextDecoder('latin1').decode(cur).replace(/[^0-9A-Fa-f]/g, '');
+      const o = new Uint8Array(h.length >> 1);
+      for (let k = 0; k < o.length; k++) o[k] = parseInt(h.substr(k * 2, 2), 16);
+      return o;
+    });
+    else return null;                 // LZW、RunLength、未知濾鏡
+    if (!cur) return null;
+  }
+  return cur;
+}
+
+// ToUnicode CMap；回傳新增的衝突數（同一編號已有不同對照）
+function pdfParseCMap(text, map) {
+  const hex = h => parseInt(h, 16);
+  const uni = h => { let t = ''; for (let i = 0; i + 4 <= h.length; i += 4) t += String.fromCharCode(hex(h.slice(i, i + 4))); return t; };
+  let conflicts = 0;
+  const put = (code, val) => {
+    const was = map.get(code);
+    if (was !== undefined && was !== val) conflicts++;
+    else map.set(code, val);
+  };
+  for (const m of text.matchAll(/beginbfchar([\s\S]*?)endbfchar/g)) {
+    for (const q of m[1].matchAll(/<([0-9A-Fa-f]{2,8})>\s*<([0-9A-Fa-f]{4,64})>/g)) put(hex(q[1]), uni(q[2]));
+  }
+  for (const m of text.matchAll(/beginbfrange([\s\S]*?)endbfrange/g)) {
+    for (const q of m[1].matchAll(/<([0-9A-Fa-f]{2,8})>\s*<([0-9A-Fa-f]{2,8})>\s*<([0-9A-Fa-f]{4,64})>/g)) {
+      const lo = hex(q[1]), hi = hex(q[2]), base = hex(q[3].slice(0, 4));
+      if (!(hi >= lo) || hi - lo > 65535) continue;
+      for (let c = lo; c <= hi; c++) put(c, String.fromCharCode(base + (c - lo)));
+    }
+  }
+  return conflicts;
+}
+
+function pdfLitBytes(str) {
+  const out = [];
+  for (let i = 0; i < str.length; i++) {
+    const c = str[i];
+    if (c !== '\\') { out.push(c.charCodeAt(0)); continue; }
+    const n = str[++i];
+    if (n === undefined) break;
+    if (n >= '0' && n <= '7') {
+      let oct = n;
+      while (oct.length < 3 && str[i + 1] >= '0' && str[i + 1] <= '7') oct += str[++i];
+      out.push(parseInt(oct, 8));
+    } else out.push({ n: 10, r: 13, t: 9, b: 8, f: 12 }[n] !== undefined ? { n: 10, r: 13, t: 9, b: 8, f: 12 }[n] : n.charCodeAt(0));
+  }
+  return out;
+}
+
+// 先試 2 位元組，看命中率；低就退回單位元組
+function pdfDecode(items, map) {
+  let two = '', twoHit = 0, twoTot = 0, one = '', oneHit = 0, oneTot = 0;
+  for (const it of items) {
+    const bytes = it.hex !== undefined
+      ? (it.hex.match(/../g) || []).map(h => parseInt(h, 16))
+      : pdfLitBytes(it.lit);
+    for (let i = 0; i + 1 < bytes.length; i += 2) {
+      const u = map.get((bytes[i] << 8) | bytes[i + 1]);
+      twoTot++;
+      if (u !== undefined) { two += u; twoHit++; } else two += ' ';
+    }
+    for (const b of bytes) {
+      oneTot++;
+      const u = map.get(b);
+      if (u !== undefined) { one += u; oneHit++; }
+      else if (b >= 32 && b < 127) { one += String.fromCharCode(b); oneHit++; }
+      else one += ' ';
+    }
+  }
+  const tr = twoTot ? twoHit / twoTot : 0, or_ = oneTot ? oneHit / oneTot : 0;
+  return tr >= 0.8 && tr >= or_ ? { text: two, rate: tr } : { text: one, rate: or_ };
+}
+
+// 品質閘門：看起來不像自然語言就一律丟棄，回報抽不到
+function pdfQuality(text, rate) {
+  if (!text || text.length < PDF_MIN_CHARS) return 'pdf_short';
+  if (rate < 0.8) return 'pdf_decode';
+  const good = (text.match(new RegExp(`[${CJK_CLASS}A-Za-z0-9]`, 'gu')) || []).length;
+  if (good / text.length < 0.55) return 'pdf_garbled';
+  if (((text.match(/[�]/g) || []).length) / text.length > 0.02) return 'pdf_garbled';
+  const freq = new Map();
+  for (const ch of text) freq.set(ch, (freq.get(ch) || 0) + 1);
+  if (Math.max(...freq.values()) / text.length > 0.25) return 'pdf_garbled';
+  if (CJK_RE.test(text)) {
+    const han = (text.match(/\p{Script=Han}/gu) || []).length;
+    if (han / text.length < 0.25) return 'pdf_garbled';
+  } else if (text.split(/\s+/).filter(w => /^[A-Za-z][A-Za-z'-]+$/.test(w)).length < 20) {
+    return 'pdf_garbled';
+  }
+  return null;
+}
+
+async function pdfBodyText(bytes, ctx) {
+  const slice = bytes.subarray(0, MAX_PAGE_BYTES);
+  const latin = timed(ctx, () => new TextDecoder('latin1').decode(slice));
+  const streams = timed(ctx, () => pdfStreams(latin));
+  const map = new Map();
+  const contents = [];
+  let inflated = 0, cmapEntries = 0, conflicts = 0;
+  for (const st of streams) {
+    if (inflated >= PDF_MAX_INFLATED || ctx.cpuMs > ctx.cpuBudgetMs) break;
+    const raw = await pdfApplyFilters(slice.subarray(st.a, st.b), st.filters, ctx);
+    if (!raw) continue;
+    inflated += raw.length;
+    const text = timed(ctx, () => new TextDecoder('latin1').decode(raw.subarray(0, 200000)));
+    if (text.includes('beginbfchar') || text.includes('beginbfrange')) {
+      const before = map.size;
+      conflicts += timed(ctx, () => pdfParseCMap(text, map));
+      cmapEntries += map.size - before;
+    } else if (text.includes('BT') && /T[jJ]/.test(text)) contents.push(text);
+  }
+  // 多張 CMap 互相衝突 → 不同字型子集的對照被混在一起，會產出通順但錯誤的文字
+  if (cmapEntries && conflicts / (cmapEntries + conflicts) > PDF_CMAP_CONFLICT_MAX) return { none: 'pdf_cmap_conflict' };
+
+  const items = timed(ctx, () => {
+    const all = [];
+    for (const c of contents) {
+      for (const m of c.matchAll(/\(((?:\\.|[^\\()])*)\)|<([0-9A-Fa-f\s]+)>/g)) {
+        all.push(m[1] !== undefined ? { lit: m[1] } : { hex: m[2].replace(/\s+/g, '') });
+        if (all.length >= PDF_RAW_ENOUGH) return all;
+      }
+    }
+    return all;
+  });
+  if (!items.length) return { none: 'pdf_no_text' };
+
+  const d = timed(ctx, () => pdfDecode(items, map));
+  const text = timed(ctx, () => d.text.replace(/\s+/g, ' ').trim().slice(0, PAGE_TEXT_CHARS));
+  const bad = timed(ctx, () => pdfQuality(text, d.rate));
+  return bad ? { none: bad } : { kind: 'page', text };
+}
+
 // 開啟網頁（或 DOI 導向的頁面）：學術中繼資料的摘要；scholarly 為 false 時沒有摘要就取內文
 async function absFromPage(url, title, ctx, scholarly) {
   const r = await safeFetch(url, ctx, pageHeaders(), MAX_PAGE_BYTES);
   if (r.error) return { none: r.error };
   if (!r.ok) return { none: httpErrCode(r.status) };
   const head = r.bytes.subarray(0, 5);
-  if (/pdf/.test(r.ctype) || (head.length === 5 && String.fromCharCode(...head) === '%PDF-')) return { none: 'pdf' };
+  if (/pdf/.test(r.ctype) || (head.length === 5 && String.fromCharCode(...head) === '%PDF-')) {
+    if (ctx.cpuMs > ctx.cpuBudgetMs) return { none: 'cpu_budget' };
+    const pt = await pdfBodyText(r.bytes, ctx);
+    return pt.kind ? { kind: 'page', text: pt.text, src: hostOf(r.url) + ' · PDF' } : pt;
+  }
   if (!/html|xml|text\/plain/.test(r.ctype || 'text/html')) return { none: 'not_html' };
   if (ctx.cpuMs > ctx.cpuBudgetMs) return { none: 'cpu_budget' };
   return timed(ctx, () => {
