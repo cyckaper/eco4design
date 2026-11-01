@@ -52,6 +52,19 @@ const GROUPS = {
 };
 const ALL_GROUPS = Object.keys(GROUPS);
 
+// 預設只查這 12 個類群，不是全部 21 個。兩個理由：
+//   1. TBN 撐不住。2026-11-01 實測，連續查詢之後 TBN 自己開始回 503（277 ms 就回，
+//      明顯是負載保護）。它是公家單位的服務、不是 CDN，而一個基地查 22 次、
+//      每次都要在最多四十萬筆上做計數，要求太重了。砍一半是對上游的基本禮貌。
+//   2. 後九個對棲地設計幫助有限。原藻類、苔蘚、真菌、其他無脊椎這些在設計討論裡
+//      幾乎用不到，卻要付同樣的查詢成本。
+// 要全部 21 個就傳 groups: 'all'。
+const DEFAULT_GROUPS = [
+  'birds', 'mammals', 'reptiles', 'amphibians', 'fishes',      // 脊椎動物：棲地設計最常談的
+  'butterflies', 'dragonflies', 'beetles',                      // 指標性昆蟲
+  'angiosperms', 'gymnosperms', 'ferns', 'moths',               // 植被與蛾類（夜間生態）
+];
+
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;              // TBN 的單次上限
 // 併發與時間預算是量出來的，不是猜的。2026-11-01 線上實測：
@@ -63,12 +76,16 @@ const MAX_LIMIT = 1000;              // TBN 的單次上限
 // 那是 Jake 自己的校園，學生一定會用。
 // pool 是工作池（不是固定批次），所以慢的那個只佔住一個名額，其餘繼續流過去：
 // 併發 8 時總時間約是 max(最慢那個, 其餘平均攤完) ≈ 10 秒上下。
-const CONCURRENCY = 8;
-const PER_REQUEST_TIMEOUT_MS = 14000;
+const CONCURRENCY = 6;
+// 逐次上限給「剩餘預算」而不是固定值：2026-11-01 實測，冷啟動的密集基地
+// （台中、高雄市區，半徑 3 km）單一類群查詢本身就超過 14 秒，固定 14 秒等於
+// 保證失敗。四個類群與一個類群耗時相同，可見併發是有效的、慢的是每次查詢本身。
+const PER_REQUEST_FLOOR_MS = 8000;   // 剩餘預算低於此值就不再開始新的查詢
 const TOTAL_BUDGET_MS = 23000;       // 函式上限 26 秒，留時間給彙整與回傳
+const RETRY_503_MS = 1500;           // TBN 負載保護時回 503，稍候重試一次
 // 不分類群的那次查詢只是為了 rangeTotal（參考文獻用），可有可無，
 // 所以給它較短的上限——不能讓一個選配的數字吃掉物種清單的時間。
-const RANGE_TOTAL_TIMEOUT_MS = 6000;
+const RANGE_TOTAL_TIMEOUT_MS = 5000;
 const MAX_GROUP_BYTES = 6 * 1024 * 1024;
 
 // 物種名錄不會以小時為單位變動；一班五十個學生分析同一個基地時，
@@ -164,19 +181,24 @@ function badParams(lat, lon, r, limit) {
 
 // group 為 null 時不帶 taxonGroup：用來取整個範圍的真實總筆數（見 rangeTotal）
 async function fetchGroup(lon, lat, r, group, limit, deadline, cap) {
-  const left = deadline - Date.now();
-  if (left < 1500) return { group, error: 'skipped: time budget exhausted' };
+  const left = deadline - Date.now() - 1000;          // 留一點給彙整與回傳
+  // 剩餘預算不足就不要開始——開了也只是必定逾時，白佔上游一條連線
+  if (left < (group === null ? 2000 : PER_REQUEST_FLOOR_MS)) {
+    return { group, error: 'skipped: time budget exhausted' };
+  }
 
   const url = `${API}?circle=${encodeURIComponent(`${lon} ${lat},${r}`)}&limit=${limit}`
     + (group ? `&taxonGroup=${encodeURIComponent(group)}` : '');
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), Math.min(cap || PER_REQUEST_TIMEOUT_MS, left));
+  // 這一次能等多久：選配的 rangeTotal 給固定短上限，類群查詢給剩餘預算
+  const budget = group === null ? Math.min(RANGE_TOTAL_TIMEOUT_MS, left) : (cap || left);
+  const timer = setTimeout(() => ac.abort(), budget);
   try {
     const res = await fetch(url, {
       headers: { accept: 'application/json', 'user-agent': UA, referer: SITE },
       signal: ac.signal,
     });
-    if (!res.ok) return { group, error: 'http_' + res.status };
+    if (!res.ok) return { group, error: 'http_' + res.status, status: res.status };
     const text = await res.text();
     if (text.length > MAX_GROUP_BYTES) return { group, error: 'response too large' };
     let body;
@@ -357,9 +379,11 @@ export default async (request, context) => {
   const bad = badParams(lat, lon, r, limit);
   if (bad) return json(400, { error: 'Rejected request: ' + bad }, cors);
 
-  let groups = ALL_GROUPS;
+  let groups = DEFAULT_GROUPS;
   const asked = typeof p.groups === 'string' ? p.groups.trim() : '';
-  if (asked && asked !== 'all') {
+  if (asked === 'all') {
+    groups = ALL_GROUPS;
+  } else if (asked) {
     const want = asked.split(',').map(s => s.trim()).filter(Boolean);
     const unknown = want.filter(g => !GROUPS[g]);
     if (unknown.length) {
@@ -380,9 +404,18 @@ export default async (request, context) => {
 
   const deadline = startedAt + TOTAL_BUDGET_MS;
   // 多一個 null：不分類群的查詢，只為了 meta.total（limit=1，payload 極小）
-  const all = await pool([...groups, null], CONCURRENCY,
-    g => fetchGroup(lon, lat, r, g, g === null ? 1 : limit, deadline,
-      g === null ? RANGE_TOTAL_TIMEOUT_MS : PER_REQUEST_TIMEOUT_MS));
+  // TBN 在連續查詢後會回 503 保護自己（實測 277 ms 就回）。那是「稍候再來」，
+  // 不是「這個類群沒有資料」，所以等一下重試一次——與 osm.js 對 overpass.ch 的做法一致。
+  const fetchWithRetry = async (g) => {
+    const lim = g === null ? 1 : limit;
+    let out = await fetchGroup(lon, lat, r, g, lim, deadline);
+    if (out.status === 503 && deadline - Date.now() > RETRY_503_MS + PER_REQUEST_FLOOR_MS) {
+      await new Promise(res => setTimeout(res, RETRY_503_MS));
+      out = await fetchGroup(lon, lat, r, g, lim, deadline);
+    }
+    return out;
+  };
+  const all = await pool([...groups, null], CONCURRENCY, fetchWithRetry);
   const unfiltered = all[all.length - 1];
   const results = all.slice(0, -1);
   const agg = aggregate(results, limit);
@@ -419,6 +452,7 @@ export default async (request, context) => {
     rangeTotal,
     ungrouped: rangeTotal !== null ? Math.max(0, rangeTotal - total) : null,
     sample: { perGroup: limit, records: agg.sampled, groups: agg.groups.length,
+              asked: groups.length, allGroups: groups.length === ALL_GROUPS.length,
               complete: !anyPartial },
     groups: agg.groups,
     species: agg.species,
@@ -427,13 +461,17 @@ export default async (request, context) => {
     ...(agg.failed.length ? { failed: agg.failed } : {}),
     // 這段話會原樣顯示在介面與報告上。取樣的性質必須跟著資料一起走，
     // 不能只寫在文件裡——看報告的人看不到文件。
-    notes: anyPartial ? [
+    notes: (agg.failed.length ? [
+      `有 ${agg.failed.length} 個類群沒有回應（${agg.failed.map(f => f.zh).join('、')}），`
+      + '清單裡不會有這些類群的物種——不是那裡沒有，而是這次沒查到。',
+    ] : []).concat(anyPartial ? [
       `物種清單是取樣結果：每個類群最多取 ${limit} 筆紀錄，而這個範圍內共有 ${(rangeTotal || total).toLocaleString('en-US')} 筆。`,
       '取的是 TBN 回傳的前幾筆，不是隨機樣本，所以清單可以說明「這些物種在這裡有紀錄」，但不能說明「這裡只有這些物種」，也不能用來判斷哪些最常見。',
       '各類群的總筆數（total）取自 TBN 的 meta.total，那個數字是完整範圍的真實筆數。',
     ] : [
       '這個範圍內的紀錄筆數未超過取樣上限，物種清單涵蓋全部紀錄。',
-    ],
+    ]),
+
     cache: 'miss',
     ms: Date.now() - startedAt,
   };

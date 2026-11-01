@@ -257,21 +257,63 @@ const freshSite = (over = {}) => ({ lat: 23.5 + (siteSeq++) * 0.001, lon: 120.5,
     JSON.stringify(calls[0].opts.headers));
 }
 
-// ── 7. 預設查全部 21 個類群 ──────────────────────────────────────────────
-// 實測溪頭 3 km 內鳥類佔 78 %：不分類群抓一千筆的話，植物與兩棲幾乎看不到。
+// ── 7. 預設查 12 個設計相關類群，可要求全部 21 個 ───────────────────────
+// 逐類群查詢是必須的（實測溪頭 3 km 內鳥類佔 78 %，不分類群抓一千筆的話
+// 植物與兩棲幾乎看不到），但 21 個對 TBN 太重——實測它會回 503 保護自己，
+// 所以預設只查設計上用得到的 12 個。
 {
-  stubFetch(url => {
+  const groupStub = url => {
     const g = new URL(url).searchParams.get('taxonGroup');
     const total = g === 'birds' ? 73210 : 300;
     return okJson({ meta: { total },
       data: Array.from({ length: Math.min(total, 100) }, () => rec({ taxonUUID: 'u-' + g, taxonGroup: g })) });
-  });
-  const r = await call(freshSite());
-  const b = await bodyOf(r);
-  check('預設查 21 個類群外加一次不分類群查詢', calls.length === 22, calls.length);
-  check('每個類群各一筆物種 → 21 個物種', b.species.length === 21, b.species.length);
-  check('total 是各類群 meta.total 之和', b.total === 73210 + 300 * 20, b.total);
+  };
+  stubFetch(groupStub);
+  let b = await bodyOf(await call(freshSite()));
+  check('預設查 12 個類群外加一次不分類群查詢', calls.length === 13, calls.length);
+  check('每個類群各一筆物種 → 12 個物種', b.species.length === 12, b.species.length);
+  check('total 是各類群 meta.total 之和', b.total === 73210 + 300 * 11, b.total);
   check('類群按總筆數排序，鳥類在最前', b.groups[0].code === 'birds', b.groups[0].code);
+  check('回應標明查了幾個類群、是否全部', b.sample.asked === 12 && b.sample.allGroups === false,
+    JSON.stringify(b.sample));
+  // 預設清單要含設計上最常談的脊椎動物與植被
+  const codes = b.groups.map(g => g.code);
+  for (const must of ['birds', 'mammals', 'amphibians', 'reptiles', 'angiosperms', 'ferns']) {
+    check(`預設類群含 ${must}`, codes.includes(must), codes.join(','));
+  }
+
+  stubFetch(groupStub);
+  b = await bodyOf(await call(freshSite({ groups: 'all' })));
+  check("groups: 'all' 查全部 21 個類群", calls.length === 22, calls.length);
+  check("groups: 'all' 時 allGroups 為 true", b.sample.allGroups === true, JSON.stringify(b.sample));
+}
+
+// ── 7c. TBN 的 503 是負載保護，要稍候重試 ───────────────────────────────
+// 實測連續查詢之後 TBN 自己回 503（277 ms 就回）。那是「稍候再來」，
+// 不是「這個類群沒資料」——直接當失敗會讓清單無聲地少掉整個類群。
+{
+  let hits = 0;
+  stubFetch(() => {
+    hits++;
+    return hits <= 2 ? new Response('busy', { status: 503 }) : okRows(5);
+  });
+  const b = await bodyOf(await call(freshSite({ groups: 'birds' })));
+  check('遇到 503 會重試，最後成功', b && b.species && b.species.length === 1,
+    JSON.stringify({ hits, err: b && b.error }));
+  check('重試確實多打了一次', hits >= 3, hits);
+}
+
+// ── 7d. 沒回應的類群要在 notes 裡交代 ───────────────────────────────────
+// 少掉一整個類群而畫面不說，使用者會以為那裡真的沒有那類生物。
+{
+  stubFetch(url => new URL(url).searchParams.get('taxonGroup') === 'mammals'
+    ? new Response('nope', { status: 500 })
+    : okRows(5));
+  const b = await bodyOf(await call(freshSite({ groups: 'birds,mammals' })));
+  check('notes 指出哪些類群沒回應',
+    b.notes.some(n => n.includes('哺乳類') && n.includes('沒有回應')), JSON.stringify(b.notes));
+  check('notes 說明「不是那裡沒有，而是沒查到」',
+    b.notes.some(n => n.includes('不是那裡沒有')), JSON.stringify(b.notes));
 }
 
 // ── 7b. rangeTotal：不分類群的真實總筆數 ─────────────────────────────────

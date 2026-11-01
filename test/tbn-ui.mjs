@@ -131,10 +131,12 @@ const localFile = {
   'leaflet-image@0.4.0/leaflet-image.js': [`${LEAFLET}/leaflet-image/leaflet-image.js`, 'text/javascript'],
 };
 const unserved = [];
+// /api/tbn 目前要回的內容。測試中途可以換掉，驗不同的回應情境。
+let servePayload = payload;
 await page.route('**/*', async route => {
   const url = route.request().url();
   if (url.includes('/api/tbn')) {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payload) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(servePayload) });
   }
   // 其他面板的 API 給空回應：要驗的是 TBN，但它們的 fetch 失敗會把 console 塞滿
   if (url.includes('inaturalist.org')) {
@@ -278,6 +280,52 @@ check('提示詞含外來種清單', /大花咸豐草/.test(prompt) && /外來�
 check('提示詞含各類群真實筆數', /鳥類 73,210/.test(prompt), '未出現');
 check('提示詞含 APA 參考文獻', /臺灣生物多樣性網絡（無日期）/.test(prompt), '未出現');
 check('參考文獻說明清單是取樣而來', /筆出現紀錄之取樣/.test(prompt), '未出現');
+
+// 類群範圍選單：預設 12 類，可改全部 21 類；選單值要進到 /api/tbn 的請求裡
+{
+  const sent = await page.evaluate(async () => {
+    const seen = [];
+    const real = window.fetch;
+    window.fetch = (u, o) => {
+      if (String(u).includes('/api/tbn')) { try { seen.push(JSON.parse(o.body)); } catch (_) {} }
+      return real(u, o);
+    };
+    const sel = document.getElementById('tbnScope');
+    const before = sel ? sel.value : '(沒有這個選單)';
+    if (sel) { sel.value = 'all'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+    await new Promise(r => setTimeout(r, 1200));
+    window.fetch = real;
+    return { before, bodies: seen };
+  });
+  check('類群範圍預設是 12 類（空字串）', sent.before === '', sent.before);
+  check("選「全部 21 類」會把 groups:'all' 送進請求",
+    sent.bodies.some(b => b && b.groups === 'all'), JSON.stringify(sent.bodies));
+}
+
+// 「有類群沒回應」的警告不能因為取樣完整就被吞掉。
+// renderTbn 在閉包裡叫不到，所以換掉 /api/tbn 的回應再按「查詢」，走真正的路徑。
+{
+  const partial = JSON.parse(JSON.stringify(payload));
+  partial.sample.complete = true;                      // 取樣是完整的
+  partial.failed = [{ group: 'mammals', zh: '哺乳類', error: 'timeout' }];
+  partial.notes = ['有 1 個類群沒有回應（哺乳類），清單裡不會有這些類群的物種——不是那裡沒有，而是這次沒查到。'];
+  servePayload = partial;                              // 路由改回傳這一份
+  await page.evaluate(() => document.getElementById('tbnRefresh').click());
+  await page.waitForFunction(
+    () => /哺乳類/.test(document.getElementById('tbnNote')?.textContent || ''), { timeout: 8000 })
+    .then(() => check('取樣完整但有類群失敗時，警告仍然顯示並指名類群', true, ''))
+    .catch(async () => {
+      const el = await page.evaluate(() => {
+        const n = document.getElementById('tbnNote');
+        return { text: n ? n.textContent : '(沒有元素)', display: n ? n.style.display : '-' };
+      });
+      check('取樣完整但有類群失敗時，警告仍然顯示並指名類群', false, JSON.stringify(el));
+    });
+  check('此時不會誤稱為「取樣清單」',
+    !/取樣清單/.test(await page.evaluate(() => document.getElementById('tbnNote').textContent)),
+    await page.evaluate(() => document.getElementById('tbnNote').textContent.slice(0, 60)));
+  servePayload = payload;                              // 還原，不影響後面的檢查
+}
 
 // 英文介面也要能繪（標籤、統計列都有英文分支）
 const enFlat = await page.evaluate(async () => {

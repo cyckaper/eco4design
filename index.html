@@ -620,6 +620,10 @@
             <option value="5">5 km</option>
             <option value="10">10 km</option>
           </select>
+          <select id="tbnScope" title="類群範圍">
+            <option value="" selected>設計常用 12 類</option>
+            <option value="all">全部 21 類（較慢）</option>
+          </select>
           <select id="tbnSort" title="排序">
             <option value="count">依紀錄筆數</option>
             <option value="native">原生優先</option>
@@ -2248,8 +2252,10 @@
 
     // 取樣說明：這句話必須看得見。清單是「TBN 回傳的前 N 筆」，
     // 不是完整名錄，也不能用來判斷哪些物種最常見。
-    if (Array.isArray(data.notes) && data.notes.length && data.sample && data.sample.complete === false) {
-      noteEl.textContent = (en ? '⚠️ Sampled list — ' : '⚠️ 這是取樣清單——') + data.notes.join(en ? ' ' : '');
+    if (Array.isArray(data.notes) && data.notes.length) {
+      const sampled = data.sample && data.sample.complete === false;
+      noteEl.textContent = (sampled ? (en ? '⚠️ Sampled list — ' : '⚠️ 這是取樣清單——') : '⚠️ ')
+        + data.notes.join(en ? ' ' : '');
       noteEl.style.display = '';
     } else {
       noteEl.style.display = 'none';
@@ -2402,13 +2408,15 @@
     }
 
     const radius = parseInt(document.getElementById('tbnRadius').value, 10);
-    const cacheKey = `${state.lat.toFixed(4)}_${state.lon.toFixed(4)}_${radius}`;
+    const scope = (document.getElementById('tbnScope') || {}).value || '';
+    const cacheKey = `${state.lat.toFixed(4)}_${state.lon.toFixed(4)}_${radius}_${scope || '12'}`;
     if (!force && tbnCache[cacheKey]) { renderTbn(tbnCache[cacheKey]); return; }
 
     status.classList.remove('error');
+    const nGroups = scope === 'all' ? 21 : 12;
     status.textContent = en
-      ? '⏳ Querying TBN across all 21 taxon groups… (5–20s; longer where records are dense)'
-      : '⏳ 正在查詢 TBN 的 21 個類群…（約 5–20 秒，紀錄密集的地區較久）';
+      ? `⏳ Querying TBN across ${nGroups} taxon groups… (5–20s; longer where records are dense)`
+      : `⏳ 正在查詢 TBN 的 ${nGroups} 個類群…（約 5–20 秒，紀錄密集的地區較久）`;
     results.innerHTML = '';
     groupsEl.innerHTML = '';
     noteEl.style.display = 'none';
@@ -2423,7 +2431,8 @@
       const res = await fetch('/api/tbn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lat: state.lat, lon: state.lon, r: radius }),
+        body: JSON.stringify({ lat: state.lat, lon: state.lon, r: radius,
+                               ...(scope ? { groups: scope } : {}) }),
         signal: ac.signal,
       });
       const body = await res.json().catch(() => null);
@@ -2440,9 +2449,12 @@
       if (seq !== tbnSeq) return;
       if (e && (e.name === 'AbortError' || /abort/i.test(String(e)))) return;   // 被新查詢取消，不是錯誤
       status.classList.add('error');
-      status.textContent = en
-        ? `⚠️ TBN query failed: ${String(e.message || e)} — the other panels are unaffected.`
-        : `⚠️ TBN 查詢失敗：${String(e.message || e)}——其他面板不受影響。`;
+      const hint = scope === 'all'
+        ? (en ? ' Try the 12-group scope, or a smaller radius.' : '可改用「設計常用 12 類」或縮小半徑再試。')
+        : (en ? ' Try a smaller radius.' : '可縮小半徑再試。');
+      status.textContent = (en
+        ? `⚠️ TBN query failed: ${String(e.message || e)}.${hint} The other panels are unaffected.`
+        : `⚠️ TBN 查詢失敗：${String(e.message || e)}。${hint}其他面板不受影響。`);
       tbnLastSummary = null;
       updatePrompt();
     } finally {
@@ -10563,6 +10575,7 @@ ${block}`;
     // TBN controls。排序只改變排列，不必重新查詢，所以直接重繪已載入的資料。
     document.getElementById('tbnRefresh').addEventListener('click', () => loadTbn(true));
     document.getElementById('tbnRadius').addEventListener('change', () => { tbnGroupFilter = ''; loadTbn(false); });
+    document.getElementById('tbnScope').addEventListener('change', () => { tbnGroupFilter = ''; loadTbn(false); });
     document.getElementById('tbnSort').addEventListener('change', () => { if (tbnLastData) renderTbn(tbnLastData); });
 
     // Claude API analysis (Step 6)
