@@ -2420,6 +2420,10 @@ const ABS_MIN_CHARS = 150;           // 短於此的「摘要」多半是網站�
 const ABS_MIN_CHARS_CJK = 60;
 const PAGE_MIN_CHARS = 300;
 const PAGE_MIN_CHARS_CJK = 100;    // 選單殘跡通常不到 50 字；真實公告多在 80–400 字
+const PDF_FN_TIMEOUT_MS = 24000;   // /api/pdf-text 的等待上限（函式本身 26 秒）
+// 這一層只負責「判斷是不是 PDF」並轉手，所以不必把整份 PDF 讀進 Edge Function。
+// 讀前 64 KB 足以看到 %PDF- 檔頭與 content-type；真正的下載由 Netlify Function 做。
+const PAGE_FETCH_BYTES = 400 * 1024;
 const minLen = (t, latin, cjk) => (CJK_RE.test(t) ? cjk : latin);
 const SEMANTIC_SCHOLAR = 'https://api.semanticscholar.org/graph/v1/paper/';
 
@@ -2556,332 +2560,47 @@ async function absFromSemanticScholar(doi, ctx) {
   return t.length >= minLen(t, ABS_MIN_CHARS, ABS_MIN_CHARS_CJK) ? { text: t, src: 'Semantic Scholar' } : null;
 }
 
-// ── PDF 內文抽取 ──────────────────────────────────────────────────────────
-// 政府報告、年報、計畫成果多為 PDF。沒有這一層，那些文獻的比對會因為沒有內容
-// 而無法判斷——等於這個功能對它們不生效。
-//
-// 兩個硬性限制決定了做法：
-//   1. 平台每次請求的 CPU 上限 50 ms。因此一律早退：只需要前面幾千字
-//      （摘要與前言都在最前面），400 頁的報告要和 3 頁的花一樣的時間。
-//      實測 40 頁的檔從 33 ms 降到 13 ms。
-//   2. 抽出亂碼比抽不到更糟。亂碼會被送去判讀「文獻是否支持主張」，
-//      可能害正確的引用被誤刪，所以最後要過品質閘門，不過就當作抽不到。
-//
-// 刻意不解析字型物件圖（/Resources → /Font → /ToUnicode）：那是無底洞。
-// 改用自我驗證的解碼——先試 2 位元組，看在 CMap 裡的命中率，低就退回單位元組；
-// 命中率本身就是品質訊號。合併多張 CMap 時偵測衝突：同一字符編號映到不同字，
-// 代表不同字型子集的對照被混在一起，會產出「通順但錯誤」的文字，一律放棄。
-const PDF_MAX_STREAMS = 14;
-const PDF_MAX_INFLATED = 250000;
-// 每個串流只解碼這麼多位元組來分類與擷取。原本一律解 200 KB，
-// 14 個串流就是 2.8 MB 的 latin1 解碼——本機測試檔的串流小，看不出來，
-// 真實 PDF 的串流大得多，一筆就把整個請求的 CPU 預算吃光
-// （預算是整個請求共用的，而 abstract 模式一次並行四筆）。
-const PDF_STREAM_PEEK = 48000;
-// 真實政府報告動輒數 MB。網頁的 400 KB 上限會把 PDF 截斷，
-// 截斷處的串流找不到 endstream，整份就解不出內容（實測三份都是 pdf_no_text）。
-// 讀多一些；解壓與解析本身另有上限，所以 CPU 不隨檔案大小增加。
-// 3 MB 讓部分政府網站下載不完（實測 forest.gov.tw 逾時）。
-// 1.5 MB 足以涵蓋前幾頁與字型物件，又不會拖垮慢速網站。
-const PDF_FETCH_BYTES = 1536 * 1024;
-// 只處理小 PDF。把 1.5 MB 解碼成 latin1 字串本身就要幾十毫秒（Deno 上實測
-// 整筆 CPU 衝到 73 ms，上限 40 ms），而超支會中止「整個請求」、不只這一筆。
-// 大檔的正確解法是把 PDF 處理搬到 Netlify Function（Node，秒級 CPU）並用
-// 現成的 PDF 函式庫；在 Edge Function 的 50 ms 內硬做，只會換個地方撞牆。
-// 小 PDF（期刊單篇抽印、公告）在這裡可靠，就先只做這一段。
-const PDF_PARSE_MAX = 300 * 1024;
-// PDF 抽取只在預算還過半時才做：留給同一批的其他文獻，
-// 否則第一個 PDF 做完，後面全部回 cpu_budget。
-const PDF_BUDGET_SHARE = 0.5;
-const PDF_RAW_ENOUGH = 4000;         // 累積到這麼多字串引數就停止（4000 個已足夠產生數千字）
-const PDF_MIN_CHARS = 120;
-const PDF_CMAP_CONFLICT_MAX = 0.02;
-const PDF_IMAGE_RE = /\/Subtype\s*\/Image|\/DCTDecode|\/JPXDecode|\/CCITTFaxDecode|\/JBIG2Decode/;
-
-// ASCII85（PDF 變體：以 ~> 結尾，z 代表四個零位元組）
-function pdfA85(bytes) {
-  const out = [];
-  let tuple = 0, n = 0;
-  for (let i = 0; i < bytes.length; i++) {
-    const c = bytes[i];
-    if (c === 0x7e) break;
-    if (c <= 0x20) continue;
-    if (c === 0x7a && n === 0) { out.push(0, 0, 0, 0); continue; }
-    if (c < 0x21 || c > 0x75) return null;
-    tuple = tuple * 85 + (c - 0x21); n++;
-    if (n === 5) { out.push((tuple >>> 24) & 255, (tuple >>> 16) & 255, (tuple >>> 8) & 255, tuple & 255); tuple = 0; n = 0; }
-  }
-  if (n > 1) {
-    for (let i = n; i < 5; i++) tuple = tuple * 85 + 84;
-    out.push(...[(tuple >>> 24) & 255, (tuple >>> 16) & 255, (tuple >>> 8) & 255, tuple & 255].slice(0, n - 1));
-  }
-  return Uint8Array.from(out);
-}
-
-async function pdfInflate(bytes) {
-  for (const fmt of ['deflate', 'deflate-raw']) {   // 有些串流是 raw deflate（無 zlib 標頭）
+// 把 PDF 轉給 /api/pdf-text（Netlify Function）。
+// 等待網路不計入 Edge 的 CPU 預算，所以這條路不會再撞 50 ms 上限。
+async function pdfViaFunction(url, ctx) {
+  if (!ctx.origin || !ctx.passcode) return { none: 'pdf' };    // 缺其中之一就不嘗試
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), PDF_FN_TIMEOUT_MS);
+    let res;
     try {
-      const ds = new DecompressionStream(fmt);
-      const res = new Response(new Blob([bytes]).stream().pipeThrough(ds));
-      return new Uint8Array(await res.arrayBuffer());
-    } catch (_) { /* 換下一種 */ }
-  }
-  return null;
-}
-
-// 連同串流前面的字典一起取出：要先知道 /Filter 才知道怎麼解，也才能跳過影像串流
-function pdfStreams(latin) {
-  const out = [];
-  let i = 0;
-  while (out.length < PDF_MAX_STREAMS) {
-    const s = latin.indexOf('stream', i);
-    if (s < 0) break;
-    if (latin.startsWith('endstream', s - 3)) { i = s + 6; continue; }
-    let a = s + 6;
-    if (latin[a] === '\r') a++;
-    if (latin[a] === '\n') a++;
-    const e = latin.indexOf('endstream', a);
-    if (e < 0) break;
-    const dict = latin.slice(Math.max(0, s - 600), s);
-    if (!PDF_IMAGE_RE.test(dict)) {
-      const fm = dict.match(/\/Filter\s*(\[[^\]]*\]|\/[A-Za-z0-9]+)/);
-      out.push({ a, b: e, filters: fm ? (fm[1].match(/\/[A-Za-z0-9]+/g) || []).map(x => x.slice(1)) : [] });
+      res = await fetch(ctx.origin + '/api/pdf-text', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ passcode: ctx.passcode, url }),
+        signal: ac.signal,
+      });
+    } finally { clearTimeout(timer); }
+    // 函式尚未部署（舊版站台）或被擋：回報原本的 'pdf'，不要讓整筆看起來像壞掉
+    if (res.status === 404 || res.status === 403) return { none: 'pdf' };
+    const j = await res.json();
+    if (j && j.kind === 'page' && typeof j.text === 'string' && j.text) {
+      return { kind: 'page', text: j.text.slice(0, PAGE_TEXT_CHARS), src: j.src || (hostOf(url) + ' · PDF') };
     }
-    i = e + 9;
+    return { none: (j && typeof j.none === 'string' && /^[a-z0-9_]{1,32}$/.test(j.none)) ? j.none : 'pdf' };
+  } catch (e) {
+    return { none: /abort/i.test(String(e)) ? 'pdf_timeout' : 'pdf' };
   }
-  return out;
-}
-
-// 依序套用濾鏡；不支援的就放棄這個串流（絕不把未解開的位元組當文字）
-async function pdfApplyFilters(bytes, filters, ctx) {
-  let cur = bytes;
-  for (const f of filters) {
-    if (f === 'FlateDecode') cur = await pdfInflate(cur);
-    else if (f === 'ASCII85Decode') cur = timed(ctx, () => pdfA85(cur));
-    else if (f === 'ASCIIHexDecode') cur = timed(ctx, () => {
-      const h = new TextDecoder('latin1').decode(cur).replace(/[^0-9A-Fa-f]/g, '');
-      const o = new Uint8Array(h.length >> 1);
-      for (let k = 0; k < o.length; k++) o[k] = parseInt(h.substr(k * 2, 2), 16);
-      return o;
-    });
-    else return null;                 // LZW、RunLength、未知濾鏡
-    if (!cur) return null;
-  }
-  return cur;
-}
-
-// 在位元組裡找標記，避免為了分類而把整個串流解碼成字串
-function pdfHasMark(bytes, mark) {
-  const m = [];
-  for (let i = 0; i < mark.length; i++) m.push(mark.charCodeAt(i));
-  const n = Math.min(bytes.length, PDF_STREAM_PEEK);
-  outer: for (let i = 0; i + m.length <= n; i++) {
-    for (let k = 0; k < m.length; k++) if (bytes[i + k] !== m[k]) continue outer;
-    return true;
-  }
-  return false;
-}
-
-// ToUnicode CMap；回傳新增的衝突數（同一編號已有不同對照）
-function pdfParseCMap(text, map) {
-  const hex = h => parseInt(h, 16);
-  const uni = h => { let t = ''; for (let i = 0; i + 4 <= h.length; i += 4) t += String.fromCharCode(hex(h.slice(i, i + 4))); return t; };
-  let conflicts = 0;
-  const put = (code, val) => {
-    const was = map.get(code);
-    if (was !== undefined && was !== val) conflicts++;
-    else map.set(code, val);
-  };
-  for (const m of text.matchAll(/beginbfchar([\s\S]*?)endbfchar/g)) {
-    for (const q of m[1].matchAll(/<([0-9A-Fa-f]{2,8})>\s*<([0-9A-Fa-f]{4,64})>/g)) put(hex(q[1]), uni(q[2]));
-  }
-  for (const m of text.matchAll(/beginbfrange([\s\S]*?)endbfrange/g)) {
-    for (const q of m[1].matchAll(/<([0-9A-Fa-f]{2,8})>\s*<([0-9A-Fa-f]{2,8})>\s*<([0-9A-Fa-f]{4,64})>/g)) {
-      const lo = hex(q[1]), hi = hex(q[2]), base = hex(q[3].slice(0, 4));
-      if (!(hi >= lo) || hi - lo > 65535) continue;
-      for (let c = lo; c <= hi; c++) put(c, String.fromCharCode(base + (c - lo)));
-    }
-  }
-  return conflicts;
-}
-
-function pdfLitBytes(str) {
-  const out = [];
-  for (let i = 0; i < str.length; i++) {
-    const c = str[i];
-    if (c !== '\\') { out.push(c.charCodeAt(0)); continue; }
-    const n = str[++i];
-    if (n === undefined) break;
-    if (n >= '0' && n <= '7') {
-      let oct = n;
-      while (oct.length < 3 && str[i + 1] >= '0' && str[i + 1] <= '7') oct += str[++i];
-      out.push(parseInt(oct, 8));
-    } else out.push({ n: 10, r: 13, t: 9, b: 8, f: 12 }[n] !== undefined ? { n: 10, r: 13, t: 9, b: 8, f: 12 }[n] : n.charCodeAt(0));
-  }
-  return out;
-}
-
-// 先試 2 位元組，看命中率；低就退回單位元組
-function pdfDecode(items, map) {
-  let two = '', twoHit = 0, twoTot = 0, one = '', oneHit = 0, oneTot = 0;
-  for (const it of items) {
-    const bytes = it.hex !== undefined
-      ? (it.hex.match(/../g) || []).map(h => parseInt(h, 16))
-      : pdfLitBytes(it.lit);
-    for (let i = 0; i + 1 < bytes.length; i += 2) {
-      const u = map.get((bytes[i] << 8) | bytes[i + 1]);
-      twoTot++;
-      if (u !== undefined) { two += u; twoHit++; } else two += ' ';
-    }
-    for (const b of bytes) {
-      oneTot++;
-      const u = map.get(b);
-      if (u !== undefined) { one += u; oneHit++; }
-      else if (b >= 32 && b < 127) { one += String.fromCharCode(b); oneHit++; }
-      else one += ' ';
-    }
-  }
-  const tr = twoTot ? twoHit / twoTot : 0, or_ = oneTot ? oneHit / oneTot : 0;
-  return tr >= 0.8 && tr >= or_ ? { text: two, rate: tr } : { text: one, rate: or_ };
-}
-
-// 品質閘門：看起來不像自然語言就一律丟棄，回報抽不到
-function pdfQuality(text, rate) {
-  if (!text || text.length < PDF_MIN_CHARS) return 'pdf_short';
-  if (rate < 0.8) return 'pdf_decode';
-  const good = (text.match(new RegExp(`[${CJK_CLASS}A-Za-z0-9]`, 'gu')) || []).length;
-  if (good / text.length < 0.55) return 'pdf_garbled';
-  if (((text.match(/[�]/g) || []).length) / text.length > 0.02) return 'pdf_garbled';
-  const freq = new Map();
-  for (const ch of text) freq.set(ch, (freq.get(ch) || 0) + 1);
-  if (Math.max(...freq.values()) / text.length > 0.25) return 'pdf_garbled';
-  if (CJK_RE.test(text)) {
-    const han = (text.match(/\p{Script=Han}/gu) || []).length;
-    if (han / text.length < 0.25) return 'pdf_garbled';
-  } else if (text.split(/\s+/).filter(w => /^[A-Za-z][A-Za-z'-]+$/.test(w)).length < 20) {
-    return 'pdf_garbled';
-  }
-  return null;
-}
-
-// 一次掃出所有 "N 0 obj" 的位置。原本為每個字型各做一次全文正規式，
-// 實測 CPU 衝到 73 ms（上限 40 ms）——超支會害整個請求被平台中止，不只這一筆。
-function pdfObjIndex(latin) {
-  const idx = new Map();
-  for (const m of latin.matchAll(/(\d{1,7})\s+0\s+obj\b/g)) if (!idx.has(m[1])) idx.set(m[1], m.index);
-  return idx;
-}
-
-// 依物件編號找出它的串流範圍與濾鏡
-function pdfObjStream(latin, num, idx) {
-  const from = idx.get(String(num));
-  if (from === undefined) return null;
-  const s = latin.indexOf('stream', from);
-  if (s < 0 || s - from > 2000) return null;
-  let a = s + 6;
-  if (latin[a] === '\r') a++;
-  if (latin[a] === '\n') a++;
-  const e = latin.indexOf('endstream', a);
-  if (e < 0) return null;
-  const dict = latin.slice(from, s);
-  const fm = dict.match(/\/Filter\s*(\[[^\]]*\]|\/[A-Za-z0-9]+)/);
-  return { a, b: e, filters: fm ? (fm[1].match(/\/[A-Za-z0-9]+/g) || []).map(x => x.slice(1)) : [] };
-}
-
-async function pdfBodyText(bytes, ctx) {
-  if (bytes.length > PDF_PARSE_MAX) return { none: 'pdf_too_large', diag: { bytes: bytes.length, limit: PDF_PARSE_MAX } };
-  const slice = bytes.subarray(0, PDF_FETCH_BYTES);
-  const latin = timed(ctx, () => new TextDecoder('latin1').decode(slice));
-
-  // 加密的 PDF（政府文件常設擁有者密碼）串流解不開，不必白費 CPU
-  if (/\/Encrypt\s/.test(latin)) return { none: 'pdf_encrypted' };
-
-  const streams = timed(ctx, () => pdfStreams(latin));
-  const map = new Map();
-  const contents = [];
-  let inflated = 0, cmapEntries = 0, conflicts = 0;
-
-  // 先把 /ToUnicode 指到的物件解出來。字型物件常排在內容串流之後，
-  // 若照順序解壓，預算會先被內容吃光、CMap 永遠讀不到
-  // （實測 cmap 0、解碼命中率 0.36，輸出被品質閘門擋下）。
-  const toUni = timed(ctx, () => {
-    const nums = new Set();
-    for (const m of latin.matchAll(/\/ToUnicode\s+(\d+)\s+0\s+R/g)) nums.add(m[1]);
-    return [...nums].slice(0, 6);
-  });
-  // 只有真的有 /ToUnicode 參照時才建索引（PDF 1.5+ 的字型字典多在壓縮物件串流裡，
-  // 那種情況這裡掃不到，索引也就不必建）
-  const objIdx = toUni.length ? timed(ctx, () => pdfObjIndex(latin)) : null;
-  for (const num of toUni) {
-    // 留一半預算給內容串流：ToUnicode 這一段吃光預算，內容就一個都解不到
-    // （實測 inflated 0、contents 0）
-    if (ctx.cpuMs > ctx.cpuBudgetMs * 0.5) break;
-    const st = timed(ctx, () => pdfObjStream(latin, num, objIdx));
-    if (!st) continue;
-    const raw = await pdfApplyFilters(slice.subarray(st.a, st.b), st.filters, ctx);
-    if (!raw) continue;
-    const text = timed(ctx, () => new TextDecoder('latin1').decode(raw.subarray(0, PDF_STREAM_PEEK)));
-    const before = map.size;
-    conflicts += timed(ctx, () => pdfParseCMap(text, map));
-    cmapEntries += map.size - before;
-  }
-
-  for (const st of streams) {
-    if (inflated >= PDF_MAX_INFLATED || ctx.cpuMs > ctx.cpuBudgetMs) break;
-    const raw = await pdfApplyFilters(slice.subarray(st.a, st.b), st.filters, ctx);
-    if (!raw) continue;
-    inflated += raw.length;
-    // 先用位元組判斷類型，只有需要的串流才解碼成字串（解碼是 CPU 大戶）
-    const isCMap = timed(ctx, () => pdfHasMark(raw, 'beginbf'));
-    const text = timed(ctx, () => new TextDecoder('latin1').decode(raw.subarray(0, PDF_STREAM_PEEK)));
-    if (isCMap) {
-      const before = map.size;
-      conflicts += timed(ctx, () => pdfParseCMap(text, map));
-      cmapEntries += map.size - before;
-    } else if (text.includes('BT') && /T[jJ]/.test(text)) contents.push(text);
-  }
-  // 多張 CMap 互相衝突 → 不同字型子集的對照被混在一起，會產出通順但錯誤的文字
-  if (cmapEntries && conflicts / (cmapEntries + conflicts) > PDF_CMAP_CONFLICT_MAX) {
-    return { none: 'pdf_cmap_conflict', diag: { streams: streams.length, cmap: map.size, conflicts } };
-  }
-
-  const items = timed(ctx, () => {
-    const all = [];
-    for (const c of contents) {
-      for (const m of c.matchAll(/\(((?:\\.|[^\\()])*)\)|<([0-9A-Fa-f\s]+)>/g)) {
-        all.push(m[1] !== undefined ? { lit: m[1] } : { hex: m[2].replace(/\s+/g, '') });
-        if (all.length >= PDF_RAW_ENOUGH) return all;
-      }
-    }
-    return all;
-  });
-  if (!items.length) return { none: 'pdf_no_text', diag: { streams: streams.length, inflated,
-    cmap: map.size, conflicts, contents: contents.length, cpu: Math.round(ctx.cpuMs) } };
-
-  // 解碼與品質檢查本身也要算進預算：實測一筆衝到 65 ms，遠超過 40 ms
-  if (ctx.cpuMs > ctx.cpuBudgetMs) return { none: 'pdf_cpu', diag: { streams: streams.length, inflated, cmap: map.size, items: items.length, cpu: Math.round(ctx.cpuMs) } };
-  const d = timed(ctx, () => pdfDecode(items, map));
-  const text = timed(ctx, () => d.text.replace(/\s+/g, ' ').trim().slice(0, PAGE_TEXT_CHARS));
-  const bad = timed(ctx, () => pdfQuality(text, d.rate));
-  // 失敗時附上結構數字（沒有文件內容），否則線上出問題只能靠猜
-  return bad ? { none: bad, diag: { streams: streams.length, inflated, cmap: map.size,
-      conflicts, items: items.length, rate: +d.rate.toFixed(2), chars: text.length, cpu: Math.round(ctx.cpuMs) } }
-    : { kind: 'page', text };
 }
 
 // 開啟網頁（或 DOI 導向的頁面）：學術中繼資料的摘要；scholarly 為 false 時沒有摘要就取內文
 async function absFromPage(url, title, ctx, scholarly) {
   // PDF 要讀得比網頁多：先以 HEAD 之外的方式判斷不划算，直接提高上限，
   // 非 PDF 的回應本來就遠小於此
-  const r = await safeFetch(url, ctx, pageHeaders(), PDF_FETCH_BYTES);
+  const r = await safeFetch(url, ctx, pageHeaders(), PAGE_FETCH_BYTES);
   if (r.error) return { none: r.error };
   if (!r.ok) return { none: httpErrCode(r.status) };
   const head = r.bytes.subarray(0, 5);
   if (/pdf/.test(r.ctype) || (head.length === 5 && String.fromCharCode(...head) === '%PDF-')) {
-    // 預算是整個請求共用的：過半就不做，把額度留給同一批的其他文獻
-    if (ctx.cpuMs > ctx.cpuBudgetMs * PDF_BUDGET_SHARE) return { none: 'pdf_cpu' };
-    const pt = await pdfBodyText(r.bytes, ctx);
-    return pt.kind ? { kind: 'page', text: pt.text, src: hostOf(r.url) + ' · PDF' } : pt;
+    // PDF 交給 Netlify Function（Node，秒級 CPU）處理。
+    // Edge Function 每次請求只有 50 ms CPU，解析一份 PDF 要 100 ms 上下——
+    // 先前在這裡手寫解析器，連續四輪都是從不同地方撞上同一道天花板。
+    return await pdfViaFunction(r.url || url, ctx);
   }
   if (!/html|xml|text\/plain/.test(r.ctype || 'text/html')) return { none: 'not_html' };
   if (ctx.cpuMs > ctx.cpuBudgetMs) return { none: 'cpu_budget' };
@@ -2943,6 +2662,9 @@ async function abstractMode(body, L, request) {
   const v = validateAbsItems(body.items);
   if (v.error) return json(v.status, { error: v.error, code: v.code });
   const ctx = makeCtx(L, v.items.length);
+  // PDF 要轉給同站的 /api/pdf-text（Netlify Function）：需要本站 origin 與已驗證的通行碼
+  try { ctx.origin = new URL(request.url).origin; } catch (_) { ctx.origin = ''; }
+  ctx.passcode = typeof body.passcode === 'string' ? body.passcode.trim() : '';
   clearTimeout(ctx.timer);
   ctx.deadline = Date.now() + ABS_TOTAL_MS;
   ctx.timer = setTimeout(() => ctx.cancel('deadline'), ABS_TOTAL_MS);
