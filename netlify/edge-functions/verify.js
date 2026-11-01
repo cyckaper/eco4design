@@ -2573,6 +2573,14 @@ async function absFromSemanticScholar(doi, ctx) {
 // 代表不同字型子集的對照被混在一起，會產出「通順但錯誤」的文字，一律放棄。
 const PDF_MAX_STREAMS = 14;
 const PDF_MAX_INFLATED = 250000;
+// 每個串流只解碼這麼多位元組來分類與擷取。原本一律解 200 KB，
+// 14 個串流就是 2.8 MB 的 latin1 解碼——本機測試檔的串流小，看不出來，
+// 真實 PDF 的串流大得多，一筆就把整個請求的 CPU 預算吃光
+// （預算是整個請求共用的，而 abstract 模式一次並行四筆）。
+const PDF_STREAM_PEEK = 48000;
+// PDF 抽取只在預算還過半時才做：留給同一批的其他文獻，
+// 否則第一個 PDF 做完，後面全部回 cpu_budget。
+const PDF_BUDGET_SHARE = 0.5;
 const PDF_RAW_ENOUGH = 9000;         // 累積到這麼多字串引數就停止解壓
 const PDF_MIN_CHARS = 120;
 const PDF_CMAP_CONFLICT_MAX = 0.02;
@@ -2648,6 +2656,18 @@ async function pdfApplyFilters(bytes, filters, ctx) {
     if (!cur) return null;
   }
   return cur;
+}
+
+// 在位元組裡找標記，避免為了分類而把整個串流解碼成字串
+function pdfHasMark(bytes, mark) {
+  const m = [];
+  for (let i = 0; i < mark.length; i++) m.push(mark.charCodeAt(i));
+  const n = Math.min(bytes.length, PDF_STREAM_PEEK);
+  outer: for (let i = 0; i + m.length <= n; i++) {
+    for (let k = 0; k < m.length; k++) if (bytes[i + k] !== m[k]) continue outer;
+    return true;
+  }
+  return false;
 }
 
 // ToUnicode CMap；回傳新增的衝突數（同一編號已有不同對照）
@@ -2744,15 +2764,19 @@ async function pdfBodyText(bytes, ctx) {
     const raw = await pdfApplyFilters(slice.subarray(st.a, st.b), st.filters, ctx);
     if (!raw) continue;
     inflated += raw.length;
-    const text = timed(ctx, () => new TextDecoder('latin1').decode(raw.subarray(0, 200000)));
-    if (text.includes('beginbfchar') || text.includes('beginbfrange')) {
+    // 先用位元組判斷類型，只有需要的串流才解碼成字串（解碼是 CPU 大戶）
+    const isCMap = timed(ctx, () => pdfHasMark(raw, 'beginbf'));
+    const text = timed(ctx, () => new TextDecoder('latin1').decode(raw.subarray(0, PDF_STREAM_PEEK)));
+    if (isCMap) {
       const before = map.size;
       conflicts += timed(ctx, () => pdfParseCMap(text, map));
       cmapEntries += map.size - before;
     } else if (text.includes('BT') && /T[jJ]/.test(text)) contents.push(text);
   }
   // 多張 CMap 互相衝突 → 不同字型子集的對照被混在一起，會產出通順但錯誤的文字
-  if (cmapEntries && conflicts / (cmapEntries + conflicts) > PDF_CMAP_CONFLICT_MAX) return { none: 'pdf_cmap_conflict' };
+  if (cmapEntries && conflicts / (cmapEntries + conflicts) > PDF_CMAP_CONFLICT_MAX) {
+    return { none: 'pdf_cmap_conflict', diag: { streams: streams.length, cmap: map.size, conflicts } };
+  }
 
   const items = timed(ctx, () => {
     const all = [];
@@ -2764,12 +2788,16 @@ async function pdfBodyText(bytes, ctx) {
     }
     return all;
   });
-  if (!items.length) return { none: 'pdf_no_text' };
+  if (!items.length) return { none: 'pdf_no_text', diag: { streams: streams.length, inflated,
+    cmap: map.size, conflicts, contents: contents.length, cpu: Math.round(ctx.cpuMs) } };
 
   const d = timed(ctx, () => pdfDecode(items, map));
   const text = timed(ctx, () => d.text.replace(/\s+/g, ' ').trim().slice(0, PAGE_TEXT_CHARS));
   const bad = timed(ctx, () => pdfQuality(text, d.rate));
-  return bad ? { none: bad } : { kind: 'page', text };
+  // 失敗時附上結構數字（沒有文件內容），否則線上出問題只能靠猜
+  return bad ? { none: bad, diag: { streams: streams.length, inflated, cmap: map.size,
+      conflicts, items: items.length, rate: +d.rate.toFixed(2), chars: text.length, cpu: Math.round(ctx.cpuMs) } }
+    : { kind: 'page', text };
 }
 
 // 開啟網頁（或 DOI 導向的頁面）：學術中繼資料的摘要；scholarly 為 false 時沒有摘要就取內文
@@ -2779,7 +2807,8 @@ async function absFromPage(url, title, ctx, scholarly) {
   if (!r.ok) return { none: httpErrCode(r.status) };
   const head = r.bytes.subarray(0, 5);
   if (/pdf/.test(r.ctype) || (head.length === 5 && String.fromCharCode(...head) === '%PDF-')) {
-    if (ctx.cpuMs > ctx.cpuBudgetMs) return { none: 'cpu_budget' };
+    // 預算是整個請求共用的：過半就不做，把額度留給同一批的其他文獻
+    if (ctx.cpuMs > ctx.cpuBudgetMs * PDF_BUDGET_SHARE) return { none: 'pdf_cpu' };
     const pt = await pdfBodyText(r.bytes, ctx);
     return pt.kind ? { kind: 'page', text: pt.text, src: hostOf(r.url) + ' · PDF' } : pt;
   }
