@@ -2398,6 +2398,236 @@ function makeCtx(lang, nRefs) {
   return ctx;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 來源摘要（mode: 'abstract'）：供前端「引用句與來源摘要比對」使用
+// 請求：{ passcode, lang, mode: 'abstract', items: [{ id, dois[], urls[], title? }] }（最多 ABS_MAX_ITEMS 筆）
+// 回應（JSON）：{ results: [{ id, kind: 'abstract'|'page'|'none', src, text, note }] }
+//   abstract：書目資料庫（OpenAlex、Crossref、Semantic Scholar）或頁面學術中繼資料（citation_abstract 等）的摘要
+//   page：沒有摘要的網頁取內文（從引用題名出現處起，最多 PAGE_TEXT_CHARS 字）
+//   none：取不到（PDF、網站拒絕、逾時等；note 說明原因）
+// 只回傳去標籤後的純文字；整體 ABS_TOTAL_MS 內回應（平台約 36 秒即中止尚未回傳標頭的請求）
+// ═══════════════════════════════════════════════════════════════
+const ABS_MAX_ITEMS = 8;
+const ABS_TOTAL_MS = 25000;
+const ABS_CONCURRENCY = 4;
+const ABS_MAX_CHARS = 4000;          // 摘要上限
+const PAGE_TEXT_CHARS = 6000;        // 網頁內文上限
+const ABS_MIN_CHARS = 150;           // 短於此的「摘要」多半是網站簡介或截斷的描述，不採用
+const PAGE_MIN_CHARS = 300;
+const SEMANTIC_SCHOLAR = 'https://api.semanticscholar.org/graph/v1/paper/';
+
+function validateAbsItems(items) {
+  if (!Array.isArray(items) || !items.length) return { status: 400, error: 'no items', code: 'NO_ITEMS' };
+  if (items.length > ABS_MAX_ITEMS) return { status: 413, error: `too many items (max ${ABS_MAX_ITEMS})`, code: 'TOO_MANY_ITEMS' };
+  const ids = new Set(), out = [];
+  for (const r of items) {
+    const bad = why => ({ status: 400, error: 'bad item: ' + why, code: 'BAD_ITEM' });
+    if (!r || typeof r !== 'object' || Array.isArray(r)) return bad('not an object');
+    if (typeof r.id !== 'string' || !/^[A-Za-z0-9_.:-]{1,64}$/.test(r.id) || ids.has(r.id)) return bad('id');
+    ids.add(r.id);
+    for (const k of ['urls', 'dois']) {
+      if (r[k] == null) continue;
+      if (!Array.isArray(r[k]) || r[k].length > MAX_LIST_ITEMS || r[k].some(x => typeof x !== 'string' || x.length > MAX_URL_CHARS)) return bad(k);
+    }
+    if (r.title != null && (typeof r.title !== 'string' || r.title.length > MAX_FOUND_TITLE)) return bad('title');
+    out.push({
+      id: r.id,
+      dois: (r.dois || []).filter(d => d.length <= MAX_DOI_CHARS).map(normDoi).filter(Boolean).slice(0, MAX_DOIS_PER_REF),
+      urls: (r.urls || []).slice(0, MAX_URLS_PER_REF),
+      title: typeof r.title === 'string' ? r.title.trim() : '',
+    });
+  }
+  return { items: out };
+}
+
+// OpenAlex 的摘要以倒排索引提供：{ 字詞: [位置…] } → 依位置還原（位置與字數都設上限）
+function invertedToText(inv) {
+  if (!inv || typeof inv !== 'object' || Array.isArray(inv)) return '';
+  const words = [];
+  let n = 0;
+  for (const w of Object.keys(inv)) {
+    const pos = inv[w];
+    if (!Array.isArray(pos)) continue;
+    for (const p of pos) {
+      if (Number.isInteger(p) && p >= 0 && p < 4000) { words[p] = w; n++; }
+      if (n > 4000) break;
+    }
+    if (n > 4000) break;
+  }
+  return words.filter(x => typeof x === 'string').join(' ');
+}
+
+// 摘要文字：去標籤、去「Abstract／摘要」標頭、截斷
+function absText(raw, max) {
+  const t = cleanText(String(raw || '').slice(0, 60000), max || ABS_MAX_CHARS);
+  return t ? t.replace(/^(?:abstract|summary|摘\s*要)\s*[:：.\-–—]?\s*/i, '').trim() : '';
+}
+
+// 頁面 <head> 的 meta（只看前 200 KB；與 analyzeHtml 相同的線性寫法）
+function headMeta(html) {
+  const headEnd = html.search(/<\/head\s*>/i);
+  const head = html.slice(0, headEnd > 0 ? Math.min(headEnd, 200000) : 200000);
+  const meta = {};
+  for (const m of head.matchAll(/<meta\b([^<>]*)>/gi)) {
+    const a = parseAttrs(m[1]);
+    const key = String(a.name || a.property || a.itemprop || '').toLowerCase().trim();
+    if (key && a.content != null && !(key in meta)) meta[key] = a.content;
+  }
+  return meta;
+}
+
+// 學術中繼資料中的摘要。scholarly＝DOI 導向的出版社頁面：description 類欄位通常就是摘要；
+// 一般網頁的 description 多半是網站簡介，不當成摘要（改取內文）
+function metaAbstract(meta, scholarly) {
+  const keys = scholarly
+    ? ['citation_abstract', 'dcterms.abstract', 'dc.description', 'dcterms.description', 'og:description', 'description', 'twitter:description']
+    : ['citation_abstract', 'dcterms.abstract'];
+  for (const k of keys) {
+    const t = absText(meta[k]);
+    if (t.length >= ABS_MIN_CHARS) return { text: t, src: k };
+  }
+  return null;
+}
+
+// 線性時間移除導覽、頁首頁尾等區塊（每個區塊只掃一次；未閉合就略過該標籤）
+function dropBlocks(html) {
+  const re = /<(nav|header|footer|aside|form|select|button)\b/gi;
+  const kept = [];
+  let pos = 0, m;
+  while ((m = re.exec(html))) {
+    const closeRe = new RegExp('</' + m[1] + '\\s*>', 'gi');
+    closeRe.lastIndex = m.index + m[0].length;
+    const c = closeRe.exec(html);
+    if (!c) continue;
+    kept.push(html.slice(pos, m.index));
+    pos = c.index + c[0].length;
+    re.lastIndex = pos;
+  }
+  kept.push(html.slice(pos));
+  return kept.join(' ');
+}
+
+// 網頁內文：優先 <article>／<main>，去掉導覽與頁首頁尾；有引用題名時從題名出現處開始取
+function pageText(html, title) {
+  const art = firstTagText(html, 'article', 400000) || firstTagText(html, 'main', 400000);
+  const src = art && art.length > 1500 ? art : html;
+  let t = cleanText(stripToText(dropBlocks(src)), 120000) || '';
+  if (title) {
+    const probe = String(title).replace(/\s+/g, ' ').trim().slice(0, 24);
+    const i = probe.length >= 6 ? t.indexOf(probe) : -1;
+    if (i > 0) t = t.slice(Math.max(0, i - 200));
+  }
+  return t.slice(0, PAGE_TEXT_CHARS).trim();
+}
+
+async function absFromOpenAlex(doi, ctx) {
+  const r = await apiJson(`https://api.openalex.org/works/doi:${encDoi(doi)}?select=doi,display_name,abstract_inverted_index${openalexParams(ctx, false)}`, ctx);
+  if (r.error || r.status !== 200 || !r.json) return null;
+  const t = timed(ctx, () => absText(invertedToText(r.json.abstract_inverted_index)));
+  return t.length >= ABS_MIN_CHARS ? { text: t, src: 'OpenAlex' } : null;
+}
+
+async function absFromCrossref(doi, ctx) {
+  const q = ctx.mailto ? `?mailto=${encodeURIComponent(ctx.mailto)}` : '';
+  const r = await crossrefCall(`https://api.crossref.org/works/${encDoi(doi)}${q}`, ctx);
+  if (r.error || r.status !== 200 || !r.json || !r.json.message) return null;
+  const t = timed(ctx, () => absText(r.json.message.abstract));
+  return t.length >= ABS_MIN_CHARS ? { text: t, src: 'Crossref' } : null;
+}
+
+async function absFromSemanticScholar(doi, ctx) {
+  const r = await apiJson(`${SEMANTIC_SCHOLAR}DOI:${encDoi(doi)}?fields=abstract`, ctx);
+  if (r.error || r.status !== 200 || !r.json) return null;
+  const t = timed(ctx, () => absText(r.json.abstract));
+  return t.length >= ABS_MIN_CHARS ? { text: t, src: 'Semantic Scholar' } : null;
+}
+
+// 開啟網頁（或 DOI 導向的頁面）：學術中繼資料的摘要；scholarly 為 false 時沒有摘要就取內文
+async function absFromPage(url, title, ctx, scholarly) {
+  const r = await safeFetch(url, ctx, pageHeaders(), MAX_PAGE_BYTES);
+  if (r.error) return { none: r.error };
+  if (!r.ok) return { none: httpErrCode(r.status) };
+  const head = r.bytes.subarray(0, 5);
+  if (/pdf/.test(r.ctype) || (head.length === 5 && String.fromCharCode(...head) === '%PDF-')) return { none: 'pdf' };
+  if (!/html|xml|text\/plain/.test(r.ctype || 'text/html')) return { none: 'not_html' };
+  if (ctx.cpuMs > ctx.cpuBudgetMs) return { none: 'cpu_budget' };
+  return timed(ctx, () => {
+    const html = decodeHtml(r.bytes, r.ctype || '');
+    const ma = metaAbstract(headMeta(html), scholarly);
+    if (ma) return { kind: 'abstract', text: ma.text, src: hostOf(r.url) + ' · ' + ma.src };
+    if (scholarly) return { none: 'no_abstract' };
+    const t = pageText(html, title);
+    return t.length >= PAGE_MIN_CHARS ? { kind: 'page', text: t, src: hostOf(r.url) } : { none: 'no_text' };
+  });
+}
+
+// 沒有 DOI、或 DOI 查不到摘要：以題名在 OpenAlex 搜尋，題名幾乎相同才採用
+async function absByTitle(title, ctx) {
+  if (!title || contentSet(title).size < 3) return null;
+  const q = encodeURIComponent(title.replace(/[,:;!?()[\]{}"'|\\/]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200));
+  const r = await apiJson(`https://api.openalex.org/works?filter=title.search:${q}&per-page=3&select=display_name,abstract_inverted_index${openalexParams(ctx, false)}`, ctx);
+  if (r.error || r.status !== 200 || !r.json || !Array.isArray(r.json.results)) return null;
+  for (const w of r.json.results.slice(0, 3)) {
+    if (!w || titleSim(title, w.display_name || '') < 0.9) continue;
+    const t = timed(ctx, () => absText(invertedToText(w.abstract_inverted_index)));
+    if (t.length >= ABS_MIN_CHARS) return { text: t, src: 'OpenAlex (title)' };
+  }
+  return null;
+}
+
+async function abstractFor(item, ctx) {
+  const notes = [];
+  for (const doi of item.dois) {
+    for (const f of [absFromOpenAlex, absFromCrossref, absFromSemanticScholar]) {
+      if (ctx.expired()) return { id: item.id, kind: 'none', src: '', text: '', note: 'deadline' };
+      const a = await f(doi, ctx);
+      if (a) return { id: item.id, kind: 'abstract', src: a.src, text: a.text, note: '' };
+    }
+    if (ctx.expired()) break;
+    const p = await absFromPage(`https://doi.org/${encDoi(doi)}`, item.title, ctx, true);
+    if (p.kind) return { id: item.id, kind: p.kind, src: p.src, text: p.text, note: '' };
+    notes.push('doi:' + p.none);
+  }
+  for (const url of item.urls) {
+    if (ctx.expired()) break;
+    if (/^https?:\/\/(?:dx\.)?doi\.org\//i.test(url) && item.dois.length) continue;   // 已依 DOI 查過
+    const p = await absFromPage(url, item.title, ctx, false);
+    if (p.kind) return { id: item.id, kind: p.kind, src: p.src, text: p.text, note: '' };
+    notes.push(p.none);
+  }
+  if (!ctx.expired()) {
+    const a = await absByTitle(item.title, ctx);
+    if (a) return { id: item.id, kind: 'abstract', src: a.src, text: a.text, note: '' };
+  }
+  return { id: item.id, kind: 'none', src: '', text: '', note: (ctx.expired() ? ['deadline'] : notes).join(',').slice(0, 80) || 'not_found' };
+}
+
+async function abstractMode(body, L, request) {
+  const v = validateAbsItems(body.items);
+  if (v.error) return json(v.status, { error: v.error, code: v.code });
+  const ctx = makeCtx(L, v.items.length);
+  clearTimeout(ctx.timer);
+  ctx.deadline = Date.now() + ABS_TOTAL_MS;
+  ctx.timer = setTimeout(() => ctx.cancel('deadline'), ABS_TOTAL_MS);
+  if (request.signal && typeof request.signal.addEventListener === 'function') {
+    request.signal.addEventListener('abort', () => ctx.cancel('client'), { once: true });
+  }
+  const results = new Array(v.items.length);
+  let next = 0;
+  const worker = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= v.items.length) return;
+      const it = v.items[i];
+      try { results[i] = await abstractFor(it, ctx); }
+      catch (_) { results[i] = { id: it.id, kind: 'none', src: '', text: '', note: 'internal' }; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(ABS_CONCURRENCY, v.items.length) }, worker));
+  clearTimeout(ctx.timer);
+  return json(200, { results, guard: { dns: dnsGuard.state, upstream: ctx.upstream } });
+}
+
 export default async (request, context) => {
   if (request.method !== 'POST') return json(405, { error: msg('zh', 'bad_method'), code: 'METHOD_NOT_ALLOWED' }, { allow: 'POST' });
 
@@ -2427,6 +2657,9 @@ export default async (request, context) => {
   const given = typeof body.passcode === 'string' ? body.passcode.trim() : '';
   if (!given) return json(401, { error: msg(L, 'passcode_required'), code: 'PASSCODE_REQUIRED' });
   if (given !== PASSCODE) return json(401, { error: msg(L, 'passcode_invalid'), code: 'PASSCODE_INVALID' });
+
+  // 來源摘要（供引用句與摘要比對）：與文獻查證共用安全連線、預算與通行碼
+  if (body.mode === 'abstract') return abstractMode(body, L, request);
 
   const v = validateRefs(body.refs, L);
   if (v.error) return json(v.status, { error: v.error, code: v.code });

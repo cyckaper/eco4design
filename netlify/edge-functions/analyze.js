@@ -17,7 +17,7 @@ const MAX_PROMPT_CHARS = 24000;   // 提示詞長度上限（防濫用）
 // 輸出上限：新一代模型預設會先思考（思考 token 也計入），上限給得較寬；只依實際產生量計費
 const MAX_TOKENS = 64000;
 // 推理強度：分析用 high（多查、查得仔細，減少「未查得」），改寫只刪除與更正用 low
-const EFFORT = { analyze: 'high', revise: 'low' };
+const EFFORT = { analyze: 'high', revise: 'low', support: 'medium' };
 // 網路工具：搜尋 ≤15 次（與 index.html 的 WEB_SEARCH_MAX 一致）；讀取網頁全文 ≤6 次（論文、政府文件中的數值多半不在搜尋摘要裡）。
 // Sonnet／Opus 4.6 以上用可過濾結果的新版工具（先以程式篩出相關段落再放進內容，省 token）；Haiku 只搜尋（維持便宜、快速）。
 const WEB_SEARCH_MAX = 15, WEB_FETCH_MAX = 6, FETCH_MAX_CONTENT_TOKENS = 15000;
@@ -41,7 +41,16 @@ function webTools(model) {
 const MAX_REVISE_PROMPT_CHARS = 80000;
 const REVISE_MIN_TOKENS = 4096;
 const REVISE_RATE_WINDOW_MS = 10 * 60 * 1000, REVISE_RATE_MAX = 40;
-const MODES = new Set(['analyze', 'revise']);
+// mode: 'support'（引用句與來源摘要比對）：輸入是來源摘要與引用它們的句子，輸出 JSON 判定；不提供任何工具，
+// 只能依提示詞中的摘要判斷。提示詞必須恰好含一個位於末尾的 <<<SOURCES … SOURCES>>> 區塊；與 revise 共用頻率限制
+const MAX_SUPPORT_PROMPT_CHARS = 100000;
+const SUPPORT_MAX_TOKENS = 16000;
+const MODES = new Set(['analyze', 'revise', 'support']);
+function supportBlockOk(prompt) {
+  if (prompt.split('<<<SOURCES').length !== 2 || prompt.split('SOURCES>>>').length !== 2) return false;
+  const a = prompt.indexOf('<<<SOURCES'), b = prompt.indexOf('SOURCES>>>');
+  return b > a && !prompt.slice(b + 10).trim();
+}
 const reviseHits = new Map();
 function reviseRateLimited(ip) {
   const now = Date.now();
@@ -121,10 +130,10 @@ export default async (request, context) => {
   if (!MODES.has(mode)) {
     return json(400, { error: '不支援的 mode', code: 'BAD_MODE' });
   }
-  const revise = mode === 'revise';
-  const maxChars = revise ? MAX_REVISE_PROMPT_CHARS : MAX_PROMPT_CHARS;
-  // revise 只供本工具的查證流程使用：未設定通行碼的站台不提供（查證服務同樣不開放）
-  if (revise && !PASSCODE) {
+  const revise = mode === 'revise', support = mode === 'support';
+  const maxChars = revise ? MAX_REVISE_PROMPT_CHARS : support ? MAX_SUPPORT_PROMPT_CHARS : MAX_PROMPT_CHARS;
+  // revise／support 只供本工具的查證流程使用：未設定通行碼的站台不提供（查證服務同樣不開放）
+  if ((revise || support) && !PASSCODE) {
     return json(503, { error: '本站尚未設定 QI_PASSCODE，不提供改寫服務', code: 'NOT_CONFIGURED' });
   }
 
@@ -138,7 +147,10 @@ export default async (request, context) => {
   if (revise && !reviseBlockOk(prompt)) {
     return json(400, { error: '改寫請求格式不符（須恰好一份 <<<REPORT <article>…</article> REPORT>>> 區塊）', code: 'BAD_REVISE_PROMPT' });
   }
-  if (revise) {
+  if (support && !supportBlockOk(prompt)) {
+    return json(400, { error: '摘要比對請求格式不符（須恰好一個位於末尾的 <<<SOURCES … SOURCES>>> 區塊）', code: 'BAD_SUPPORT_PROMPT' });
+  }
+  if (revise || support) {
     const ip = (context && typeof context.ip === 'string' && context.ip) ||
       request.headers.get('x-nf-client-connection-ip') || (request.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'unknown';
     if (reviseRateLimited(ip)) return new Response(JSON.stringify({ error: '改寫請求過於頻繁，請稍後再試', code: 'RATE_LIMITED' }),
@@ -149,7 +161,10 @@ export default async (request, context) => {
   const inCatalog = id => typeof id === 'string' && catalog.models.some(m => m.id === id);
   const familyLatest = f => (catalog.models.find(m => m.family === f) || {}).id;
   let model;
-  if (revise) {
+  if (support) {
+    // 摘要比對：判斷正確性優先，一律用最新的 Sonnet
+    model = familyLatest('sonnet') || catalog.recommended;
+  } else if (revise) {
     // 改寫：產生報告用 Haiku 時沿用 Haiku，其餘一律用最新的 Sonnet（不需要較貴的模型）
     const fam = inCatalog(body.model) && (parseModelId(body.model) || {}).family;
     model = (fam === 'haiku' ? body.model : familyLatest('sonnet')) || catalog.recommended;
@@ -157,7 +172,9 @@ export default async (request, context) => {
     model = inCatalog(body.model) ? body.model : catalog.recommended;
   }
   // revise 的輸出（修訂後的報告）只會比輸入短：上限依輸入長度縮小（預設會思考的模型多留思考空間）
-  const maxTokens = revise
+  const maxTokens = support
+    ? SUPPORT_MAX_TOKENS + (thinksByDefault(model) ? 16000 : 0)
+    : revise
     ? Math.min(MAX_TOKENS, Math.max(REVISE_MIN_TOKENS, Math.ceil(prompt.length * 1.2)) + (thinksByDefault(model) ? 16000 : 0))
     : (/haiku/.test(model) ? 32000 : MAX_TOKENS);
 
@@ -173,10 +190,10 @@ export default async (request, context) => {
       model,
       max_tokens: maxTokens,
       stream: true,                     // 串流是關鍵：讓連線持續有資料流動，避開逾時
-      ...(supportsEffort(model) ? { output_config: { effort: revise ? EFFORT.revise : EFFORT.analyze } } : {}),
+      ...(supportsEffort(model) ? { output_config: { effort: EFFORT[mode] || EFFORT.analyze } } : {}),
       messages: msgs,
-      // revise：不帶 tools，模型無法搜尋或取得新資料
-      ...(revise ? {} : { tools: webTools(model) }),
+      // revise／support：不帶 tools，模型無法搜尋或取得新資料
+      ...(revise || support ? {} : { tools: webTools(model) }),
     }),
   });
   let upstream;
@@ -201,7 +218,7 @@ export default async (request, context) => {
   }
 
   // 把 SSE 串流轉送給瀏覽器（搜尋迴圈暫停時自動接續、閒置時送 keepalive、網頁全文不轉送）；x-model：實際使用的模型，供前端記錄
-  const outBody = revise ? upstream.body : relay(upstream, { userMessages: messages, next: callUpstream });
+  const outBody = revise || support ? upstream.body : relay(upstream, { userMessages: messages, next: callUpstream });
   return new Response(outBody, {
     status: 200,
     headers: {
