@@ -2412,8 +2412,15 @@ const ABS_TOTAL_MS = 25000;
 const ABS_CONCURRENCY = 4;
 const ABS_MAX_CHARS = 4000;          // 摘要上限
 const PAGE_TEXT_CHARS = 6000;        // 網頁內文上限
+// 長度門檻要分語系。中文的資訊密度高得多：150 字的中文摘要、
+// 150 字的中文公告都是完整有內容的文字，用拉丁文字的門檻會把它們當成
+// 網站簡介丟掉——而中文政府與學術網頁正是本工具最常引用的來源類型，
+// 丟掉就等於這個功能對它們完全沒作用。
 const ABS_MIN_CHARS = 150;           // 短於此的「摘要」多半是網站簡介或截斷的描述，不採用
+const ABS_MIN_CHARS_CJK = 60;
 const PAGE_MIN_CHARS = 300;
+const PAGE_MIN_CHARS_CJK = 100;    // 選單殘跡通常不到 50 字；真實公告多在 80–400 字
+const minLen = (t, latin, cjk) => (CJK_RE.test(t) ? cjk : latin);
 const SEMANTIC_SCHOLAR = 'https://api.semanticscholar.org/graph/v1/paper/';
 
 function validateAbsItems(items) {
@@ -2484,14 +2491,21 @@ function metaAbstract(meta, scholarly) {
     : ['citation_abstract', 'dcterms.abstract'];
   for (const k of keys) {
     const t = absText(meta[k]);
-    if (t.length >= ABS_MIN_CHARS) return { text: t, src: k };
+    if (t.length >= minLen(t, ABS_MIN_CHARS, ABS_MIN_CHARS_CJK)) return { text: t, src: k };
   }
   return null;
 }
 
 // 線性時間移除導覽、頁首頁尾等區塊（每個區塊只掃一次；未閉合就略過該標籤）
+//
+// 刻意不含 form：臺灣政府網站大量使用 ASP.NET WebForms，
+// <form id="form1" runat="server"> 包住整個 body，移除它等於把內文全部丟掉。
+// pageText() 會先試 <article>／<main>，但政府 CMS 多半沒有那些語意標籤，
+// 「沒有 article 又是 WebForms」正是最常見的組合。
+// 表單裡的雜訊由 select 與 button 處理即可——少掉一個搜尋框，
+// 遠好過整頁內文消失。
 function dropBlocks(html) {
-  const re = /<(nav|header|footer|aside|form|select|button)\b/gi;
+  const re = /<(nav|header|footer|aside|select|button)\b/gi;
   const kept = [];
   let pos = 0, m;
   while ((m = re.exec(html))) {
@@ -2524,7 +2538,7 @@ async function absFromOpenAlex(doi, ctx) {
   const r = await apiJson(`https://api.openalex.org/works/doi:${encDoi(doi)}?select=doi,display_name,abstract_inverted_index${openalexParams(ctx, false)}`, ctx);
   if (r.error || r.status !== 200 || !r.json) return null;
   const t = timed(ctx, () => absText(invertedToText(r.json.abstract_inverted_index)));
-  return t.length >= ABS_MIN_CHARS ? { text: t, src: 'OpenAlex' } : null;
+  return t.length >= minLen(t, ABS_MIN_CHARS, ABS_MIN_CHARS_CJK) ? { text: t, src: 'OpenAlex' } : null;
 }
 
 async function absFromCrossref(doi, ctx) {
@@ -2532,14 +2546,14 @@ async function absFromCrossref(doi, ctx) {
   const r = await crossrefCall(`https://api.crossref.org/works/${encDoi(doi)}${q}`, ctx);
   if (r.error || r.status !== 200 || !r.json || !r.json.message) return null;
   const t = timed(ctx, () => absText(r.json.message.abstract));
-  return t.length >= ABS_MIN_CHARS ? { text: t, src: 'Crossref' } : null;
+  return t.length >= minLen(t, ABS_MIN_CHARS, ABS_MIN_CHARS_CJK) ? { text: t, src: 'Crossref' } : null;
 }
 
 async function absFromSemanticScholar(doi, ctx) {
   const r = await apiJson(`${SEMANTIC_SCHOLAR}DOI:${encDoi(doi)}?fields=abstract`, ctx);
   if (r.error || r.status !== 200 || !r.json) return null;
   const t = timed(ctx, () => absText(r.json.abstract));
-  return t.length >= ABS_MIN_CHARS ? { text: t, src: 'Semantic Scholar' } : null;
+  return t.length >= minLen(t, ABS_MIN_CHARS, ABS_MIN_CHARS_CJK) ? { text: t, src: 'Semantic Scholar' } : null;
 }
 
 // 開啟網頁（或 DOI 導向的頁面）：學術中繼資料的摘要；scholarly 為 false 時沒有摘要就取內文
@@ -2557,7 +2571,7 @@ async function absFromPage(url, title, ctx, scholarly) {
     if (ma) return { kind: 'abstract', text: ma.text, src: hostOf(r.url) + ' · ' + ma.src };
     if (scholarly) return { none: 'no_abstract' };
     const t = pageText(html, title);
-    return t.length >= PAGE_MIN_CHARS ? { kind: 'page', text: t, src: hostOf(r.url) } : { none: 'no_text' };
+    return t.length >= minLen(t, PAGE_MIN_CHARS, PAGE_MIN_CHARS_CJK) ? { kind: 'page', text: t, src: hostOf(r.url) } : { none: 'no_text' };
   });
 }
 
@@ -2570,7 +2584,7 @@ async function absByTitle(title, ctx) {
   for (const w of r.json.results.slice(0, 3)) {
     if (!w || titleSim(title, w.display_name || '') < 0.9) continue;
     const t = timed(ctx, () => absText(invertedToText(w.abstract_inverted_index)));
-    if (t.length >= ABS_MIN_CHARS) return { text: t, src: 'OpenAlex (title)' };
+    if (t.length >= minLen(t, ABS_MIN_CHARS, ABS_MIN_CHARS_CJK)) return { text: t, src: 'OpenAlex (title)' };
   }
   return null;
 }
