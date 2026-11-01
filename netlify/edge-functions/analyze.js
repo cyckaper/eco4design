@@ -41,7 +41,14 @@ function webTools(model) {
 const MAX_REVISE_PROMPT_CHARS = 80000;
 const REVISE_MIN_TOKENS = 4096;
 const REVISE_RATE_WINDOW_MS = 10 * 60 * 1000, REVISE_RATE_MAX = 40;
-const MODES = new Set(['analyze', 'revise']);
+// mode: 'refsupport'（判讀文獻是否支持引用它的主張）：輸入是每筆文獻的書目、報告裡引用它的
+// 那句話，以及查核取回的摘要或頁面內文。只比對題名會放過「題名相符、內容無關」的引用，
+// 所以要讀內容來判斷。
+// 絕對不提供任何工具（不做網路搜尋）：判讀必須只以提供的內容為依據。
+// 若允許搜尋，模型會去別處「找到支持」，整個查核就失去意義。
+const MAX_REFSUPPORT_PROMPT_CHARS = 60000;
+const REFSUPPORT_MAX_TOKENS = 8192;
+const MODES = new Set(['analyze', 'revise', 'refsupport']);
 const reviseHits = new Map();
 function reviseRateLimited(ip) {
   const now = Date.now();
@@ -51,6 +58,18 @@ function reviseRateLimited(ip) {
   if (reviseHits.size > 5000) reviseHits.clear();   // 記憶體上限：極端情況下整批重置
   return arr.length > REVISE_RATE_MAX;
 }
+// 判讀區塊：<<<REFS 與 REFS>>> 各恰好一次、區塊位於提示詞末尾，且區塊內是可解析的陣列（至多 25 筆）
+function refsBlockOk(prompt) {
+  const open = prompt.split('<<<REFS').length - 1, close = prompt.split('REFS>>>').length - 1;
+  if (open !== 1 || close !== 1) return false;
+  const a = prompt.indexOf('<<<REFS'), b = prompt.indexOf('REFS>>>');
+  if (b < a || prompt.slice(b + 7).trim()) return false;
+  try {
+    const arr = JSON.parse(prompt.slice(a + 7, b));
+    return Array.isArray(arr) && arr.length >= 1 && arr.length <= 25;
+  } catch (_) { return false; }
+}
+
 // 報告區塊：<<<REPORT 與 REPORT>>> 各恰好一次、區塊位於提示詞末尾，且區塊內恰好一份 <article>…</article>
 function reviseBlockOk(prompt) {
   const open = prompt.split('<<<REPORT').length - 1, close = prompt.split('REPORT>>>').length - 1;
@@ -122,10 +141,12 @@ export default async (request, context) => {
     return json(400, { error: '不支援的 mode', code: 'BAD_MODE' });
   }
   const revise = mode === 'revise';
-  const maxChars = revise ? MAX_REVISE_PROMPT_CHARS : MAX_PROMPT_CHARS;
+  const refsupport = mode === 'refsupport';
+  const toolMode = revise || refsupport;   // 本工具查證流程專用：需通行碼、不給網路工具、另有速率限制
+  const maxChars = revise ? MAX_REVISE_PROMPT_CHARS : refsupport ? MAX_REFSUPPORT_PROMPT_CHARS : MAX_PROMPT_CHARS;
   // revise 只供本工具的查證流程使用：未設定通行碼的站台不提供（查證服務同樣不開放）
-  if (revise && !PASSCODE) {
-    return json(503, { error: '本站尚未設定 QI_PASSCODE，不提供改寫服務', code: 'NOT_CONFIGURED' });
+  if (toolMode && !PASSCODE) {
+    return json(503, { error: '本站尚未設定 QI_PASSCODE，不提供此服務', code: 'NOT_CONFIGURED' });
   }
 
   const prompt = typeof body.prompt === 'string' ? body.prompt : '';
@@ -135,10 +156,13 @@ export default async (request, context) => {
   if (prompt.length > maxChars) {
     return json(413, { error: `提示詞過長（${prompt.length} 字元，上限 ${maxChars}）`, code: 'PROMPT_TOO_LONG' });
   }
+  if (refsupport && !refsBlockOk(prompt)) {
+    return json(400, { error: '判讀請求格式不符（須恰好一份 <<<REFS […] REFS>>> 區塊，至多 25 筆）', code: 'BAD_REFSUPPORT_PROMPT' });
+  }
   if (revise && !reviseBlockOk(prompt)) {
     return json(400, { error: '改寫請求格式不符（須恰好一份 <<<REPORT <article>…</article> REPORT>>> 區塊）', code: 'BAD_REVISE_PROMPT' });
   }
-  if (revise) {
+  if (toolMode) {
     const ip = (context && typeof context.ip === 'string' && context.ip) ||
       request.headers.get('x-nf-client-connection-ip') || (request.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'unknown';
     if (reviseRateLimited(ip)) return new Response(JSON.stringify({ error: '改寫請求過於頻繁，請稍後再試', code: 'RATE_LIMITED' }),
@@ -149,8 +173,8 @@ export default async (request, context) => {
   const inCatalog = id => typeof id === 'string' && catalog.models.some(m => m.id === id);
   const familyLatest = f => (catalog.models.find(m => m.family === f) || {}).id;
   let model;
-  if (revise) {
-    // 改寫：產生報告用 Haiku 時沿用 Haiku，其餘一律用最新的 Sonnet（不需要較貴的模型）
+  if (toolMode) {
+    // 改寫與判讀：產生報告用 Haiku 時沿用 Haiku，其餘一律用最新的 Sonnet（不需要較貴的模型）
     const fam = inCatalog(body.model) && (parseModelId(body.model) || {}).family;
     model = (fam === 'haiku' ? body.model : familyLatest('sonnet')) || catalog.recommended;
   } else {
@@ -159,7 +183,10 @@ export default async (request, context) => {
   // revise 的輸出（修訂後的報告）只會比輸入短：上限依輸入長度縮小（預設會思考的模型多留思考空間）
   const maxTokens = revise
     ? Math.min(MAX_TOKENS, Math.max(REVISE_MIN_TOKENS, Math.ceil(prompt.length * 1.2)) + (thinksByDefault(model) ? 16000 : 0))
-    : (/haiku/.test(model) ? 32000 : MAX_TOKENS);
+    : refsupport
+      // 判讀的輸出是每筆一行結構化結果，很短；思考空間另計
+      ? REFSUPPORT_MAX_TOKENS + (thinksByDefault(model) ? 8000 : 0)
+      : (/haiku/.test(model) ? 32000 : MAX_TOKENS);
 
   const messages = [{ role: 'user', content: prompt }];
   const callUpstream = msgs => fetch(ANTHROPIC_URL, {
@@ -176,7 +203,9 @@ export default async (request, context) => {
       ...(supportsEffort(model) ? { output_config: { effort: revise ? EFFORT.revise : EFFORT.analyze } } : {}),
       messages: msgs,
       // revise：不帶 tools，模型無法搜尋或取得新資料
-      ...(revise ? {} : { tools: webTools(model) }),
+      // 判讀與改寫都不給網路工具：判讀只能依據提供的摘要／內文，
+      // 不得上網另尋支持；改寫只能刪除與更正，不得引入未查證的新資料。
+      ...(toolMode ? {} : { tools: webTools(model) }),
     }),
   });
   let upstream;
