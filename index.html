@@ -8800,7 +8800,10 @@ ${block}`;
         pdf_cmap_conflict: 'PDF 的字型對照表互相衝突（未採用，以免誤判）',
         pdf_cpu: '同批文獻已用掉運算額度，這筆的 PDF 未處理（可單獨再查一次）',
         pdf_encrypted: 'PDF 已加密，無法取出文字',
-        pdf_too_large: 'PDF 檔案過大，目前只處理 300 KB 以下的 PDF',
+        pdf_too_large: 'PDF 檔案過大（超過 12 MB）',
+        pdf_timeout: 'PDF 處理逾時',
+        pdf_parse_failed: 'PDF 無法解析（檔案可能損壞）',
+        not_pdf: '網址回傳的不是 PDF',
         blocked_403: '網站拒絕自動存取', timeout: '連線逾時', deadline: '超過時間上限', no_abstract: '出版頁面沒有摘要', no_text: '頁面沒有可讀內文', not_found: '書目資料庫沒有摘要', rate_limited: '網站限流' },
       noneOther: '無法取得',
       extra: n => `另有 ${n} 句未比對（每個來源最多比對 ${SUP_MAX_PER_SOURCE} 句），請人工核對。`,
@@ -8830,7 +8833,10 @@ ${block}`;
         pdf_cmap_conflict: 'the PDF font maps conflict, so the text was not used',
         pdf_cpu: 'the compute budget for this batch was used up, so this PDF was skipped (check it on its own)',
         pdf_encrypted: 'the PDF is encrypted, so no text could be extracted',
-        pdf_too_large: 'the PDF is too large; only PDFs under 300 KB are processed for now',
+        pdf_too_large: 'the PDF is too large (over 12 MB)',
+        pdf_timeout: 'PDF processing timed out',
+        pdf_parse_failed: 'the PDF could not be parsed (it may be corrupt)',
+        not_pdf: 'the URL did not return a PDF',
         blocked_403: 'site refused automated access', timeout: 'timed out', deadline: 'time limit reached', no_abstract: 'publisher page has no abstract', no_text: 'page has no readable text', not_found: 'no abstract in the bibliographic databases', rate_limited: 'site rate-limited' },
       noneOther: 'not retrieved',
       extra: n => `${n} more sentence(s) were not checked (at most ${SUP_MAX_PER_SOURCE} per source); check them by hand.`,
@@ -9489,7 +9495,7 @@ ${block}`;
   // ========== About & Feedback ==========
   // 將此處 email 改成您自己的（接收回饋用）
   const FEEDBACK_EMAIL = 'cycland@ntu.edu.tw';
-  const APP_VERSION = 'v1.36'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
+  const APP_VERSION = 'v1.37'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
   document.querySelectorAll('.app-version').forEach(el => { el.textContent = APP_VERSION; });
 
   function openAboutModal() {

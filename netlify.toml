@@ -1,7 +1,20 @@
 # Netlify configuration for Qi-Coexistence
 
 [build]
+  # npm install 只為了 Netlify Functions 的依賴（pdf-text 需要 unpdf／pdf.js）。
+  # 前端仍是單一 index.html，不經任何打包——這個指令不會動到它。
+  # 版本由 package-lock.json 鎖死；Node 版本與 healsmap 一致（那站已長期使用同一組設定）。
+  command = "npm install"
   publish = "."
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# PDF 內文抽取放 Netlify Function（Node 執行環境，秒級 CPU）而不是 Edge Function：
+# Edge 每次請求只有 50 ms CPU，而 pdf.js 解析一份報告要 100 ms 上下，
+# 硬塞進 Edge 的結果是連續撞上限（實測曾衝到 73 ms，超支會中止整個請求）。
+[functions]
+  directory = "netlify/functions"
 
 # Cache headers
 [[headers]]
