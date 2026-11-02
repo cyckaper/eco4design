@@ -2375,7 +2375,11 @@
       atSpecies: species.filter(s => s.rank === '種').length,
       sampled: data.sample && data.sample.records,
       perGroup: data.sample && data.sample.perGroup,
-      complete: !!(data.sample && data.sample.complete),
+      // 有類群沒回應時，伺服器的 complete 已是 false；這裡再保險一次，
+      // 免得舊快取或舊版函式回的 complete:true 讓提示詞拿掉取樣警語
+      complete: !!(data.sample && data.sample.complete) && !(Array.isArray(data.failed) && data.failed.length),
+      // 沒查到的類群必須跟著資料進提示詞：否則模型看到清單裡沒有兩棲類，會寫成「基地沒有兩棲類紀錄」
+      failedGroups: Array.isArray(data.failed) ? data.failed.map(f => f && (f.zh || f.group)).filter(Boolean).slice(0, 21) : [],
       natives: species.filter(s => tbnNativeKind(s.nativeness) === 'native').length,
       aliens: species.filter(s => tbnNativeKind(s.nativeness) === 'alien').length,
       endemics: species.filter(s => s.endemic === true).length,
@@ -3334,6 +3338,11 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
       L.push(en
         ? `Of those taxa: ${nf(t.natives)} recorded as native, ${nf(t.aliens)} as introduced, ${nf(t.endemics)} endemic to Taiwan`
         : `其中原生 ${nf(t.natives)}、外來 ${nf(t.aliens)}、臺灣特有 ${nf(t.endemics)}`);
+      if (t.failedGroups && t.failedGroups.length) {
+        L.push(en
+          ? `⚠️ ${t.failedGroups.length} taxon group(s) did not answer this time (${t.failedGroups.join(', ')}). The list below has nothing from them — that means they were not retrieved, NOT that the site lacks them. Do not write that these groups are absent or unrecorded.`
+          : `⚠️ 這次有 ${t.failedGroups.length} 個類群沒有查到（${t.failedGroups.join('、')}），下列清單裡不會有這些類群——那是沒查到，不是基地沒有。不可寫成「基地沒有這些類群」或「無紀錄」。`);
+      }
       if (!t.complete) {
         // 這一段是整個 TBN 脈絡最重要的一句話
         L.push(en
@@ -10091,7 +10100,7 @@ ${block}`;
   // ========== About & Feedback ==========
   // 將此處 email 改成您自己的（接收回饋用）
   const FEEDBACK_EMAIL = 'cycland@ntu.edu.tw';
-  const APP_VERSION = 'v1.39'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
+  const APP_VERSION = 'v1.40'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
   document.querySelectorAll('.app-version').forEach(el => { el.textContent = APP_VERSION; });
 
   function openAboutModal() {

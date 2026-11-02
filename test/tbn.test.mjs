@@ -316,6 +316,50 @@ const freshSite = (over = {}) => ({ lat: 23.5 + (siteSeq++) * 0.001, lon: 120.5,
     b.notes.some(n => n.includes('不是那裡沒有')), JSON.stringify(b.notes));
 }
 
+// ── 7e. 有類群沒回應時：不可宣稱完整、不可進快取（2026-11-02 線上實際發生）──
+// TBN 連續查詢後回 429，21 個類群有 19 個被擋、清單只剩 6 個分類群；
+// 舊版仍標 sample.complete:true、notes 寫「物種清單涵蓋全部紀錄」，而且把這份殘缺結果
+// 快取六小時——重查一次拿回的還是同一份。
+{
+  stubFetch(url => new URL(url).searchParams.get('taxonGroup') === 'mammals'
+    ? new Response('Too Many Requests', { status: 429 })
+    : okRows(5));
+  const site = freshSite({ groups: 'birds,mammals' });   // 刻意重複同一組座標，測快取
+  let b = await bodyOf(await call(site));
+  check('有類群失敗時 sample.complete 為 false', b.sample && b.sample.complete === false,
+    JSON.stringify(b.sample));
+  check('有類群失敗時 notes 不宣稱「涵蓋全部紀錄」', !b.notes.some(n => n.includes('涵蓋全部紀錄')),
+    JSON.stringify(b.notes));
+  check('有類群失敗時 notes 說明沒回應的類群不在清單內', b.notes.some(n => n.includes('沒有回應的類群不在清單內')),
+    JSON.stringify(b.notes));
+  const before = calls.length;
+  b = await bodyOf(await call(site));
+  check('有類群失敗的結果不進快取：重查會再打上游', b.cache === 'miss' && calls.length > before,
+    b.cache + ' ' + (calls.length - before));
+}
+{
+  // 429 是「慢一點」：等一下再試一次，成功就不算失敗
+  let hits = 0;
+  stubFetch(url => {
+    if (new URL(url).searchParams.get('taxonGroup') !== 'birds') return okRows(5);
+    hits++;
+    return hits === 1 ? new Response('Too Many Requests', { status: 429 }) : okRows(5);
+  });
+  const b = await bodyOf(await call(freshSite({ groups: 'birds' })));
+  check('遇到 429 會稍候重試，最後成功', b && b.species && b.species.length === 1 && !b.failed,
+    JSON.stringify({ hits, failed: b && b.failed }));
+  check('429 重試後的結果標為完整', b.sample && b.sample.complete === true, JSON.stringify(b.sample));
+}
+{
+  // 全部被限流：回 503，原因標 rate_limited，中文訊息請使用者稍候
+  stubFetch(() => new Response('Too Many Requests', { status: 429 }));
+  const r = await call(freshSite({ groups: 'birds,mammals' }));
+  const b = await bodyOf(r);
+  check('全部 429 時回 503、reason 為 rate_limited', r.status === 503 && b.reason === 'rate_limited',
+    r.status + ' ' + (b && b.reason));
+  check('限流的中文訊息請使用者過幾分鐘再試', /過幾分鐘再試/.test(b.zh || ''), b && b.zh);
+}
+
 // ── 7b. rangeTotal：不分類群的真實總筆數 ─────────────────────────────────
 // 類群總和與不分類群總數會差一點（沒有 taxonGroup 的紀錄；溪頭 3 km 實測差 733 筆）。
 // 參考文獻附的網址是不分類群的查詢，讀者點進去看到的是後者——
