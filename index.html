@@ -2363,7 +2363,9 @@
       protected: s.protected || null, redlist: TBN_REDLIST_SHOW[s.redlist] ? s.redlist : null,
     });
     return {
-      fetchedAt: Date.now(),
+      // ISO 字串（與 iNaturalist 相同）：compactMeta 的 isoOrNull 只收字串，給數字會被丟掉，
+      // 參考文獻的「取自」日期就會變成查證當下而非擷取當下
+      fetchedAt: new Date().toISOString(),
       lat: data.site && data.site.lat,
       lon: data.site && data.site.lon,
       r: data.site && data.site.r,
@@ -3190,8 +3192,8 @@ ${N.act}.2 Activity × zone compatibility (<h3>): <table class="compat">. The fi
         en: `${N.meas} Design measures: a table of ≤8 rows with columns measure | location (zone, or "section-stratum" such as "A-Bank shrubs") | links (R# · target species) | spec / numbers (each number with (Author, Year), e.g. "culvert ≥N m (Author, Year)"; no unsourced numbers) | material / method & cautions. Cells ≤18 words. Every row traces to a matrix row${o.act ? ', a zone or an activity in ' + N.act + '.1' : ' or a zone'}. No generic principles without a site-specific number or target (e.g. "use native plants", "maintain connectivity"). Fill in materials only where a measure needs one; claims about toxicity, durability or ecological benefit cite (Author, Year) or are left out.` },
       { zh: `${N.cases} 參考案例：至多 3 個經本次搜尋查證的真實案例，以一張 <table class="cases"> 呈現：案例（地點・年份）｜對應問題／物種／棲地｜可移植做法（≤40 字，以（作者，年）結尾）｜URL（以可見文字列出本次搜尋實際取得、介紹該案例的完整網址）。每個案例的來源都須列入第 ${N.refs} 節參考文獻。本工具會開啟每一列的網址，確認頁面確實介紹該案例；無法確認的案例列會被刪除。可查證者不足 3 個時只列已查證者，不得以未經查證的案例湊數；不寫案例敘述。`,
         en: `${N.cases} Case references: up to 3 real cases verified in this session's searches, in one <table class="cases">: case (place · year) | matching issue / species / habitat | transferable technique (≤25 words, ending with an (Author, Year) citation) | URL (full address, as visible text, of a page about that case that this session's searches actually returned). List each case's source in the section ${N.refs} references too. The tool opens every row's URL to confirm the page describes that case; rows it cannot confirm are deleted. If fewer than 3 can be verified, list only those; never pad the table with cases you could not verify. No case narratives.` },
-      { zh: `${N.refs} 參考文獻：<ul class="refs"> 單一 APA 7 清單，不分類（中文依第一作者筆畫排在前，英文依字母排在後）。只列正文實際引用者，且正文每筆引用都須列出；正文與清單的作者名稱與年份（含 2020a 等字尾）須完全相同。目標 ≤15 筆，不為湊數增列。DOI 與 URL 只能取自本次搜尋結果或其出版者頁面：有 DOI 者以 https://doi.org/… 列出，無 DOI 者以可見文字列出實際取得的完整 URL；DOI、URL 之後不加句點。書籍列出版者（APA 7 不列 ISBN 與出版地）。不得編造、推測或憑記憶補上 DOI、URL、作者、年份或題名；無法取得 DOI 或 URL 的文獻不要引用。每筆末加類型標籤［政府］［期刊］［書籍］［資料庫］［NGO］［媒體］。內容會更新的資料庫或網頁（GBIF、IUCN、TBN、iNaturalist、OSM 等）年份寫「無日期」，並以「${o.todayZh}，取自 URL」註明擷取日期；若使用了上方的 iNaturalist／OSM 脈絡，須依其所附格式列為資料來源。本工具會以 DOI 註冊資料、書目資料庫與所列網頁逐筆查核：查無、書目不符或無法確認的文獻會從清單刪除，正文中引用它的句子、表格內容與案例也會一併刪除。`,
-        en: `${N.refs} References: one APA 7 list in <ul class="refs">, alphabetical and not grouped. List only works cited in the text, and every in-text citation must appear here, with exactly the same author name and year (including suffixes such as 2020a) in both places; target ≤15 entries, never padded. Give the DOI as https://doi.org/… whenever one exists; otherwise give, as visible text, the full URL actually retrieved. Take DOIs and URLs only from this session's search results or the publisher's page, and put no period after a DOI or URL. Books give the publisher (APA 7 omits ISBNs and publisher locations). Never invent, guess or recall from memory a DOI, URL, author, year or title; do not cite a work whose DOI or URL you could not obtain. End each entry with a type tag [Gov] [Journal] [Book] [Database] [NGO] [Media]. For works not in English, keep the original title and add an English translation in square brackets. Databases or pages whose content changes (GBIF, IUCN, TBN, iNaturalist, OSM) use (n.d.) and end with "Retrieved ${o.todayEn}, from URL". If the iNaturalist/OSM context above was used, cite it as a data source in the format given there. The tool checks every reference against DOI registration records, bibliographic databases and the cited page: references it cannot find, cannot confirm or finds mismatched are deleted from the list, together with every sentence, table entry and case in the text that cites them.` },
+      { zh: `${N.refs} 參考文獻：<ul class="refs"> 單一 APA 7 清單，不分類（中文依第一作者筆畫排在前，英文依字母排在後）。只列正文實際引用者，且正文每筆引用都須列出；正文與清單的作者名稱與年份（含 2020a 等字尾）須完全相同。目標 ≤15 筆，不為湊數增列。DOI 與 URL 只能取自本次搜尋結果或其出版者頁面：有 DOI 者以 https://doi.org/… 列出，無 DOI 者以可見文字列出實際取得的完整 URL；DOI、URL 之後不加句點。書籍列出版者（APA 7 不列 ISBN 與出版地）。不得編造、推測或憑記憶補上 DOI、URL、作者、年份或題名；無法取得 DOI 或 URL 的文獻不要引用。每筆末加類型標籤［政府］［期刊］［書籍］［資料庫］［NGO］［媒體］。內容會更新的資料庫或網頁（GBIF、IUCN、TBN、iNaturalist、OSM 等）年份寫「無日期」，並以「${o.todayZh}，取自 URL」註明擷取日期；若使用了上方的 iNaturalist／OSM／TBN 脈絡，須依其所附格式列為資料來源。本工具會以 DOI 註冊資料、書目資料庫與所列網頁逐筆查核：查無、書目不符或無法確認的文獻會從清單刪除，正文中引用它的句子、表格內容與案例也會一併刪除。`,
+        en: `${N.refs} References: one APA 7 list in <ul class="refs">, alphabetical and not grouped. List only works cited in the text, and every in-text citation must appear here, with exactly the same author name and year (including suffixes such as 2020a) in both places; target ≤15 entries, never padded. Give the DOI as https://doi.org/… whenever one exists; otherwise give, as visible text, the full URL actually retrieved. Take DOIs and URLs only from this session's search results or the publisher's page, and put no period after a DOI or URL. Books give the publisher (APA 7 omits ISBNs and publisher locations). Never invent, guess or recall from memory a DOI, URL, author, year or title; do not cite a work whose DOI or URL you could not obtain. End each entry with a type tag [Gov] [Journal] [Book] [Database] [NGO] [Media]. For works not in English, keep the original title and add an English translation in square brackets. Databases or pages whose content changes (GBIF, IUCN, TBN, iNaturalist, OSM) use (n.d.) and end with "Retrieved ${o.todayEn}, from URL". If the iNaturalist/OSM/TBN context above was used, cite it as a data source in the format given there. The tool checks every reference against DOI registration records, bibliographic databases and the cited page: references it cannot find, cannot confirm or finds mismatched are deleted from the list, together with every sentence, table entry and case in the text that cites them.` },
       { zh: `〔檢索聲明〕報告最後一行 <p class="note">：「資料檢索日期：${o.today}｜未經現地調查，施工前請現地確認。」搜尋次數與查證結果由本工具記錄，不必自行計數或註記。不要另做定稿前的重檢搜尋。`,
         en: `[Retrieval note] The last line of the report, <p class="note">: "Sources retrieved ${o.today} | Not field-verified; confirm on site before construction." The tool records the number of searches and the verification results, so do not count or annotate them yourself. Do not run a separate round of re-check searches.` },
     ];
@@ -3204,7 +3206,7 @@ ${N.act}.2 Activity × zone compatibility (<h3>): <table class="compat">. The fi
 3. 不要封面、目錄、輸入條件複述、方法論、導言、結語或過場段落；不要 ASCII 框線圖；不要平面分區圖、配置圖或任何裝飾圖示。除系統插入的基地位置圖外，報告中唯一的圖由系統依 4.2 的 JSON 資料區塊繪製。
 4. 表格優先，每個事實只寫一次：物種生態只在第 2 節，資源衝突只在第 3 節，空間位置只在第 4 節${o.act ? `，人類活動的影響與使用程度只在第 ${N.act} 節` : ''}。其他地方以物種中名、矩陣列號（R1、R2…）或分區名回指，不得重述。同一物種全文使用同一中名。
 5. 全文可見文字（不含參考文獻與剖面 JSON）≤ ${(o.act ? Math.min(7500, 6000 + 150 * o.nAct) : 6000).toLocaleString('en-US')} 字。篇幅不足時先壓縮第 ${N.meas}、${N.cases} 節；設計警示、資源矩陣、${o.act ? '活動影響表、' : ''}參考文獻與檢索聲明不得刪減。
-6. 事實陳述與數值須附 APA 7 行內引用（作者, 年），引用不計入各格字數上限。不得寫沒有來源的陳述：表格中查無來源的資料格寫「未查得」，其他沒有來源的句子直接省略，不得以近緣種推論或估計。分析與設計判斷（第 3 節的高／中／低與物種互動、分區、相容性符號、設計措施）不必另附引用，但須能由前文已引用的事實推得；其中的數值（距離、緩衝寬度、人數、照度、月份等）須附引用，否則不寫數值。重點摘要只能重述後文已引用的內容，不得出現後文沒有的數值或主張。第 4.2 節 JSON 的物種是唯一例外（見該節）；其圖說中的數值仍須沿用前文已附引用者。只引用本次網路搜尋實際取得的來源與 URL，以及提示詞所附的 iNaturalist／OSM 資料。本工具會逐筆查核每一個來源，並刪除引用查無、書目不符或無法確認之來源的內容；憑記憶引用的文獻幾乎都無法通過查核。
+6. 事實陳述與數值須附 APA 7 行內引用（作者, 年），引用不計入各格字數上限。不得寫沒有來源的陳述：表格中查無來源的資料格寫「未查得」，其他沒有來源的句子直接省略，不得以近緣種推論或估計。分析與設計判斷（第 3 節的高／中／低與物種互動、分區、相容性符號、設計措施）不必另附引用，但須能由前文已引用的事實推得；其中的數值（距離、緩衝寬度、人數、照度、月份等）須附引用，否則不寫數值。重點摘要只能重述後文已引用的內容，不得出現後文沒有的數值或主張。第 4.2 節 JSON 的物種是唯一例外（見該節）；其圖說中的數值仍須沿用前文已附引用者。只引用本次網路搜尋實際取得的來源與 URL，以及提示詞所附的 iNaturalist／OSM／TBN 資料。本工具會逐筆查核每一個來源，並刪除引用查無、書目不符或無法確認之來源的內容；憑記憶引用的文獻幾乎都無法通過查核。
 7. 保育類或敏感物種，不得寫出巢位、棲所或出沒點的精確位置或座標。
 8. 來源優先序：政府機構（林業及自然保育署、TaiEOL、TBN）→ GBIF／IUCN 紅皮書 → 學術期刊 → NGO／社區調查 → iNaturalist → OpenStreetMap → 媒體部落格（僅作案例灰文獻）。
 9. 全文以繁體中文撰寫。`; };
@@ -3215,7 +3217,7 @@ ${N.act}.2 Activity × zone compatibility (<h3>): <table class="compat">. The fi
 3. No cover, table of contents, restatement of inputs, methodology, introduction, conclusion or transition paragraphs. No ASCII box drawings. No plan-view zoning or layout diagrams and no decorative graphics. Apart from the site map the tool inserts, the only figures in the report are drawn by the tool from the 4.2 JSON data block.
 4. Tables first, and each fact stated once: species biology only in section 2, resource conflicts only in section 3, spatial placement only in section 4${o.act ? `, activity impacts and use levels only in section ${N.act}` : ''}. Elsewhere, refer back by species common name, matrix row number (R1, R2 …) or zone name; never restate. Use the same common name for each species throughout.
 5. Visible text ≤${(o.act ? Math.min(4400, 3500 + 90 * o.nAct) : 3500).toLocaleString('en-US')} words, excluding references and the cross-section JSON. If space runs short, compress sections ${N.meas} and ${N.cases} first. Never cut the design warnings, the resource matrix, ${o.act ? 'the activity table, ' : ''}the references or the retrieval note.
-6. Every factual claim and every number carries an APA 7 in-text citation (Author, Year); citations do not count toward cell word caps. Write no claim without a source: a table cell with no source says "not found", and any other unsourced sentence is left out; never estimate or infer from related species. Analytical and design judgements (section 3 High/Med/Low ratings and interactions, zoning, compatibility symbols, design measures) need no separate citation but must follow from facts already cited above; any number in them (distances, buffer widths, visitor numbers, light levels, months) needs a citation or is left out. The key findings may only restate content cited later, with no new number or claim. The species in the 4.2 JSON block are the only exception (see 4.2); numbers in its captions must still come from content cited above. Cite only sources and URLs actually returned by this session's web searches, plus the iNaturalist/OSM data supplied in this prompt. The tool checks every source and deletes the content that cites a source it cannot find, cannot confirm or finds mismatched, so references recalled from memory will almost never survive.
+6. Every factual claim and every number carries an APA 7 in-text citation (Author, Year); citations do not count toward cell word caps. Write no claim without a source: a table cell with no source says "not found", and any other unsourced sentence is left out; never estimate or infer from related species. Analytical and design judgements (section 3 High/Med/Low ratings and interactions, zoning, compatibility symbols, design measures) need no separate citation but must follow from facts already cited above; any number in them (distances, buffer widths, visitor numbers, light levels, months) needs a citation or is left out. The key findings may only restate content cited later, with no new number or claim. The species in the 4.2 JSON block are the only exception (see 4.2); numbers in its captions must still come from content cited above. Cite only sources and URLs actually returned by this session's web searches, plus the iNaturalist/OSM/TBN data supplied in this prompt. The tool checks every source and deletes the content that cites a source it cannot find, cannot confirm or finds mismatched, so references recalled from memory will almost never survive.
 7. Never give exact nest, roost or sighting locations or coordinates for protected or sensitive species.
 8. SOURCE PRIORITY: national agencies (Forestry and Nature Conservation Agency, TaiEOL, TBN) → GBIF / IUCN Red List → peer-reviewed journals → NGO and community surveys → iNaturalist → OpenStreetMap → media and blogs (grey literature, case examples only).
 9. Write the entire report in English.`; };
@@ -4595,7 +4597,7 @@ ${a}
     const res = { html: article, sources: Array.isArray(sources) ? sources.length : null, refs: 0, linked: 0, unmatched: 0, datasets: 0 };
     if (!Array.isArray(sources)) return res;                       // 手動路徑：沒有搜尋紀錄，不比對
     const hosts = new Set(sources.map(hostOf).filter(Boolean));
-    const dsHost = h => !!ds && !!((ds.inat && /(^|\.)inaturalist\.org$/.test(h)) || (ds.osm && /(^|\.)(openstreetmap\.org|overpass-api\.de)$/.test(h)));
+    const dsHost = h => toolDatasetHost(ds, h);
     const srcText = sources.join(' ').toLowerCase();
     try {
       const doc = new DOMParser().parseFromString(article, 'text/html');
@@ -4630,7 +4632,7 @@ ${a}
     if (pv.route === 'manual') parts.push(en ? 'manual Claude.ai route (search activity not recorded)' : '手動 Claude.ai 路徑（無搜尋紀錄）');
     else if (pv.searchCalls != null) parts.push(en ? `${pv.searchCalls} web searches, ${check.sources != null ? check.sources : 0} source URLs received` : `網路搜尋 ${pv.searchCalls} 次、取得 ${check.sources != null ? check.sources : 0} 個來源網址`);
     if (check.sources != null && check.linked) parts.push(en ? `${check.unmatched} of ${check.linked} linked references not from this run\u2019s searches` : `參考文獻中有網址者 ${check.linked} 筆，其中 ${check.unmatched} 筆非本次搜尋取得`);
-    if (check.sources != null && check.datasets) parts.push(en ? `${plural(check.datasets, 'reference')} to datasets supplied by this tool (iNaturalist/OSM; not compared with the searches)` : `另有本工具提供的資料集 ${check.datasets} 筆（iNaturalist／OSM，不與搜尋結果比對）`);
+    if (check.sources != null && check.datasets) parts.push(en ? `${plural(check.datasets, 'reference')} to datasets supplied by this tool (iNaturalist/OSM/TBN; not compared with the searches)` : `另有本工具提供的資料集 ${check.datasets} 筆（iNaturalist／OSM／TBN，不與搜尋結果比對）`);
     parts.push(en ? `Tool: Qi-Coexistence ${APP_VERSION}` : `工具：棲共生 Qi-Coexistence ${APP_VERSION}`);
     const warn = en ? 'AI-generated content may contain errors; verify every citation and field-check before use in design or coursework.' : 'AI 產出內容可能有誤；用於設計或課業前，請逐筆查證引用並現地確認。';
     // 參考文獻查證摘要（查證完成後由 applyVerification() 以同一函式補上或更新）
@@ -6409,7 +6411,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       analysisMeta = null;
       // 手動路徑沒有搜尋紀錄；提示詞若附了 iNaturalist／OSM，只能依貼上當下表單中載入的資料推定（報告中會註明）
       const ds = captureDatasets();
-      const meta = compactMeta({ route: 'manual', at: new Date().toISOString(), ds, dsAtPaste: !!(ds.inat || ds.osm) });
+      const meta = compactMeta({ route: 'manual', at: new Date().toISOString(), ds, dsAtPaste: !!(ds.inat || ds.osm || ds.tbn) });
       showResult(html, { meta, trusted: true });
       const savedTs = saveToHistoryWithResult(html, null, { meta });
       if (currentReport && currentReport.raw === html) currentReport.ts = savedTs || null;
@@ -6496,7 +6498,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
         verified: 'DOI 或網頁可開啟，DOI 註冊資料或網頁標示的題名（以及可比對時的年份、第一作者）與引用相符。仍須閱讀原文，確認內容確實支持文中陳述。',
         partial: '來源存在，但內容無法自動比對（PDF、動態網頁）或卷期頁碼有出入；請開啟來源核對。',
         grounded: '網站拒絕自動存取或逾時，未能自動核對；其網址出現在本次網路搜尋結果中，因此保留。請開啟來源核對。',
-        dataset: '本工具提供給模型的 iNaturalist／OpenStreetMap 資料；查詢條件、擷取日期與授權見下方「資料來源」。',
+        dataset: '本工具提供給模型的 iNaturalist／OpenStreetMap／TBN 資料；查詢條件、擷取日期與授權見下方「資料來源」。',
         case_ok: '只確認網頁提到此案例，不確認做法與成效的描述正確。',
       },
       // 圖例：每種結果「代表什麼」與「讀者該做什麼」（寫進報告的查證段落）
@@ -6522,7 +6524,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
         verified: 'The DOI or web page opens and the title in the DOI record or on the page (and, where comparable, the year and first author) matches the citation. You still need to read the source to confirm it supports the claim.',
         partial: 'The source exists, but its content could not be matched automatically (PDF, script-rendered page) or the volume/pages differ; open the source and check it.',
         grounded: 'The site refused automated access or timed out, so it could not be checked automatically; it was kept because its URL appears in this run’s web-search results. Open the source and check it.',
-        dataset: 'iNaturalist/OpenStreetMap data supplied to the model by this tool; the query, retrieval date and licence are under “Data sources” below.',
+        dataset: 'iNaturalist/OpenStreetMap/TBN data supplied to the model by this tool; the query, retrieval date and licence are under “Data sources” below.',
         case_ok: 'Confirms only that the page mentions the case, not that the technique or outcome is described correctly.',
       },
       legend: {
@@ -6668,13 +6670,28 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     if (numIn(m.nSrc, 0, 1e5)) out.nSrc = Math.round(m.nSrc);
     if (numIn(m.nCited, 0, 1e5)) out.nCited = Math.round(m.nCited);
     if (m.ds && typeof m.ds === 'object') {
-      const ds = {}, i = m.ds.inat, o = m.ds.osm;
+      const ds = {}, i = m.ds.inat, o = m.ds.osm, b = m.ds.tbn;
+      // 提示詞所附的物種名單：剖面圖的伴生物種以此為依據之一（groundXsecSpecies）。
+      // 以前這裡沒有保留 names，於是剖面圖只能依報告正文判斷，名單裡的物種也被刪掉。
+      const names = v => Array.isArray(v)
+        ? v.filter(x => typeof x === 'string' && x.trim()).slice(0, 60).map(x => str(x, 80)) : [];
       if (i && numIn(i.lat, -90, 90) && numIn(i.lon, -180, 180)) {
         ds.inat = { lat: i.lat, lon: i.lon, radius: numIn(i.radius, 0, 1000) ? i.radius : null, quality: i.quality === 'research' ? 'research' : 'any',
-          taxon: typeof i.taxon === 'string' && /^[A-Za-z,]{0,80}$/.test(i.taxon) ? i.taxon : '', species: numIn(i.species, 0, 1000) ? Math.round(i.species) : null, at: isoOrNull(i.at) };
+          taxon: typeof i.taxon === 'string' && /^[A-Za-z,]{0,80}$/.test(i.taxon) ? i.taxon : '', species: numIn(i.species, 0, 1000) ? Math.round(i.species) : null, at: isoOrNull(i.at),
+          names: names(i.names) };
       }
       if (o && numIn(o.lat, -90, 90) && numIn(o.lon, -180, 180)) {
         ds.osm = { lat: o.lat, lon: o.lon, radius: numIn(o.radius, 0, 1000) ? o.radius : null, total: numIn(o.total, 0, 1e7) ? Math.round(o.total) : null, at: isoOrNull(o.at) };
+      }
+      // TBN（v1.38 加入）：沒有這一段的話，查證時 TBN 不會被認成本工具提供的資料集——
+      // 它的 API 網址對自動存取回 403，於是被當成「無法確認存在」排除，
+      // 連同所有引用它的句子與表格列一起刪掉（實測：物種需求表的物種名欄整欄消失）。
+      if (b && numIn(b.lat, -90, 90) && numIn(b.lon, -180, 180)) {
+        ds.tbn = { lat: b.lat, lon: b.lon, radius: numIn(b.radius, 0, 50) ? b.radius : null,
+          total: numIn(b.total, 0, 1e8) ? Math.round(b.total) : null, taxa: numIn(b.taxa, 0, 1e5) ? Math.round(b.taxa) : null,
+          atSpecies: numIn(b.atSpecies, 0, 1e5) ? Math.round(b.atSpecies) : null,
+          perGroup: numIn(b.perGroup, 0, 1000) ? Math.round(b.perGroup) : null, complete: b.complete === true,
+          at: isoOrNull(b.at), names: names(b.names) };
       }
       out.ds = ds;
     }
@@ -7321,14 +7338,23 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     return { keys };
   }
   const groundedBy = (ev, urls, dois) => !!ev && !!ev.keys && (urls.some(u => groundKeysOf(u).some(k => ev.keys.has(k))) || dois.some(d => ev.keys.has(hashKey('d:' + d))));
-  // 本工具提供給模型的資料集（iNaturalist／OSM）：參考文獻網址與本工具產生的網址完全相同才算
+  // 本工具提供給模型的資料集（iNaturalist／OSM／TBN）：參考文獻網址與本工具產生的網址完全相同才算
   function toolDatasetKeys(meta) {
     const ds = meta && meta.ds, out = new Set();
     if (ds && ds.inat) out.add(normUrlKey(inatWebUrl(ds.inat)));
     if (ds && ds.osm) out.add(normUrlKey(osmWebUrl(ds.osm)));
+    if (ds && ds.tbn) out.add(normUrlKey(tbnApiUrl(ds.tbn)));
     out.delete('');
     return out;
   }
+  // 本工具資料集的作者欄（參考文獻開頭）。中文名不能接 \b：在 JavaScript 的正規表示式裡，
+  // 漢字不算「字元」，\b 永遠不成立。
+  const TOOL_DATASET_AUTHOR = /^(?:iNaturalist\b|OpenStreetMap\b|臺灣生物多樣性網絡|Taiwan Biodiversity Network\b)/i;
+  // 本工具資料集的主機：參考文獻網址落在這些主機上，且這份報告確實附了該資料
+  const toolDatasetHost = (ds, h) => !!ds && !!(
+    (ds.inat && /(^|\.)inaturalist\.org$/.test(h)) ||
+    (ds.osm && /(^|\.)(openstreetmap\.org|overpass-api\.de)$/.test(h)) ||
+    (ds.tbn && /(^|\.)tbn\.org\.tw$/.test(h)));
   function repairFrom(res) {
     const r = res.reason;
     const c = (res.checks || []).find(x => (x.kind === 'doi' || x.kind === 'url') && (r === 'year' ? x.foundYear != null : !!x.foundAuthors));
@@ -7816,7 +7842,10 @@ ${block}`;
     const clone = art.cloneNode(true);
     clone.querySelectorAll('script, ul.summary, .verification, footer, figure').forEach(x => x.remove());
     const body = normKey(clone.textContent || '');
-    const inat = (meta && meta.ds && meta.ds.inat && Array.isArray(meta.ds.inat.names) ? meta.ds.inat.names : []).map(normKey).filter(Boolean);
+    // 本工具提供給模型的物種名單（iNaturalist 與 TBN）：出現在名單中的物種即有依據
+    const listOf = d => (d && Array.isArray(d.names) ? d.names : []);
+    const inat = [...listOf(meta && meta.ds && meta.ds.inat), ...listOf(meta && meta.ds && meta.ds.tbn)]
+      .map(normKey).filter(Boolean);
     const grounded = n => {
       const k = normKey(n);
       if (!k || k.length < (/[a-z0-9]/.test(k) ? 4 : 2)) return false;
@@ -8762,12 +8791,12 @@ ${block}`;
   const POLICY = {
     zh: '<strong>排除規則</strong>（本工具的資料原則：資料沒有或不正確的就不要納入討論，以免討論建立在假資訊上）<ul>' +
       '<li><b>刪除：</b>查無此來源、DOI／網址指向其他著作、題名與引用不符，或無法確認存在的來源，以及正文中引用它們的句子、表格內容與案例列。</li>' +
-      '<li><b>保留：</b>書目相符；來源存在但內容無法自動比對（PDF、動態網頁）或僅卷期頁碼有出入（⚠️，請自行核對）；查證未完成、但網址出現在本次網路搜尋結果中（🔍）；本工具提供的 iNaturalist／OSM 資料集（📡）。</li>' +
+      '<li><b>保留：</b>書目相符；來源存在但內容無法自動比對（PDF、動態網頁）或僅卷期頁碼有出入（⚠️，請自行核對）；查證未完成、但網址出現在本次網路搜尋結果中（🔍）；本工具提供的 iNaturalist／OSM／TBN 資料集（📡）。</li>' +
       '<li><b>更正後保留：</b>文獻存在，但年份或作者有誤者，依 DOI 註冊資料或書目紀錄更正正文與清單。</li>' +
       '<li><b>限制：</b>本工具只確認來源存在與書目正確，不確認文中的數值或論述確實出自該來源；沒有引用、但間接依據被排除來源的內容由 AI 改寫刪除，無法逐句保證。第 4.2 節剖面圖只標示有依據的物種（出現在報告正文或本工具提供的 iNaturalist 名單者），棲位配置為示意。</li></ul>',
     en: '<strong>Exclusion policy</strong> (this tool’s data policy: material whose source does not exist or is incorrect is not discussed, so that the discussion does not rest on false information)<ul>' +
       '<li><b>Removed:</b> sources that cannot be found, whose DOI/URL points to another work, whose title does not match, or whose existence cannot be confirmed — together with every sentence, table entry and case row that cites them.</li>' +
-      '<li><b>Kept:</b> matching records; sources that exist but could not be matched automatically (PDF, script-rendered page) or differ only in volume/pages (⚠️, check them yourself); unfinished checks whose URL appears in this run’s web-search results (🔍); the iNaturalist/OSM datasets supplied by this tool (📡).</li>' +
+      '<li><b>Kept:</b> matching records; sources that exist but could not be matched automatically (PDF, script-rendered page) or differ only in volume/pages (⚠️, check them yourself); unfinished checks whose URL appears in this run’s web-search results (🔍); the iNaturalist/OSM/TBN datasets supplied by this tool (📡).</li>' +
       '<li><b>Kept after correction:</b> works that exist but carry a wrong year or author, corrected from the DOI or bibliographic record in both the list and the text.</li>' +
       '<li><b>Limits:</b> the tool confirms that a source exists and is cited correctly, not that the numbers or claims attributed to it are in it; content that relies on an excluded source without citing it is removed by the AI revision and cannot be guaranteed sentence by sentence. The 4.2 cross-sections show only species with a basis (named in the report text or in the iNaturalist list supplied by this tool); their placement is schematic.</li></ul>',
   };
@@ -8971,10 +9000,11 @@ ${block}`;
       return null;
     }
     const dsKeys = toolDatasetKeys(meta);
-    // 本工具提供的資料集：作者是 iNaturalist／OpenStreetMap、沒有 DOI，且所列網址全部是本工具產生的資料集網址
+    // 本工具提供的資料集：作者是 iNaturalist／OpenStreetMap／臺灣生物多樣性網絡、沒有 DOI，
+    // 且所列網址全部是本工具產生的資料集網址
     const markDataset = r => {
       r.dataset = !!(dsKeys.size && (r.allUrls || []).length && !(r.allDois || []).length &&
-        /^(?:iNaturalist|OpenStreetMap)\b/i.test(String(r.author || '').trim()) && r.allUrls.every(u => dsKeys.has(normUrlKey(u))));
+        TOOL_DATASET_AUTHOR.test(String(r.author || '').trim()) && r.allUrls.every(u => dsKeys.has(normUrlKey(u))));
       return r;
     };
     refs.forEach(markDataset);
@@ -9768,14 +9798,11 @@ ${block}`;
   const MODEL_UNVERIFIED_RE = /［未查證］|\[unverified\]/i;
   // 書目資料庫有同名著作、但作者不同（verify.js 的 search_similar_author）：最常見的 AI 作者誤植
   const vfAuthorConflict = res => res.verdict !== 'verified' && res.checks.some(c => c.status === 'search_similar_author');
-  // 參考文獻是否為本工具提供給模型的資料集（網址落在 iNaturalist／OSM，且這份報告確實附了該資料）
+  // 參考文獻是否為本工具提供給模型的資料集（網址落在 iNaturalist／OSM／TBN，且這份報告確實附了該資料）
   function toolDataset(r, meta) {
     const ds = meta && meta.ds;
     if (!ds) return false;
-    return (r.allUrls || []).some(u => {
-      const h = hostOf(u);
-      return (ds.inat && /(^|\.)inaturalist\.org$/.test(h)) || (ds.osm && /(^|\.)(openstreetmap\.org|overpass-api\.de)$/.test(h));
-    });
+    return (r.allUrls || []).some(u => toolDatasetHost(ds, hostOf(u)));
   }
   // 書目不符時「實際指向」；有建議時「可能的正確文獻／查得」
   function vfActualHtml(res, r, en) {
@@ -9983,7 +10010,24 @@ ${block}`;
             : '。OSM 由志願者繪製，保護區範圍與名稱不具法定效力。© OpenStreetMap 貢獻者，ODbL——') +
         `${extLink(COPY_OSM, 'openstreetmap.org/copyright')}${pasteNote}</li>`);
     }
-    if (ds && !ds.inat && !ds.osm) items.push(`<li>${en ? 'No iNaturalist or OpenStreetMap data from this tool were included in the prompt.' : '提示詞未附本工具的 iNaturalist／OpenStreetMap 資料。'}</li>`);
+    if (ds && ds.tbn) {
+      const b = ds.tbn;
+      const api = tbnApiUrl(b);
+      const nf = v => Number(v).toLocaleString('en-US');
+      items.push(`<li><strong>${en ? 'TBN (Taiwan Biodiversity Network)' : 'TBN 臺灣生物多樣性網絡'}</strong>${en ? ' — occurrence records' : '——物種出現紀錄'}${en ? ': ' : '：'}` +
+        (en ? `radius ${escapeHtml(b.radius)} km around ${b.lat.toFixed(4)}, ${b.lon.toFixed(4)}${b.total != null ? ` · ${nf(b.total)} records` : ''}${b.taxa != null ? ` · ${nf(b.taxa)} taxa in the list${b.atSpecies != null ? ` (${nf(b.atSpecies)} at species rank)` : ''}` : ''} · retrieved ${date(b.at)}. Query: `
+            : `以 ${b.lat.toFixed(4)}, ${b.lon.toFixed(4)} 為中心半徑 ${escapeHtml(b.radius)} km${b.total != null ? `・共 ${nf(b.total)} 筆紀錄` : ''}${b.taxa != null ? `・清單含 ${nf(b.taxa)} 個分類群${b.atSpecies != null ? `（其中 ${nf(b.atSpecies)} 個鑑定到種）` : ''}` : ''}・擷取於 ${date(b.at)}。查詢：`) +
+        `${extLink(api, api)}` +
+        // 取樣的性質要跟著資料走：附錄是讀報告的人唯一看得到資料來源說明的地方
+        (b.complete
+          ? (en ? '. The list covers every record in range.' : '。清單涵蓋範圍內全部紀錄。')
+          : (en ? `. The list is a sample (up to ${b.perGroup || '?'} records per taxon group — the first records TBN returns, not a random sample): it shows which taxa are recorded here, not which are absent or most common.`
+                : `。清單為取樣（每類群最多 ${b.perGroup || '?'} 筆，取 TBN 回傳的前幾筆，非隨機樣本）：只能說明哪些分類群在此有紀錄，不能說明哪些不存在或何者最常見。`)) +
+        (en ? ' Nativeness, endemism and conservation status are as recorded by TBN; the official lists prevail. Licence: Open Government Data License (OGDL-1.0) and the licences of the contributing datasets.'
+            : '原生性、特有性與保育等級依 TBN 記載，以主管機關公告為準。授權：政府資料開放授權條款（OGDL-1.0）及各來源資料集之授權。') +
+        `${pasteNote}</li>`);
+    }
+    if (ds && !ds.inat && !ds.osm && !ds.tbn) items.push(`<li>${en ? 'No iNaturalist, OpenStreetMap or TBN data from this tool were included in the prompt.' : '提示詞未附本工具的 iNaturalist／OpenStreetMap／TBN 資料。'}</li>`);
     if (!ds) items.push(`<li>${en ? 'Datasets provided by this tool: not recorded for this report (created before source tracking was added).' : '本工具提供的資料集：此報告產生時尚未記錄（早於來源紀錄功能）。'}</li>`);
     // (ii) 網路搜尋
     if (meta && meta.route === 'manual') {
@@ -10047,7 +10091,7 @@ ${block}`;
   // ========== About & Feedback ==========
   // 將此處 email 改成您自己的（接收回饋用）
   const FEEDBACK_EMAIL = 'cycland@ntu.edu.tw';
-  const APP_VERSION = 'v1.38'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
+  const APP_VERSION = 'v1.39'; // 唯一版本號來源：頁首、頁尾、引用格式、回饋信都讀這裡
   document.querySelectorAll('.app-version').forEach(el => { el.textContent = APP_VERSION; });
 
   function openAboutModal() {
