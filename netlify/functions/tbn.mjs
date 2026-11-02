@@ -83,6 +83,10 @@ const CONCURRENCY = 6;
 const PER_REQUEST_FLOOR_MS = 8000;   // 剩餘預算低於此值就不再開始新的查詢
 const TOTAL_BUDGET_MS = 23000;       // 函式上限 26 秒，留時間給彙整與回傳
 const RETRY_503_MS = 1500;           // TBN 負載保護時回 503，稍候重試一次
+// 2026-11-02 線上實測：連續查詢後 TBN 也會回 429（Too Many Requests），
+// 而且一次就是 19／21 個類群同時被擋。429 是「慢一點」，同樣不是「沒有資料」，
+// 等久一點再試一次。
+const RETRY_429_MS = 3000;
 // 不分類群的那次查詢只是為了 rangeTotal（參考文獻用），可有可無，
 // 所以給它較短的上限——不能讓一個選配的數字吃掉物種清單的時間。
 const RANGE_TOTAL_TIMEOUT_MS = 5000;
@@ -409,8 +413,9 @@ export default async (request, context) => {
   const fetchWithRetry = async (g) => {
     const lim = g === null ? 1 : limit;
     let out = await fetchGroup(lon, lat, r, g, lim, deadline);
-    if (out.status === 503 && deadline - Date.now() > RETRY_503_MS + PER_REQUEST_FLOOR_MS) {
-      await new Promise(res => setTimeout(res, RETRY_503_MS));
+    const wait = out.status === 503 ? RETRY_503_MS : out.status === 429 ? RETRY_429_MS : 0;
+    if (wait && deadline - Date.now() > wait + PER_REQUEST_FLOOR_MS) {
+      await new Promise(res => setTimeout(res, wait));
       out = await fetchGroup(lon, lat, r, g, lim, deadline);
     }
     return out;
@@ -427,14 +432,18 @@ export default async (request, context) => {
   // 訊息不同，Jake 才知道該重試還是該縮小半徑。
   if (agg.failed.length === groups.length) {
     const starved = agg.failed.filter(f => /budget|timeout/.test(f.error || '')).length;
+    const limited = agg.failed.filter(f => f.error === 'http_429').length;
     const timeRelated = starved > agg.failed.length / 2;
+    const rateLimited = !timeRelated && limited > agg.failed.length / 2;
     return json(503, {
       error: timeRelated
         ? 'TBN did not answer in time — this area has a very large number of records; try a smaller radius'
+        : rateLimited ? 'TBN is limiting the number of requests right now — try again in a few minutes'
         : 'TBN is unavailable',
-      reason: timeRelated ? 'time_budget' : 'upstream',
+      reason: timeRelated ? 'time_budget' : rateLimited ? 'rate_limited' : 'upstream',
       zh: timeRelated
         ? '這個範圍的紀錄筆數太多，TBN 來不及回應——請縮小半徑再試'
+        : rateLimited ? 'TBN 目前限制查詢次數，請過幾分鐘再試'
         : 'TBN 目前無法連線',
       failed: agg.failed.slice(0, 5), ms: Date.now() - startedAt,
     }, cors);
@@ -451,9 +460,12 @@ export default async (request, context) => {
     // （溪頭 3 km：93,632 對 92,899，差 733 筆）。參考文獻的網址是這個查詢。
     rangeTotal,
     ungrouped: rangeTotal !== null ? Math.max(0, rangeTotal - total) : null,
+    // complete 的意思是「清單涵蓋這個範圍的全部紀錄」——有類群沒回應就不成立，
+    // 即使回應的類群都沒被截斷（2026-11-02 線上：19 個類群 429，清單只剩 6 個分類群，
+    // 舊版仍標 complete，前端因此在提示詞裡拿掉取樣警語，參考文獻也寫成「全部紀錄」）
     sample: { perGroup: limit, records: agg.sampled, groups: agg.groups.length,
               asked: groups.length, allGroups: groups.length === ALL_GROUPS.length,
-              complete: !anyPartial },
+              complete: !anyPartial && agg.failed.length === 0 },
     groups: agg.groups,
     species: agg.species,
     datasets: agg.datasets,
@@ -468,6 +480,8 @@ export default async (request, context) => {
       `物種清單是取樣結果：每個類群最多取 ${limit} 筆紀錄，而這個範圍內共有 ${(rangeTotal || total).toLocaleString('en-US')} 筆。`,
       '取的是 TBN 回傳的前幾筆，不是隨機樣本，所以清單可以說明「這些物種在這裡有紀錄」，但不能說明「這裡只有這些物種」，也不能用來判斷哪些最常見。',
       '各類群的總筆數（total）取自 TBN 的 meta.total，那個數字是完整範圍的真實筆數。',
+    ] : agg.failed.length ? [
+      '有回應的類群，紀錄筆數都未超過取樣上限；沒有回應的類群不在清單內。',
     ] : [
       '這個範圍內的紀錄筆數未超過取樣上限，物種清單涵蓋全部紀錄。',
     ]),
@@ -476,8 +490,13 @@ export default async (request, context) => {
     ms: Date.now() - startedAt,
   };
 
-  cache.set(key, { at: Date.now(), body });
-  if (cache.size > CACHE_MAX) { for (const k of cache.keys()) { cache.delete(k); if (cache.size <= CACHE_MAX) break; } }
+  // 有類群失敗的結果不進快取：失敗多半是暫時的（逾時、503、429），
+  // 快取下來等於讓這個基地在同一個容器裡六小時都只能拿到殘缺的清單——
+  // 2026-11-02 線上就這樣：重查一次，拿回的是快取裡的那份 19 個類群失敗的結果。
+  if (!agg.failed.length) {
+    cache.set(key, { at: Date.now(), body });
+    if (cache.size > CACHE_MAX) { for (const k of cache.keys()) { cache.delete(k); if (cache.size <= CACHE_MAX) break; } }
+  }
 
   return json(200, body, { ...cors, 'x-tbn-cache': 'miss' });
 };

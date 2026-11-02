@@ -324,6 +324,13 @@ check('參考文獻說明清單是取樣而來', /筆出現紀錄之取樣/.test
   check('此時不會誤稱為「取樣清單」',
     !/取樣清單/.test(await page.evaluate(() => document.getElementById('tbnNote').textContent)),
     await page.evaluate(() => document.getElementById('tbnNote').textContent.slice(0, 60)));
+  // 提示詞也要交代（2026-11-02 線上：19 個類群 429，提示詞卻當成完整名錄、隻字未提）
+  const p2 = await page.evaluate(() => (document.getElementById('promptPreview') || {}).textContent || '');
+  check('有類群沒回應時，提示詞指名沒查到的類群並說明「不是基地沒有」',
+    /這次有 1 個類群沒有查到（哺乳類）/.test(p2) && /不是基地沒有/.test(p2),
+    (p2.match(/這次有.{0,40}/) || ['未出現'])[0]);
+  check('有類群沒回應時，提示詞不把清單當完整名錄（即使伺服器標 complete）',
+    /這是取樣清單，不是完整名錄/.test(p2), '未出現');
   servePayload = payload;                              // 還原，不影響後面的檢查
 }
 
