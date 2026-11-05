@@ -27,6 +27,9 @@ const PRICES = {
   'claude-haiku-4-5': [1, 5],
 };
 const FAMILY_PRICE = { opus: [4, 20], sonnet: [2, 10], haiku: [1, 5] };
+// 讀提示快取的價格是輸入單價的幾倍（analyze.js 的分析會開快取；寫入 5 分鐘快取一律是 1.25 倍）。
+// Sonnet 5.5／Opus 5.5 是 0.05 倍，其他模型 0.1 倍；未列出的新模型用 0.1（寧可把費用估高）
+const CACHE_READ_X = { 'claude-opus-5-5': 0.05, 'claude-sonnet-5-5': 0.05 };
 
 // 解析模型 ID：claude-<系列>-<主版>[-<次版>][-<日期>]
 export function parseModelId(id) {
@@ -35,13 +38,14 @@ export function parseModelId(id) {
 }
 const newer = (a, b) => (a.major - b.major) || (a.minor - b.minor) || (a.date > b.date ? 1 : a.date < b.date ? -1 : 0);
 
-function priceOf(id) {
+export function priceOf(id) {
   const p = parseModelId(id);
   const base = p ? `claude-${p.family}-${p.major}${p.minor ? '-' + p.minor : ''}` : id;
-  if (PRICES[id]) return { in: PRICES[id][0], out: PRICES[id][1], est: false };
-  if (PRICES[base]) return { in: PRICES[base][0], out: PRICES[base][1], est: false };
+  const crx = CACHE_READ_X[id] || CACHE_READ_X[base] || 0.1;
+  if (PRICES[id]) return { in: PRICES[id][0], out: PRICES[id][1], crx, est: false };
+  if (PRICES[base]) return { in: PRICES[base][0], out: PRICES[base][1], crx, est: false };
   const f = p && FAMILY_PRICE[p.family];
-  return f ? { in: f[0], out: f[1], est: true } : null;
+  return f ? { in: f[0], out: f[1], crx, est: true } : null;
 }
 
 // 推理強度（effort）：Opus ≥4.5、Sonnet ≥4.6 支援；Haiku 4.5 不支援（送出會錯誤）

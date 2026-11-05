@@ -31,6 +31,15 @@ function webTools(model) {
   return [{ type: 'web_search_20250305', name: 'web_search', max_uses: WEB_SEARCH_MAX }];
 }
 
+// 提示快取（2026-11-05 開）：只開在會上網的分析（mode 'analyze'）。
+// 伺服器端的搜尋迴圈每搜尋一次、每讀一個網頁，就把前面全部的內容（提示詞＋搜尋結果＋網頁全文）重讀一遍，
+// 一份報告的輸入 token 因此是最後內容長度的好幾倍——2026-11-04 之前 7 天 Sonnet 5.5 共 8,500 萬個輸入 token，快取命中 0%。
+// 請求裡只要有一個 cache_control，API 就會在每一次搜尋／讀網頁的結果後面自動設快取點，下一輪重讀前面的內容改按快取價
+// （Sonnet 5.5／Opus 5.5 是輸入單價的 0.05 倍、其他模型 0.1 倍；寫入快取 1.25 倍，存 5 分鐘、每讀一次重新計時）。
+// revise／support 不開：各只送一次、沒有重讀的前段，開了只會多付寫入快取的那 1.25 倍。
+// https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching
+const PROMPT_CACHE = { type: 'ephemeral' };
+
 // mode: 'revise'（排除未通過查證的內容）：輸入是整份報告 <article> 加上排除清單，因此另有較高的長度上限；
 // 不提供任何工具（不做網路搜尋）——改寫只能刪除與更正，不得引入未經查證的新資料。
 // 防濫用（revise 不搜尋、回應較快，又接受較長的輸入）：
@@ -178,7 +187,9 @@ export default async (request, context) => {
     ? Math.min(MAX_TOKENS, Math.max(REVISE_MIN_TOKENS, Math.ceil(prompt.length * 1.2)) + (thinksByDefault(model) ? 16000 : 0))
     : (/haiku/.test(model) ? 32000 : MAX_TOKENS);
 
-  const messages = [{ role: 'user', content: prompt }];
+  // 提示快取（見檔案開頭 PROMPT_CACHE）：提示詞本身標一個快取點，確定「請求裡有 cache_control」，搜尋迴圈才會自動設快取點
+  let cache = !(revise || support);
+  const userMessages = () => [{ role: 'user', content: cache ? [{ type: 'text', text: prompt, cache_control: PROMPT_CACHE }] : prompt }];
   const callUpstream = msgs => fetch(ANTHROPIC_URL, {
     method: 'POST',
     headers: {
@@ -191,6 +202,9 @@ export default async (request, context) => {
       max_tokens: maxTokens,
       stream: true,                     // 串流是關鍵：讓連線持續有資料流動，避開逾時
       ...(supportsEffort(model) ? { output_config: { effort: EFFORT[mode] || EFFORT.analyze } } : {}),
+      // 頂層的 cache_control＝自動快取：快取點放在最後一個可快取的區塊。pause_turn 接續時那是前一輪最後的內容，
+      // 接續請求因此讀得到前一輪寫進快取的搜尋結果，不必整段重算
+      ...(cache ? { cache_control: PROMPT_CACHE } : {}),
       messages: msgs,
       // revise／support：不帶 tools，模型無法搜尋或取得新資料
       ...(revise || support ? {} : { tools: webTools(model) }),
@@ -198,7 +212,17 @@ export default async (request, context) => {
   });
   let upstream;
   try {
-    upstream = await callUpstream(messages);
+    upstream = await callUpstream(userMessages());
+    // 萬一 API 不接受快取參數（400，錯誤訊息提到 cache_control）：拿掉快取重送一次。
+    // 只是沒省到錢，總比整份分析失敗好；接續請求也跟著不帶快取（callUpstream 讀的是同一個 cache）
+    if (cache && upstream.status === 400) {
+      const detail = await upstream.clone().text().catch(() => '');
+      if (/cache_control/i.test(detail)) {
+        cache = false;
+        try { await upstream.body?.cancel(); } catch (_) { /* 已讀完或已關閉 */ }
+        upstream = await callUpstream(userMessages());
+      }
+    }
   } catch (e) {
     return json(502, { error: '無法連線至 Anthropic API：' + (e?.message || String(e)) });
   }
@@ -218,7 +242,7 @@ export default async (request, context) => {
   }
 
   // 把 SSE 串流轉送給瀏覽器（搜尋迴圈暫停時自動接續、閒置時送 keepalive、網頁全文不轉送）；x-model：實際使用的模型，供前端記錄
-  const outBody = revise || support ? upstream.body : relay(upstream, { userMessages: messages, next: callUpstream });
+  const outBody = revise || support ? upstream.body : relay(upstream, { userMessages: userMessages(), next: callUpstream });
   return new Response(outBody, {
     status: 200,
     headers: {

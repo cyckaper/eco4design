@@ -3860,7 +3860,8 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
         recommended: typeof c.recommended === 'string' ? c.recommended : '', source: c.source === 'api' ? 'api' : 'fallback',
         models: c.models.filter(m => m && typeof m.id === 'string' && /^claude-[a-z0-9-]{3,60}$/.test(m.id)).slice(0, 6).map(m => ({
           id: m.id, name: typeof m.name === 'string' && m.name ? m.name.slice(0, 60) : m.id, family: String(m.family || ''),
-          price: m.price && isFinite(m.price.in) && isFinite(m.price.out) ? { in: +m.price.in, out: +m.price.out, est: !!m.price.est } : null })),
+          price: m.price && isFinite(m.price.in) && isFinite(m.price.out) ? { in: +m.price.in, out: +m.price.out, est: !!m.price.est,
+            ...(isFinite(m.price.crx) && +m.price.crx > 0 && +m.price.crx <= 1 ? { crx: +m.price.crx } : {}) } : null })),
       };
     } catch (_) { MODEL_CATALOG = null; }   // 取不到（例如本機開檔）：保留「自動」選項，由伺服器決定
     renderModelOptions();
@@ -3868,12 +3869,21 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
   function modelStats() {
     try { const o = JSON.parse(localStorage.getItem(MODEL_STATS_STORAGE) || '{}'); return o && typeof o === 'object' ? o : {}; } catch (_) { return {}; }
   }
-  // 每份成功的報告記錄一次：耗時、輸入／輸出 tokens、搜尋次數（只存在本機瀏覽器）
+  // 輸入 tokens 的總數。分析開了提示快取之後（2026-11-05），API 把輸入拆成三欄：沒進快取的（input_tokens）、
+  // 寫入快取的、讀自快取的。只看 input_tokens 會少算絕大部分
+  function usageIn(u) {
+    return u ? (+u.input_tokens || 0) + (+u.cache_creation_input_tokens || 0) + (+u.cache_read_input_tokens || 0) : 0;
+  }
+  // 每份成功的報告記錄一次：耗時、輸入／輸出 tokens（i 是輸入總數，其中 cw 寫入快取、cr 讀自快取）、搜尋次數（只存在本機瀏覽器）
   function recordModelRun(model, sec, usage, searches) {
     if (typeof model !== 'string' || !/^claude-[a-z0-9-]{3,60}$/.test(model) || !(sec > 0)) return;
     const all = modelStats(), e = all[model] || { n: 0, sec: 0, i: 0, o: 0, s: 0, nu: 0 };
     e.n++; e.sec += sec; e.s += +searches || 0;
-    if (usage && +usage.output_tokens > 0) { e.nu++; e.i += +usage.input_tokens || 0; e.o += +usage.output_tokens || 0; }
+    if (usage && +usage.output_tokens > 0) {
+      e.nu++; e.i += usageIn(usage); e.o += +usage.output_tokens || 0;
+      e.cw = (+e.cw || 0) + (+usage.cache_creation_input_tokens || 0);
+      e.cr = (+e.cr || 0) + (+usage.cache_read_input_tokens || 0);
+    }
     all[model] = e;
     try { localStorage.setItem(MODEL_STATS_STORAGE, JSON.stringify(all)); } catch (_) {}
   }
@@ -3905,6 +3915,13 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
     sel.value = c.models.some(m => m.id === saved) ? saved : (rec ? rec.id : '');
     renderModelNote();
   }
+  // 本機實測的每份平均費用（美元）：沒進快取的輸入照單價、寫入快取 1.25 倍、讀快取依模型（price.crx，沒有就 0.1 倍），
+  // 加上每次網路搜尋 US$0.01。開快取之前記的紀錄沒有 cw／cr，等於全部照單價——那時候確實是這樣計價
+  function reportCost(st, price) {
+    const cw = +st.cw || 0, cr = +st.cr || 0, plain = Math.max(0, st.i - cw - cr);
+    const inUsd = plain * price.in + cw * price.in * 1.25 + cr * price.in * (price.crx || 0.1);
+    return ((inUsd + st.o * price.out) / st.nu) / 1e6 + (st.s / st.n) * 0.01;
+  }
   function renderModelNote() {
     const el = document.getElementById('modelNote'), sel = document.getElementById('apiModel');
     if (!el || !sel) return;
@@ -3921,7 +3938,7 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
       const st = m && modelStats()[m.id];
       if (st && st.n > 0) {
         const min = (st.sec / st.n / 60).toFixed(1);
-        const cost = m.price && st.nu > 0 ? ((st.i / st.nu) * m.price.in + (st.o / st.nu) * m.price.out) / 1e6 + (st.s / st.n) * 0.01 : null;
+        const cost = m.price && st.nu > 0 ? reportCost(st, m.price) : null;
         parts.push(en ? `Measured in this browser (${st.n} report${st.n > 1 ? 's' : ''}): about ${min} min${cost != null ? `, about US$${cost.toFixed(2)}` : ''} per report.`
           : `本機實測（${st.n} 份）：平均約 ${min} 分鐘${cost != null ? `、約 US$${cost.toFixed(2)}` : ''}／份。`);
       }
@@ -6222,7 +6239,8 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     const meta = document.getElementById('resultMeta');
     if (analysisMeta) {
       const u = analysisMeta.usage;
-      const tokenStr = u.input_tokens != null ? `輸入 ${u.input_tokens} / 輸出 ${u.output_tokens} tokens` : '';
+      const cached = +u.cache_read_input_tokens || 0;
+      const tokenStr = u.input_tokens != null ? `輸入 ${usageIn(u)}${cached ? `（${cached} 讀自快取）` : ''} / 輸出 ${u.output_tokens} tokens` : '';
       meta.textContent = `${analysisMeta.model} · ${analysisMeta.elapsed} 秒 · ${analysisMeta.searchCalls} 次搜尋${analysisMeta.fetchCalls ? ` · ${analysisMeta.fetchCalls} 個網頁` : ''} · ${tokenStr}`;
     } else {
       meta.textContent = '手動載入';
