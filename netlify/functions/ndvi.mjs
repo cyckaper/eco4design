@@ -20,7 +20,7 @@
 // 每季取雲量最低的兩景（最多 8 景），不然臺灣的無雲景集中在冬天乾季，中位數會偏低。
 //
 // 誠實標示：NDVI 量的是綠色生物量，不是棲地品質；農地可以很綠。植生／密植生的門檻（0.2、0.5）
-// 是通用值、不是在地校正過的分類；斑塊是依門檻切出來的，不是土地覆蓋圖。這些話跟著資料回傳，
+// 是通用值、不是在地校正過的分類；塊區是依門檻切出來的，不是土地覆蓋圖。這些話跟著資料回傳，
 // 前端放進提示詞與報告附錄。
 //
 // 請求（GET）：/api/ndvi?lat=&lon=&months=12|24
@@ -387,10 +387,10 @@ export function medianComposite(layers, n) {
 }
 
 // ── 景觀結構指標 ─────────────────────────────────────────────────────────────
-// 圓內（像元中心到基地點 ≤ R）、有值的像元為景觀；斑塊 8 鄰接（FRAGSTATS 預設），
+// 圓內（像元中心到基地點 ≤ R）、有值的像元為景觀；塊區 8 鄰接（FRAGSTATS 預設），
 // 邊緣只算圓內兩個有值像元之間的類別交界（不算圓周、不算無資料邊）。
-// 有效網目大小（effective mesh size, Jaeger 2000）＝ Σ 斑塊面積² ／ 景觀面積：
-// 兩個隨機落點在同一斑塊的機率乘以景觀面積，越小表示越破碎。
+// 有效網目大小（effective mesh size, Jaeger 2000）＝ Σ 塊區面積² ／ 景觀面積：
+// 兩個隨機落點在同一塊區的機率乘以景觀面積，越小表示越破碎。
 export function landscapeMetrics(med, w, h, cx, cy, radiusPx, labels) {
   const r2 = radiusPx * radiusPx;
   const rmin = Math.max(0, Math.floor(cy - radiusPx) - 1), rmax = Math.min(h - 1, Math.ceil(cy + radiusPx) + 1);
@@ -425,7 +425,7 @@ export function landscapeMetrics(med, w, h, cx, cy, radiusPx, labels) {
   const quantile = p => { let acc = 0; const target = p * nValid; for (let i = 0; i < hist.length; i++) { acc += hist[i]; if (acc > target) return (i - 10000) / 10000; } return 1; };
   out.ndvi = { mean: sum / nValid / 10000, median: quantile(0.5), p10: quantile(0.1), p90: quantile(0.9) };
   out.classes = { water: water / nValid, bare: bare / nValid, low: low / nValid, dense: dense / nValid };
-  // 斑塊（8 鄰接）與邊緣（4 鄰接的類別交界，兩邊都要在圓內且有值；從類別這一側數，每條只算一次）。
+  // 塊區（8 鄰接）與邊緣（4 鄰接的類別交界，兩邊都要在圓內且有值；從類別這一側數，每條只算一次）。
   // labels 只用外接方框的那一段（索引同 inside／val），大小夠：labels.length ≥ w*h ≥ bw*bh。
   const lab = labels.subarray(0, bw * bh);
   const stack = new Int32Array(bw * bh);
@@ -640,7 +640,7 @@ function buildNotes(nScenes, period) {
   return [
     `NDVI 為 ${period.start}～${period.end} 期間 ${nScenes} 景 Sentinel-2 Level-2A 影像、經 SCL 雲遮罩後的逐像元中位數合成，像元 10 m。`,
     '植生（NDVI ≥ 0.2）與密植生（NDVI ≥ 0.5）是通用門檻，不是在地校正的土地覆蓋分類；農田、人工草坪也會被算成植生，密植生不等於天然林。',
-    'NDVI 量的是綠色生物量與活力，不是棲地品質；斑塊是依門檻切出來的連續像元（8 鄰接），不是依土地利用或植群調查劃分。',
+    'NDVI 量的是綠色生物量與活力，不是棲地品質；塊區是依門檻切出來的連續像元（8 鄰接），不是依土地利用或植群調查劃分。',
     '水域以 NDVI < 0 判定，會把陰影、裸露濕地一併算進去；山區陡坡的陰影也可能壓低 NDVI。',
     '半徑 500 m 與 1 km 說明基地及其周邊的綠量與破碎程度；5 km 與 10 km 說明基地所在的景觀基質，供活動範圍大的物種（猛禽、中大型哺乳類）與連結度討論使用。',
   ];

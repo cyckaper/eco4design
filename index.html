@@ -3009,14 +3009,14 @@ out tags center;`;
     h += row(en ? 'Vegetated (NDVI ≥ 0.2)' : '植生覆蓋（NDVI ≥ 0.2）', x => x.classes ? pct(x.classes.low + x.classes.dense) : '–');
     h += row(en ? 'Dense vegetation (≥ 0.5)' : '密植生（≥ 0.5）', x => x.classes ? pct(x.classes.dense) : '–');
     h += row(en ? 'Water (< 0)' : '水域（< 0）', x => x.classes ? pct(x.classes.water) : '–');
-    h += sect(en ? 'Dense-vegetation patches (8-connected)' : '密植生斑塊（8 鄰接）');
-    h += row(en ? 'Patches' : '斑塊數', patch('dense', d => d.patches.toLocaleString('en-US')));
-    h += row(en ? 'Largest patch (ha · share)' : '最大斑塊（ha・佔比）', patch('dense', d => `${num1(d.largestHa, 1)} · ${pct(d.largestShare)}`));
-    h += row(en ? 'Mean patch (ha)' : '平均斑塊（ha）', patch('dense', d => num1(d.meanHa, 2)));
+    h += sect(en ? 'Dense-vegetation patches (8-connected)' : '密植生塊區（8 鄰接）');
+    h += row(en ? 'Patches' : '塊區數', patch('dense', d => d.patches.toLocaleString('en-US')));
+    h += row(en ? 'Largest patch (ha · share)' : '最大塊區（ha・佔比）', patch('dense', d => `${num1(d.largestHa, 1)} · ${pct(d.largestShare)}`));
+    h += row(en ? 'Mean patch (ha)' : '平均塊區（ha）', patch('dense', d => num1(d.meanHa, 2)));
     h += row(en ? 'Effective mesh size (ha)' : '有效網目大小（ha）', patch('dense', d => num1(d.meshHa, 1)));
     h += row(en ? 'Edge density (m/ha)' : '邊緣密度（m/ha）', patch('dense', d => num1(d.edgeMPerHa, 0)));
-    h += sect(en ? 'All vegetation patches (≥ 0.2)' : '植生斑塊（≥ 0.2）');
-    h += row(en ? 'Patches · largest share' : '斑塊數・最大斑塊佔比', patch('veg', v => `${v.patches.toLocaleString('en-US')} · ${pct(v.largestShare)}`));
+    h += sect(en ? 'All vegetation patches (≥ 0.2)' : '植生塊區（≥ 0.2）');
+    h += row(en ? 'Patches · largest share' : '塊區數・最大塊區佔比', patch('veg', v => `${v.patches.toLocaleString('en-US')} · ${pct(v.largestShare)}`));
     h += row(en ? 'Effective mesh size (ha)' : '有效網目大小（ha）', patch('veg', v => num1(v.meshHa, 1)));
     h += row(en ? 'Edge density (m/ha)' : '邊緣密度（m/ha）', patch('veg', v => num1(v.edgeMPerHa, 0)));
     h += '</tbody></table>';
@@ -3534,7 +3534,7 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
           ? `💧 Water bodies (${osmLastSummary.waterCount})${named(osmLastSummary.water, 5)}`
           : `💧 水體 (${osmLastSummary.waterCount} 處)${named(osmLastSummary.water, 5)}`);
       }
-      if (osmLastSummary.forestCount > 0) lines.push(en ? `🌲 Forest patches: ${osmLastSummary.forestCount}` : `🌲 森林斑塊: ${osmLastSummary.forestCount} 處`);
+      if (osmLastSummary.forestCount > 0) lines.push(en ? `🌲 Forest patches: ${osmLastSummary.forestCount}` : `🌲 森林塊區: ${osmLastSummary.forestCount} 處`);
       if (osmLastSummary.settlementCount > 0) {
         lines.push(en
           ? `🏘️ Settlements (${osmLastSummary.settlementCount})${named(osmLastSummary.settlements, 3)}`
@@ -3631,12 +3631,12 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
         const c = x.classes, d = x.dense, g = x.veg;
         return en
           ? `radius ${rl(x.r)} (${F(x.areaHa, 0)} ha, ${P(x.validShare)} observed): NDVI mean ${F(x.ndvi.mean, 2)}, median ${F(x.ndvi.median, 2)} | water ${P(c.water)}, bare/built ${P(c.bare)}, low vegetation ${P(c.low)}, dense vegetation ${P(c.dense)} | dense-vegetation patches ${d.patches}, largest ${F(d.largestHa, 1)} ha (${P(d.largestShare)} of the area), mean ${F(d.meanHa, 2)} ha, effective mesh ${F(d.meshHa, 1)} ha, edge density ${F(d.edgeMPerHa, 0)} m/ha | all vegetation (≥0.2): ${g.patches} patches, largest ${P(g.largestShare)}, mesh ${F(g.meshHa, 1)} ha`
-          : `半徑 ${rl(x.r)}（${F(x.areaHa, 0)} ha，有值 ${P(x.validShare)}）：NDVI 平均 ${F(x.ndvi.mean, 2)}、中位數 ${F(x.ndvi.median, 2)}｜水域 ${P(c.water)}、無植生 ${P(c.bare)}、低植生 ${P(c.low)}、密植生 ${P(c.dense)}｜密植生斑塊 ${d.patches} 個，最大 ${F(d.largestHa, 1)} ha（佔 ${P(d.largestShare)}），平均 ${F(d.meanHa, 2)} ha，有效網目 ${F(d.meshHa, 1)} ha，邊緣密度 ${F(d.edgeMPerHa, 0)} m/ha｜全部植生（≥0.2）：${g.patches} 個斑塊，最大佔 ${P(g.largestShare)}，有效網目 ${F(g.meshHa, 1)} ha`;
+          : `半徑 ${rl(x.r)}（${F(x.areaHa, 0)} ha，有值 ${P(x.validShare)}）：NDVI 平均 ${F(x.ndvi.mean, 2)}、中位數 ${F(x.ndvi.median, 2)}｜水域 ${P(c.water)}、無植生 ${P(c.bare)}、低植生 ${P(c.low)}、密植生 ${P(c.dense)}｜密植生塊區 ${d.patches} 個，最大 ${F(d.largestHa, 1)} ha（佔 ${P(d.largestShare)}），平均 ${F(d.meanHa, 2)} ha，有效網目 ${F(d.meshHa, 1)} ha，邊緣密度 ${F(d.edgeMPerHa, 0)} m/ha｜全部植生（≥0.2）：${g.patches} 個塊區，最大佔 ${P(g.largestShare)}，有效網目 ${F(g.meshHa, 1)} ha`;
       };
       const L = [];
       L.push(en
         ? `Thresholds: water NDVI < 0; bare or built 0–0.2; low vegetation 0.2–0.5 (grassland, cropland, scrub); dense vegetation ≥ 0.5 (trees, closed vegetation). Patches are 8-connected pixels above the threshold within the circle; effective mesh size (Jaeger 2000) is the expected size of the patch a random point falls in — smaller means more fragmented.`
-        : `門檻：水域 NDVI < 0；無植生或人工鋪面 0–0.2；低植生 0.2–0.5（草地、農田、灌叢）；密植生 ≥ 0.5（喬木、鬱閉植被）。斑塊為圓內高於門檻、8 鄰接的連續像元；有效網目大小（Jaeger 2000）是隨機落點所在斑塊的期望面積，越小越破碎。`);
+        : `門檻：水域 NDVI < 0；無植生或人工鋪面 0–0.2；低植生 0.2–0.5（草地、農田、灌叢）；密植生 ≥ 0.5（喬木、鬱閉植被）。塊區為圓內高於門檻、8 鄰接的連續像元；有效網目大小（Jaeger 2000）是隨機落點所在塊區的期望面積，越小越破碎。`);
       v.radii.forEach(x => L.push(line(x)));
       const obs = v.observations || {};
       if ((obs.noData || 0) > 0.02) L.push(en
@@ -3647,7 +3647,7 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
         : `⚠️ 只有 ${v.nScenes} 景可用，數字僅供參考。`);
       L.push(en
         ? `How to use: the 500 m and 1 km radii describe the site and its immediate surroundings (green cover, fragmentation, edges) for the resource-use matrix and zoning; the 5 km and 10 km radii describe the landscape matrix for focal species with large home ranges (raptors, medium and large mammals) and for connectivity. These are remote-sensing estimates: NDVI measures green biomass, not habitat quality; cropland and mown turf count as vegetation and dense vegetation is not necessarily natural forest; the thresholds are generic and the patches are not a land-cover map. Do not report them as forest cover or habitat area.`
-        : `使用方式：500 m 與 1 km 描述基地及其周邊的綠量、破碎程度與邊緣，供資源利用矩陣與分區參考；5 km 與 10 km 描述基地所在的景觀基質，供活動範圍大的焦點物種（猛禽、中大型哺乳類）與連結度判斷。這些是遙測推估：NDVI 量的是綠色生物量不是棲地品質，農田與人工草坪也算植生，密植生不等於天然林；門檻為通用值，斑塊不是土地覆蓋圖。不可寫成「森林覆蓋率」或「棲地面積」。`);
+        : `使用方式：500 m 與 1 km 描述基地及其周邊的綠量、破碎程度與邊緣，供資源利用矩陣與分區參考；5 km 與 10 km 描述基地所在的景觀基質，供活動範圍大的焦點物種（猛禽、中大型哺乳類）與連結度判斷。這些是遙測推估：NDVI 量的是綠色生物量不是棲地品質，農田與人工草坪也算植生，密植生不等於天然林；門檻為通用值，塊區不是土地覆蓋圖。不可寫成「森林覆蓋率」或「棲地面積」。`);
       ndviContext = (en
         ? `\n\n🛰️ VEGETATION AND LANDSCAPE STRUCTURE (Sentinel-2 NDVI, 10 m · median of ${v.nScenes} cloud-screened scenes, ${v.start} to ${v.end})\n`
         : `\n\n🛰️ 植生與景觀結構（Sentinel-2 NDVI，10 m・${v.start}～${v.end} 期間 ${v.nScenes} 景雲遮罩後的中位數合成）\n`) + L.join('\n');
@@ -10383,7 +10383,7 @@ ${block}`;
             : `Level-2A 地表反射率（Collection 1），經 Earth Search（Element 84）取得；像元 10 m；${escapeHtml(v.start)}～${escapeHtml(v.end)} 期間${v.scenes != null ? ' ' + v.scenes + ' 景' : ''}（分季依雲量挑選），以場景分類層（SCL，保留類別 2、4–7）遮雲後取逐像元中位數；以 ${v.lat.toFixed(4)}, ${v.lon.toFixed(4)} 為中心計算 500 m、1 km、5 km、10 km 四個半徑的指標・擷取於 ${date(v.at)}。`) +
         `${extLink(api, api)}` +
         (en ? '. NDVI thresholds (water < 0, bare 0–0.2, low vegetation 0.2–0.5, dense ≥ 0.5) are generic, not locally calibrated; patches are threshold-defined, not a land-cover map; NDVI indicates green biomass, not habitat quality. Copernicus Sentinel data are free and open under the Copernicus data licence; credit “Contains modified Copernicus Sentinel data”.'
-            : '。NDVI 門檻（水域 < 0、無植生 0–0.2、低植生 0.2–0.5、密植生 ≥ 0.5）為通用值、未在地校正；斑塊依門檻切出，不是土地覆蓋圖；NDVI 反映綠色生物量，不是棲地品質。Copernicus Sentinel 資料依 Copernicus 資料授權免費開放，使用時註明「含經修改之 Copernicus Sentinel 資料」。') +
+            : '。NDVI 門檻（水域 < 0、無植生 0–0.2、低植生 0.2–0.5、密植生 ≥ 0.5）為通用值、未在地校正；塊區依門檻切出，不是土地覆蓋圖；NDVI 反映綠色生物量，不是棲地品質。Copernicus Sentinel 資料依 Copernicus 資料授權免費開放，使用時註明「含經修改之 Copernicus Sentinel 資料」。') +
         `${pasteNote}</li>`);
     }
     if (ds && !ds.inat && !ds.osm && !ds.tbn && !ds.ndvi) items.push(`<li>${en ? 'No iNaturalist, OpenStreetMap, TBN or Sentinel-2 data from this tool were included in the prompt.' : '提示詞未附本工具的 iNaturalist／OpenStreetMap／TBN／Sentinel-2 資料。'}</li>`);
@@ -10855,7 +10855,7 @@ ${block}`;
       useScale: state.useScale || '',
       boundary: (HEALS_SITE && Array.isArray(HEALS_SITE.boundary)) ? HEALS_SITE.boundary : null,
       geojson: state.healsSiteGeo || null,
-      // 植生與景觀結構（Sentinel-2 NDVI 中位數合成）：四個半徑的覆蓋與斑塊指標，供分區站判斷基質與連結
+      // 植生與景觀結構（Sentinel-2 NDVI 中位數合成）：四個半徑的覆蓋與塊區指標，供分區站判斷基質與連結
       landscape: ndviLastSummary ? {
         source: 'Copernicus Sentinel-2 L2A via Earth Search', pixelM: ndviLastSummary.pixelM, period: { start: ndviLastSummary.start, end: ndviLastSummary.end },
         scenes: ndviLastSummary.nScenes, thresholds: ndviLastSummary.thresholds, radii: ndviLastSummary.radii

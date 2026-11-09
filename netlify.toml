@@ -19,7 +19,7 @@
 # 這三件事放 Function 而不是 Edge Function，都是同一個原因：
 # Edge 每次請求只有 50 ms CPU。pdf.js 解析一份報告要 100 ms 上下（實測曾衝到 73 ms，
 # 超支會中止整個請求）；TBN 要 JSON.parse 約 3 MB、彙整兩千多筆各 64 欄的紀錄，同樣在天花板上；
-# NDVI 每景要解壓縮約 20 MB 的 tile、對 400 萬像元取中位數並找斑塊，是秒級的工作。
+# NDVI 每景要解壓縮約 20 MB 的 tile、對 400 萬像元取中位數並找塊區，是秒級的工作。
 [functions]
   directory = "netlify/functions"
 

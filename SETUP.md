@@ -216,7 +216,7 @@ Cloud-Optimized GeoTIFF，用 HTTP Range 只讀視窗需要的 tile。沒有環�
 近 12（或 24）個月、整景雲量 < 70% 的 Level-2A 景，分季各取雲量最低的（最多 8 景）；以基地點為中心
 20 km 見方、10 m 像元的視窗，讀 B04、B08 與 SCL；SCL 保留類別 2、4、5、6、7（暗區、植生、無植生、水、未分類），
 其餘（無資料、瑕疵、雲影、雲、卷雲、雪）遮掉；逐像元取 NDVI 中位數；再算 500 m、1 km、5 km、10 km 四個半徑的
-組成比例與斑塊指標。回應裡 `notes` 的那幾句話（NDVI 不是棲地品質、門檻是通用值、斑塊不是土地覆蓋圖）會原樣進面板與提示詞。
+組成比例與塊區指標。回應裡 `notes` 的那幾句話（NDVI 不是棲地品質、門檻是通用值、塊區不是土地覆蓋圖）會原樣進面板與提示詞。
 
 ### 時間預算
 
@@ -240,7 +240,7 @@ node test/tool-datasets.test.mjs   # 查證把 Sentinel-2 認成本工具資料�
 
 `ndvi.test.mjs` 不打網路：fetch 換成假的，影像是在記憶體裡現做的 COG（tile、deflate、predictor 2，
 與 Earth Search 上的檔案同一種寫法），所以 COG 讀取那一層測的是真的解碼路徑；景觀指標用一塊 20×20 像元的
-密植生與一塊 10×10 的水手算對照（覆蓋、斑塊數、面積、邊緣密度、有效網目）。
+密植生與一塊 10×10 的水手算對照（覆蓋、塊區數、面積、邊緣密度、有效網目）。
 `NDVI_FIXTURE=1 node test/ndvi.test.mjs` 會把這份結果存成 `test/fixtures/ndvi_sample.json`，給 `ndvi-ui.mjs` 當假回應。
 
 ---

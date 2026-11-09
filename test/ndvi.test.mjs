@@ -6,7 +6,7 @@
 //   - WGS84 ↔ UTM 與 pyproj 的結果差在公分以內（基地點落錯一個像元，所有半徑的數字都會錯）
 //   - COG 讀取：IFD、tile 表、predictor 還原、視窗跨 tile、視窗超出影像的部分留 no data
 //   - 雲遮罩：SCL 標為雲的像元不進中位數，即使它的 NDVI 看起來正常
-//   - 景觀指標：已知圖形（一塊 20×20 像元的密植生、一塊 10×10 的水）算出來的覆蓋、斑塊、邊緣、有效網目與手算一致
+//   - 景觀指標：已知圖形（一塊 20×20 像元的密植生、一塊 10×10 的水）算出來的覆蓋、塊區、邊緣、有效網目與手算一致
 //   - 預覽圖是合法的 PNG；回應含來源、期間、景與說明
 //   - 抓取逾時只是少幾景，不是整個失敗
 import { readFileSync } from 'node:fs';
@@ -251,13 +251,13 @@ if (!res.error) {
   const e500 = expectFor(500), e1k = expectFor(1000);
   check('500 m：圓內像元數與手算一致，全部有值（雲與無資料被其他景補上）', r500.pixels === e500.nIn && r500.valid === e500.nIn, JSON.stringify({ pixels: r500.pixels, valid: r500.valid, want: e500.nIn }));
   check('500 m：密植生 400 像元（4 ha）、沒有水、沒有裸露', near(r500.classes.dense, 400 / e500.nIn, 1e-9) && r500.classes.water === 0 && r500.classes.bare === 0, JSON.stringify(r500.classes));
-  check('500 m：密植生 1 個斑塊、4 ha、最大斑塊比例 400/n、邊緣 800 m、有效網目 = 4²/景觀面積', r500.dense.patches === 1 && near(r500.dense.largestHa, 4, 1e-9) && near(r500.dense.largestShare, 400 / e500.nIn, 1e-9)
+  check('500 m：密植生 1 個塊區、4 ha、最大塊區比例 400/n、邊緣 800 m、有效網目 = 4²/景觀面積', r500.dense.patches === 1 && near(r500.dense.largestHa, 4, 1e-9) && near(r500.dense.largestShare, 400 / e500.nIn, 1e-9)
     && near(r500.dense.edgeMPerHa, 800 / (e500.nIn * 0.01), 1e-6) && near(r500.dense.meshHa, 16 / (e500.nIn * 0.01), 1e-6), JSON.stringify(r500.dense));
-  check('500 m：植生（≥0.2）覆蓋 100%、1 個斑塊、沒有邊緣', r500.veg.share === 1 && r500.veg.patches === 1 && r500.veg.edgeMPerHa === 0, JSON.stringify(r500.veg));
+  check('500 m：植生（≥0.2）覆蓋 100%、1 個塊區、沒有邊緣', r500.veg.share === 1 && r500.veg.patches === 1 && r500.veg.edgeMPerHa === 0, JSON.stringify(r500.veg));
   check('500 m：NDVI 中位數 0.3、p90 0.3、平均略高', near(r500.ndvi.median, 0.3, 0.0005) && near(r500.ndvi.p90, 0.3, 0.0005) && r500.ndvi.mean > 0.3 && r500.ndvi.mean < 0.35, JSON.stringify(r500.ndvi));
   check('1 km：水 100 像元、密植生 400 像元', near(r1k.classes.water, 100 / e1k.nIn, 1e-9) && near(r1k.classes.dense, 400 / e1k.nIn, 1e-9) && r1k.pixels === e1k.nIn, JSON.stringify({ ...r1k.classes, pixels: r1k.pixels, want: e1k.nIn }));
-  check('1 km：植生有 1 個斑塊（水是洞），邊緣 = 水的周長 400 m', r1k.veg.patches === 1 && near(r1k.veg.edgeMPerHa, 400 / (e1k.nIn * 0.01), 1e-6), JSON.stringify(r1k.veg));
-  check('5 km 與 10 km：圓貼齊視窗邊，全部有值，密植生仍是 1 個斑塊', r5k.validShare === 1 && r10k.validShare > 0.999 && r5k.dense.patches === 1 && r10k.dense.patches === 1, JSON.stringify({ v5: r5k.validShare, v10: r10k.validShare, d5: r5k.dense.patches, d10: r10k.dense.patches }));
+  check('1 km：植生有 1 個塊區（水是洞），邊緣 = 水的周長 400 m', r1k.veg.patches === 1 && near(r1k.veg.edgeMPerHa, 400 / (e1k.nIn * 0.01), 1e-6), JSON.stringify(r1k.veg));
+  check('5 km 與 10 km：圓貼齊視窗邊，全部有值，密植生仍是 1 個塊區', r5k.validShare === 1 && r10k.validShare > 0.999 && r5k.dense.patches === 1 && r10k.dense.patches === 1, JSON.stringify({ v5: r5k.validShare, v10: r10k.validShare, d5: r5k.dense.patches, d10: r10k.dense.patches }));
   check('觀測次數：雲帶與無資料區只少一次觀測，沒有像元是 0 次', res.observations.noData === 0 && res.observations.ge3Share === 1 && res.observations.histogram[5] > 0 && res.observations.histogram[4] > 0, JSON.stringify(res.observations));
   const nRange = requests.filter(u => u.startsWith('mem://')).length;
   check('每景 3 個檔頭 + 9+9 個影像 tile + 9 個 SCL tile 的 Range 請求（5 景 = 150 次）', nRange === 150, nRange);

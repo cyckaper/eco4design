@@ -75,7 +75,7 @@ check('表格欄：半徑 500 m、1 km、5 km、10 km', ths.join(',') === '半�
 const cell = async (label, i) => (await page.locator('#ndviTable tbody tr', { hasText: label }).first().locator('td').allTextContents())[i];
 check('500 m 密植生 5.1%（合成資料：400 像元／7845）', await cell('密植生（≥ 0.5）', 0) === '5.1%', await cell('密植生（≥ 0.5）', 0));
 check('1 km 水域 0.3%（100 像元）、500 m 水域 0%', await cell('水域（< 0）', 1) === '0.3%' && await cell('水域（< 0）', 0) === '0%', `${await cell('水域（< 0）', 0)} ${await cell('水域（< 0）', 1)}`);
-check('密植生斑塊：四個半徑都是 1 個、4.0 ha', await cell('斑塊數', 0) === '1' && await cell('斑塊數', 3) === '1' && /^4\.0 ·/.test(await cell('最大斑塊', 0)), `${await cell('斑塊數', 0)} ${await cell('最大斑塊', 0)}`);
+check('密植生塊區：四個半徑都是 1 個、4.0 ha', await cell('塊區數', 0) === '1' && await cell('塊區數', 3) === '1' && /^4\.0 ·/.test(await cell('最大塊區', 0)), `${await cell('塊區數', 0)} ${await cell('最大塊區', 0)}`);
 const scenesTxt = await page.locator('#ndviScenes').textContent();
 check('使用影像依日期列出 5 景與雲量', (scenesTxt.match(/（雲 \d+%）/g) || []).length === 5 && scenesTxt.indexOf('2026-01-15') < scenesTxt.indexOf('2026-02-10'), scenesTxt);
 check('沒有警示（景數夠、沒有缺值）', await page.locator('#ndviNote').evaluate(e => e.style.display === 'none'), await page.locator('#ndviNote').textContent());
