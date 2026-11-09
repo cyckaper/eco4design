@@ -139,6 +139,12 @@ check('附錄資料來源有 Copernicus Sentinel-2 一項（SCL、門檻、授�
 const exp = await page.evaluate(() => window.__qiData.buildHealsExport());
 check('匯出給總控台的 JSON 有 landscape（四個半徑、期間、門檻）', exp.landscape && exp.landscape.radii.length === 4 && exp.landscape.period.start === '2025-11-01' && exp.landscape.thresholds.dense === 0.5, JSON.stringify(exp.landscape && Object.keys(exp.landscape)));
 
+// 指標說明（拉開式）：一開始就有內容、帶入這次查詢的參數；十個小節含公式與 FRAGSTATS 對照
+const mSum = await page.locator('#ndviMethodSummary').textContent();
+const mSecs = await page.locator('#ndviMethodBody > details').count();
+const mBody = await page.locator('#ndviMethodBody').innerHTML();
+check('「這些指標是怎麼算的」區塊：10 個小節、帶入這次的期間與景數、有 NDVI 與有效網目公式、FRAGSTATS 對照', /怎麼算的/.test(mSum) && mSecs === 10 && /這次查詢：2025-11-01～2026-11-01，5 景，圖幅 MGRS-51RUH/.test(mBody) && /NDVI = \(ρ_NIR − ρ_red\)/.test(mBody) && /m_eff = Σ aᵢ² ／ A/.test(mBody) && /MESH<\/td>/.test(mBody) && /8 鄰接/.test(mBody), `${mSum} | secs=${mSecs} | ${mBody.slice(0, 200)}`);
+
 // 英文
 await page.evaluate(() => window.__qiData.setLang('en'));
 await page.waitForTimeout(300);
@@ -147,6 +153,9 @@ const enStatus = await page.locator('#ndviStatus').textContent();
 const enThs = await page.locator('#ndviTable thead th').allTextContents();
 const enOpt = await page.locator('#ndviMonths option').first().textContent();
 check('英文：標題、狀態、表頭、選單都切換', /Vegetation & Landscape Structure/.test(enTitle) && /NDVI composite of 5 Sentinel-2 scenes/.test(enStatus) && enThs[0] === 'Radius' && enOpt === 'Last 12 months', `${enTitle} | ${enStatus} | ${enThs[0]} | ${enOpt}`);
+const enMSum = await page.locator('#ndviMethodSummary').textContent();
+const enMBody = await page.locator('#ndviMethodBody').innerHTML();
+check('英文：指標說明也切換（標題、十小節、Jaeger 2000）', /How these indicators are computed/.test(enMSum) && (enMBody.match(/<details>/g) || []).length === 10 && /Effective mesh size \(ha\)/.test(enMBody) && /Jaeger 2000/.test(enMBody), `${enMSum} | ${enMBody.slice(0, 160)}`);
 const enPrompt = await page.evaluate(() => window.__qiPrompt.buildPrompt());
 check('英文提示詞：區塊標題與 European Space Agency 參考文獻', /🛰️ VEGETATION AND LANDSCAPE STRUCTURE/.test(enPrompt) && /European Space Agency\. \(n\.d\.\)\. \[Copernicus Sentinel-2 Level-2A/.test(enPrompt) && /Do not report them as forest cover/.test(enPrompt), enPrompt.slice(enPrompt.indexOf('🛰️'), enPrompt.indexOf('🛰️') + 300));
 await page.evaluate(() => window.__qiData.setLang('zh'));

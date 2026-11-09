@@ -300,6 +300,22 @@
   .ndvi-scenes { font-family: var(--serif); font-size: 11px; color: var(--ink-soft); line-height: 1.6; margin-top: 8px; }
   .ndvi-scenes b { font-weight: 500; color: var(--moss); }
   .ndvi-note { font-family: var(--serif); font-size: 11.5px; color: #5f4e16; background: var(--gold-pale); border-left: 3px solid var(--gold); padding: 7px 10px; border-radius: 3px; margin-top: 8px; line-height: 1.6; }
+  /* 指標說明（拉開式）：每一步一個小節，公式用等寬字 */
+  .ndvi-method { margin-top: 10px; border: 1px solid var(--border-soft); border-radius: 3px; background: var(--paper); font-family: var(--serif); font-size: 12.5px; line-height: 1.7; color: var(--ink); }
+  .ndvi-method > summary { cursor: pointer; padding: 7px 12px; color: var(--moss); font-weight: 600; list-style: none; }
+  .ndvi-method > summary::-webkit-details-marker { display: none; }
+  .ndvi-method > summary::before { content: '▸'; display: inline-block; width: 1.1em; transition: transform .15s; }
+  .ndvi-method[open] > summary::before { transform: rotate(90deg); }
+  .ndvi-method-body { padding: 2px 14px 12px; border-top: 1px dashed var(--border-soft); }
+  .ndvi-method-body details { margin: 8px 0 0; border-left: 2px solid var(--moss-pale); padding-left: 10px; }
+  .ndvi-method-body details > summary { cursor: pointer; font-weight: 600; color: var(--ink-soft); padding: 2px 0; }
+  .ndvi-method-body details[open] > summary { color: var(--moss); }
+  .ndvi-method-body p { margin: 5px 0; }
+  .ndvi-method-body .fm { display: inline-block; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11.5px; background: rgba(223, 231, 210, 0.45); border-radius: 3px; padding: 1px 6px; margin: 1px 0; }
+  .ndvi-method-body table { border-collapse: collapse; margin: 6px 0; font-size: 11.5px; font-family: var(--body); }
+  .ndvi-method-body th, .ndvi-method-body td { border: 1px solid var(--border-soft); padding: 3px 8px; text-align: left; vertical-align: top; }
+  .ndvi-method-body th { background: var(--moss-pale); font-weight: 600; color: var(--moss); }
+  .ndvi-method-body .mt-note { font-size: 11.5px; color: var(--ink-soft); }
 
   /* TBN 臺灣生物多樣性網絡 panel — inat skeleton, gold-tinted accents */
   .tbn-panel { border: 1px solid var(--border-soft); background: rgba(226, 213, 178, 0.18); border-radius: 3px; padding: 12px; margin-bottom: 16px; }
@@ -760,6 +776,8 @@
         </div>
       </div>
       <div id="ndviNote" class="ndvi-note" style="display:none"></div>
+      <!-- 指標怎麼算的：內容由 ndviMethodHtml() 依語言填入（第一次開啟時與切換語言時） -->
+      <details class="ndvi-method" id="ndviMethod"><summary id="ndviMethodSummary">📐 這些指標是怎麼算的（展開看詳細說明）</summary><div class="ndvi-method-body" id="ndviMethodBody"></div></details>
       <p class="osm-attribution">
         資料來源 © <a href="https://dataspace.copernicus.eu/" target="_blank" rel="noopener">Copernicus Sentinel-2</a> Level-2A（ESA）·
         經 <a href="https://earth-search.aws.element84.com/v1" target="_blank" rel="noopener">Earth Search</a>（Element 84）取得 · 雲遮罩 SCL · 中位數合成
@@ -1564,6 +1582,7 @@
     } catch (e) { console.warn('[i18n] re-render partial:', e); }
     // 各面板分開重繪：前一個面板出錯不該讓後面的停在舊語言
     try { if (ndviLastData) renderNdvi(ndviLastData); } catch (e) { console.warn('[i18n] ndvi re-render:', e); }
+    try { renderNdviMethod(); } catch (e) { console.warn('[i18n] ndvi method:', e); }
   }
 
   function initLang() {
@@ -2929,6 +2948,62 @@ out tags center;`;
   const pct = (x, d) => `${(x * 100).toFixed(d === undefined ? (x > 0 && x < 0.1 ? 1 : 0) : d)}%`;   // 小於 10% 給一位小數
   const num1 = (x, d = 1) => Number(x).toFixed(d);
 
+  // 「這些指標是怎麼算的」：對照 netlify/functions/ndvi.mjs 的實作逐步說明（期間、選景、讀取、遮罩、合成、半徑、分類、塊區指標、限制）。
+  // 有資料時帶入這次的實際參數（期間、景數、門檻）；沒有資料時用預設值說明
+  function ndviMethodHtml(en, d) {
+    const T = (d && d.thresholds) || { water: 0, veg: 0.2, dense: 0.5 };
+    const nS = d && Array.isArray(d.scenes) ? d.scenes.length : null;
+    const per = d && d.period ? `${d.period.start}～${d.period.end}` : '';
+    const grid = d && d.source && d.source.grid ? d.source.grid : '';
+    const sec = (title, body) => `<details><summary>${title}</summary>${body}</details>`;
+    const fm = x => `<span class="fm">${x}</span>`;
+    if (en) {
+      return `<p class="mt-note">Everything below is computed on the server by <code>/api/ndvi</code> from public Sentinel-2 imagery; the panel, the prompt and the report table all show the same numbers.${per ? ` This query: ${per}${nS != null ? `, ${nS} scenes` : ''}${grid ? `, tile ${grid}` : ''}.` : ''}</p>`
+      + sec('1 · Imagery and period', `<p>Copernicus Sentinel-2 Level-2A (atmospherically corrected surface reflectance, Collection 1), found through the Earth Search STAC catalogue (Element 84, AWS). The period runs from the first day of the current month back 12 (or 24) months, so the same site asks for the same scenes all month and is served from cache. Only scenes whose whole-tile cloud cover is below 70% and whose no-data share is below 60% are considered, and only the MGRS 100 km tile that contains the 20 km window around the site (other tiles are ignored).</p>`)
+      + sec('2 · Which scenes are used', `<p>Scenes are grouped by season (calendar quarter of the acquisition date). Each round takes the least cloudy remaining scene from every season, until 8 scenes are chosen, so a 12-month query usually ends with about two scenes per season rather than only the clear winter ones. Scenes that cannot be downloaded within the time budget are listed as skipped and left out.</p>`)
+      + sec('3 · What is read', `<p>A 20 km × 20 km window centred on the site (2,000 × 2,000 pixels at 10 m, in the tile’s own UTM grid). Only the Cloud-Optimized GeoTIFF tiles that intersect the window are fetched, with HTTP range requests: red (B04) and near-infrared (B08) at 10 m and the Scene Classification Layer (SCL) at 20 m, which is resampled to the 10 m grid by pixel duplication.</p>`)
+      + sec('4 · Cloud mask and NDVI per scene', `<p>SCL keeps classes 2 (shadow-dark areas), 4 (vegetation), 5 (bare), 6 (water) and 7 (unclassified); cloud shadow (3), clouds (8, 9), thin cirrus (10), snow and ice (11), no-data and defective pixels (0, 1) are dropped. Digital numbers become reflectance with the Collection 1 scale and offset ${fm('ρ = DN × 0.0001 − 0.1')} (clipped at 0); pixels with ${fm('ρ_NIR + ρ_red < 0.01')} (no signal) are dropped. Then ${fm('NDVI = (ρ_NIR − ρ_red) / (ρ_NIR + ρ_red)')}, stored as an integer × 10,000.</p>`)
+      + sec('5 · Median composite', `<p>For every pixel, the median of its cloud-free NDVI values across the chosen scenes (mean of the two middle values when the count is even). The median is used instead of the maximum because a maximum-value composite leans towards the growing season and picks up cloud-edge artefacts, while the median is robust to residual cloud and shadow. A pixel with no cloud-free observation in the whole period has no value; the panel reports their share when it exceeds 2%.</p>`)
+      + sec('6 · Radii, area and observed share', `<p>Four circles of 500 m, 1 km, 5 km and 10 km. A pixel belongs to a circle when its centre is within the radius of the site point. ${fm('Area (ha) = number of pixels with a value × 0.01 ha')}; the observed share is the pixels with a value divided by all pixels in the circle. Every share below is computed over pixels with a value (the “landscape”).</p>`)
+      + sec('7 · Greenness and cover classes', `<p>NDVI mean, median and the 10th/90th percentiles from a histogram of the composite inside the circle. Cover classes by NDVI thresholds: water ${fm(`NDVI < ${T.water}`)}, bare or built ${fm(`${T.water}–${T.veg}`)}, low vegetation ${fm(`${T.veg}–${T.dense}`)} (grass, crops, scrub), dense vegetation ${fm(`≥ ${T.dense}`)} (trees, closed canopy). “Vegetated” is low + dense. The thresholds are generic literature values, not calibrated locally; NDVI saturates under dense canopy, and cropland or mown turf counts as vegetation.</p>`)
+      + sec('8 · Patches and landscape metrics', `<p>Computed twice, for vegetated (≥ ${T.veg}) and for dense (≥ ${T.dense}) pixels. A patch is a group of pixels above the threshold that touch each other, including diagonally (8-neighbour rule, FRAGSTATS default), inside the circle.</p>
+<table><tr><th>Indicator</th><th>Definition</th><th>FRAGSTATS</th></tr>
+<tr><td>Patches</td><td>number of patches in the circle</td><td>NP</td></tr>
+<tr><td>Mean patch (ha)</td><td>${fm('class area / number of patches')}</td><td>AREA_MN</td></tr>
+<tr><td>Largest patch (ha · share)</td><td>area of the largest patch, and ${fm('largest / landscape area')}</td><td>LPI</td></tr>
+<tr><td>Effective mesh size (ha)</td><td>${fm('m_eff = Σ aᵢ² / A')} over all patches aᵢ, with A the landscape area (pixels with a value). It equals the probability that two random points fall in the same patch, times A — the expected patch size seen from a random point. Smaller means more fragmented (Jaeger 2000).</td><td>MESH</td></tr>
+<tr><td>Edge density (m/ha)</td><td>${fm('edge length / landscape area')}. An edge is a 10 m side between a pixel above the threshold and a neighbouring pixel below it (4-neighbour sides); the circle boundary and no-data borders are not counted.</td><td>ED</td></tr>
+<tr><td>Patch density</td><td>${fm('patches per 100 ha')} (in the API response; not shown in the panel table)</td><td>PD</td></tr></table>`)
+      + sec('9 · Preview map', `<p>The median NDVI composite in a green ramp (0 to ≥ 0.8), water in blue, no data in grey, reprojected to latitude/longitude and overlaid on the OpenStreetMap base map at 55% opacity; the circles are the four radii, the dot is the site.</p>`)
+      + sec('10 · How far to trust it', `<p>This is a remote-sensing estimate of green biomass, not a habitat survey: dense vegetation is not necessarily natural forest, thresholds are not locally calibrated, a 12-month median blends seasons, 10 m pixels miss hedgerows and single trees, and cloudy mountain sites may end with fewer scenes (listed under the table). Use 500 m and 1 km for the site and its surroundings, 5 and 10 km for the landscape matrix and connectivity; never report the figures as forest cover or habitat area. References: Jaeger, J. A. G. (2000). Landscape division, splitting index, and effective mesh size. <i>Landscape Ecology</i>, 15, 115–130; McGarigal, K. &amp; Marks, B. J. (1995). FRAGSTATS: spatial pattern analysis program for quantifying landscape structure. USDA Forest Service GTR PNW-351.</p>`);
+    }
+    return `<p class="mt-note">以下全部在伺服器端由 <code>/api/ndvi</code> 依公開的 Sentinel-2 影像計算；面板、提示詞和報告裡的表用的是同一組數字。${per ? `這次查詢：${per}${nS != null ? `，${nS} 景` : ''}${grid ? `，圖幅 ${grid}` : ''}。` : ''}</p>`
+    + sec('1 · 影像與期間', `<p>Copernicus Sentinel-2 Level-2A（大氣校正後的地表反射率，Collection 1），透過 Element 84 在 AWS 上的 Earth Search STAC 目錄搜尋。期間從本月 1 日往前推 12（或 24）個月，所以同一基地整個月問的都是同一批影像，可以走快取。只考慮整景雲量低於 70%、空白像元低於 60% 的景，而且只用包含基地周圍 20 km 視窗的那一個 MGRS 100 km 圖幅，其他圖幅不用。</p>`)
+    + sec('2 · 挑哪幾景', `<p>先依拍攝日期的季別（每季三個月）分成四組，每一輪從每一季各取剩下雲量最低的一景，直到湊滿 8 景；所以 12 個月的查詢大致是每季 2 景，不會只剩冬季乾季的晴天。臺灣的無雲景集中在冬季，不分季的話中位數會偏向枯水期。來不及在時間預算內下載完的景列為「跳過」，不納入。</p>`)
+    + sec('3 · 讀取範圍', `<p>以基地為中心 20 km × 20 km 的視窗（10 m 像元 2,000 × 2,000 個，用圖幅本身的 UTM 座標）。只透過 HTTP Range 讀取 COG 檔中與視窗相交的瓦片：紅光 B04 與近紅外 B08（10 m），以及 20 m 的場景分類層 SCL（以像元複製的方式對到 10 m 格網）。</p>`)
+    + sec('4 · 雲遮罩與每景的 NDVI', `<p>SCL 只保留 2（暗區／地形陰影）、4（植生）、5（非植生）、6（水）、7（未分類）；雲影（3）、雲（8、9）、卷雲（10）、雪冰（11）、無資料與瑕疵像元（0、1）一律去掉。數值依 Collection 1 的尺度與位移換成反射率 ${fm('ρ = DN × 0.0001 − 0.1')}（負值截為 0）；${fm('ρ_NIR + ρ_red < 0.01')} 的像元（幾乎沒有訊號）也去掉。然後 ${fm('NDVI = (ρ_NIR − ρ_red) / (ρ_NIR + ρ_red)')}，以 ×10,000 的整數儲存。</p>`)
+    + sec('5 · 中位數合成', `<p>每個像元取它在各景無雲 NDVI 值的中位數（偶數個時取中間兩個的平均）。不用最大值是因為最大值合成偏向生長季、又會撿到雲邊緣的異常值，中位數對殘雲和陰影比較穩健。整個期間一次無雲觀測都沒有的像元就是無資料；這類像元超過 2% 時面板會提醒。</p>`)
+    + sec('6 · 半徑、面積與有效像元', `<p>四個圓：500 m、1 km、5 km、10 km。像元中心到基地點的距離不超過半徑就算圓內。${fm('面積（ha）＝有值像元數 × 0.01 ha')}；有效像元比例＝有值像元÷圓內全部像元。下面所有比例的分母都是有值像元（稱為「景觀」）。</p>`)
+    + sec('7 · 綠度與覆蓋分類', `<p>由圓內合成值的直方圖算 NDVI 平均、中位數、第 10 與第 90 百分位。覆蓋分類依門檻：水域 ${fm(`NDVI < ${T.water}`)}、無植生或人工鋪面 ${fm(`${T.water}–${T.veg}`)}、低植生 ${fm(`${T.veg}–${T.dense}`)}（草地、農田、灌叢）、密植生 ${fm(`≥ ${T.dense}`)}（喬木、鬱閉植被）；「植生」＝低植生＋密植生。門檻是文獻常用的通用值，沒有在地校正；濃密林冠下 NDVI 會飽和，農田與人工草坪也算植生。</p>`)
+    + sec('8 · 塊區（patch）與景觀結構指標', `<p>對「植生（≥ ${T.veg}）」與「密植生（≥ ${T.dense}）」各算一次。塊區是圓內達門檻、彼此相連（含對角，8 鄰接，FRAGSTATS 的預設）的一群像元。</p>
+<table><tr><th>指標</th><th>定義</th><th>FRAGSTATS</th></tr>
+<tr><td>塊區數</td><td>圓內塊區的個數</td><td>NP</td></tr>
+<tr><td>平均塊區（ha）</td><td>${fm('該類別面積 ÷ 塊區數')}</td><td>AREA_MN</td></tr>
+<tr><td>最大塊區（ha・佔比）</td><td>最大那一塊的面積，以及 ${fm('最大塊區 ÷ 景觀面積')}</td><td>LPI</td></tr>
+<tr><td>有效網目大小（ha）</td><td>${fm('m_eff = Σ aᵢ² ／ A')}，aᵢ 為各塊區面積、A 為景觀面積（有值像元）。意思是兩個隨機落點落在同一塊區的機率乘以 A，也就是「隨機站在一點時，腳下那塊區平均有多大」；越小越破碎（Jaeger 2000）。</td><td>MESH</td></tr>
+<tr><td>邊緣密度（m/ha）</td><td>${fm('邊緣總長 ÷ 景觀面積')}。邊緣是達門檻像元與相鄰未達門檻像元之間那一條 10 m 的邊（上下左右 4 鄰接），圓周與無資料的交界不算。</td><td>ED</td></tr>
+<tr><td>塊區密度</td><td>${fm('每 100 ha 的塊區數')}（在 API 回傳裡；面板的表沒有列）</td><td>PD</td></tr></table>`)
+    + sec('9 · 預覽圖', `<p>中位數 NDVI 以綠色漸層顯示（0 到 ≥ 0.8），水域藍色、無資料灰色，重投影成經緯度後以 55% 不透明度疊在 OpenStreetMap 底圖上；四個圈是四個半徑，圓點是基地。</p>`)
+    + sec('10 · 可以信到什麼程度', `<p>這是遙測推估的綠色生物量，不是棲地調查：密植生不等於天然林，門檻沒有在地校正，12 個月的中位數抹平了季節差，10 m 像元看不到樹籬和單株大樹，雲多的山區可能只湊到較少的景（表下會列出）。500 m 與 1 km 用來看基地及其周邊，5 km 與 10 km 看景觀基質與連結度；不可寫成「森林覆蓋率」或「棲地面積」。參考文獻：Jaeger, J. A. G. (2000). Landscape division, splitting index, and effective mesh size. <i>Landscape Ecology</i>, 15, 115–130；McGarigal, K. &amp; Marks, B. J. (1995). FRAGSTATS: spatial pattern analysis program for quantifying landscape structure. USDA Forest Service GTR PNW-351.</p>`);
+  }
+  function renderNdviMethod() {
+    const body = document.getElementById('ndviMethodBody'), sum = document.getElementById('ndviMethodSummary');
+    if (!body) return;
+    const en = LANG === 'en';
+    if (sum) sum.textContent = en ? '📐 How these indicators are computed (expand for the details)' : '📐 這些指標是怎麼算的（展開看詳細說明）';
+    body.innerHTML = ndviMethodHtml(en, ndviLastData);
+  }
+
   function renderNdviEmpty() {
     const status = document.getElementById('ndviStatus');
     if (!status) return;
@@ -2940,6 +3015,7 @@ out tags center;`;
     document.getElementById('ndviNote').style.display = 'none';
     ndviMapLayers.forEach(l => { try { l.remove(); } catch (_) {} });
     ndviMapLayers = [];
+    renderNdviMethod();                 // 沒有資料時也看得到說明（以預設參數敘述）
   }
 
   async function loadNdvi(force = false) {
@@ -3088,6 +3164,7 @@ out tags center;`;
     }
 
     ndviLastSummary = buildNdviSummary(data);
+    renderNdviMethod();                 // 說明文字帶入這次的期間、景數與門檻
     updatePrompt();
   }
 
@@ -11112,6 +11189,7 @@ ${block}`;
     document.getElementById('tbnSort').addEventListener('change', () => { if (tbnLastData) renderTbn(tbnLastData); });
     document.getElementById('ndviRefresh').addEventListener('click', () => loadNdvi(true));
     document.getElementById('ndviMonths').addEventListener('change', () => loadNdvi(false));
+    renderNdviMethod();   // 「這些指標是怎麼算的」：一開始就可以展開看
 
     // Claude API analysis (Step 6)
     setupApiKeyUI();
