@@ -206,6 +206,45 @@ node test/tbn-ui.mjs        # 面板真的繪得出來（45 項，需要 playwri
 
 ---
 
+## 植生與景觀結構（`/api/ndvi`）— 不必設定任何東西
+
+Sentinel-2 影像是公開資料：STAC 查詢打 Earth Search（Element 84，不需金鑰），影像本身是 AWS 上的
+Cloud-Optimized GeoTIFF，用 HTTP Range 只讀視窗需要的 tile。沒有環境變數要設。
+
+### 它做什麼
+
+近 12（或 24）個月、整景雲量 < 70% 的 Level-2A 景，分季各取雲量最低的（最多 8 景）；以基地點為中心
+20 km 見方、10 m 像元的視窗，讀 B04、B08 與 SCL；SCL 保留類別 2、4、5、6、7（暗區、植生、無植生、水、未分類），
+其餘（無資料、瑕疵、雲影、雲、卷雲、雪）遮掉；逐像元取 NDVI 中位數；再算 500 m、1 km、5 km、10 km 四個半徑的
+組成比例與斑塊指標。回應裡 `notes` 的那幾句話（NDVI 不是棲地品質、門檻是通用值、斑塊不是土地覆蓋圖）會原樣進面板與提示詞。
+
+### 時間預算
+
+函式上限 26 秒。半徑 10 km 的視窗每景要抓約 9+9 個 1024×1024 的 tile（2026-11-09 實測平均 1.3 MB 一個）加 SCL，
+8 景約 190 MB；兩景並行，15 秒後不再開始新的景，19 秒強制中止還沒抓完的（合成、指標與預覽圖約需 2–3 秒）。
+抓到幾景就合成幾景，`scenes` 列出用了哪些、`skipped` 列出跳過的與原因；少於 3 景不進快取，面板會提醒。
+
+### 快取
+
+回應帶 `Netlify-CDN-Cache-Control: public, max-age=86400, durable` 與 `Netlify-Vary: query=lat|lon|months`，
+所以用 GET、不用 POST：同一個基地（經緯度四位小數）、同一個月，CDN 只讓函式算一次。
+期間取「本月 1 日往前 N 個月」，鍵值一個月內不變；跨月之後第一個人會等 10–20 秒重算。
+
+### 改動前請先跑測試
+
+```bash
+node test/ndvi.test.mjs       # 投影、COG 讀取、雲遮罩、景觀指標手算對照、逾時只少幾景、HTTP 層（36 項，不需網路）
+node test/ndvi-ui.mjs         # 面板、小地圖、提示詞、匯出、附錄、語言切換（29 項，需要 playwright 與 /tmp/lf 的 Leaflet）
+node test/tool-datasets.test.mjs   # 查證把 Sentinel-2 認成本工具資料集（與 TBN 一起，40 項）
+```
+
+`ndvi.test.mjs` 不打網路：fetch 換成假的，影像是在記憶體裡現做的 COG（tile、deflate、predictor 2，
+與 Earth Search 上的檔案同一種寫法），所以 COG 讀取那一層測的是真的解碼路徑；景觀指標用一塊 20×20 像元的
+密植生與一塊 10×10 的水手算對照（覆蓋、斑塊數、面積、邊緣密度、有效網目）。
+`NDVI_FIXTURE=1 node test/ndvi.test.mjs` 會把這份結果存成 `test/fixtures/ndvi_sample.json`，給 `ndvi-ui.mjs` 當假回應。
+
+---
+
 ## 🛡️ 三道防線（請全部設定）
 
 ### 1. 通行碼（門鎖）— 已內建

@@ -7,8 +7,8 @@
 
 ## 這是什麼
 
-輸入基地位置與焦點物種，工具會自動蒐集在地生態資料（iNaturalist 物種觀察、
-OpenStreetMap 環境特徵），再交由 Claude 生成完整的生態共存設計分析報告。
+輸入基地位置與焦點物種，工具會自動蒐集在地生態資料（iNaturalist 物種觀察、TBN 物種紀錄、
+OpenStreetMap 環境特徵、Sentinel-2 衛星影像的植生與景觀結構），再交由 Claude 生成完整的生態共存設計分析報告。
 
 **使用者不需自備 API 金鑰**，只需輸入授課教師提供的通行碼。
 
@@ -20,7 +20,8 @@ OpenStreetMap 環境特徵），再交由 Claude 生成完整的生態共存設�
 2. **焦點物種** — iNaturalist 自動載入在地觀察 + 預設組合 + 自訂輸入；
    觀察卡片標出臺灣特有種與保育類等級（《野生動物保育法》I／II／III 級、文資法珍貴稀有植物），
    類群篩選只改變畫面上的卡片，送給模型的在地觀察清單固定為全部類群
-3. **基地條件與棲地需求** — OSM 自動偵測環境特徵；棲地需求為獨立結構化欄位
+3. **基地條件與棲地需求** — OSM 自動偵測環境特徵；Sentinel-2 NDVI（10 m）算出 500 m、1 km、5 km、10 km
+   四個半徑的植生覆蓋與景觀結構（見下節）；棲地需求為獨立結構化欄位
 4. **未來使用活動**（選填）— 遊憩、自然體驗、療癒與社區、常見高衝擊四類膠囊（最多 10 項）+ 自訂輸入 + 預期使用規模；
    有選擇時，報告增加第 5 節「人類活動影響與使用建議」（活動影響表與活動 × 分區相容性矩陣），其後各節順延
 5. **特別考量** — 自由文字
@@ -58,6 +59,8 @@ OpenStreetMap 環境特徵），再交由 Claude 生成完整的生態共存設�
 瀏覽器 → /api/verify（Netlify Edge Function）→ doi.org／Crossref／OpenAlex／所列網頁
 瀏覽器 → /api/models（Netlify Edge Function）→ Anthropic Models API（可用模型清單，快取 6 小時）
 瀏覽器 → /api/taxon-status（Netlify Edge Function）→ TaiCOL 臺灣物種名錄（保育類與特有種，含臺灣的亞種、變種；快取 24 小時）
+瀏覽器 → /api/tbn（Netlify Function）→ TBN 臺灣生物多樣性網絡（逐類群取樣；快取 6 小時）
+瀏覽器 → /api/ndvi（Netlify Function）→ Earth Search STAC → AWS 上的 Sentinel-2 L2A COG（Range 讀取；CDN 快取 1 天）
 ```
 
 金鑰存於 Netlify 伺服器端環境變數，瀏覽器完全看不到。
@@ -78,10 +81,39 @@ Edge Function 採串流回應，因此不受標準 serverless function 逾時限
     │   ├── models.js               可用模型與建議模型（GET /api/models）
     │   ├── taxon-status.js         iNaturalist 卡片的保育類與特有種（代查 TaiCOL；POST /api/taxon-status）
     │   └── verify.js               參考文獻與案例來源查證（NDJSON 串流）
+    ├── functions/
+    │   ├── pdf-text.mjs            PDF 內文抽取（Node 執行環境；Edge 的 50 ms CPU 裝不下 pdf.js）
+    │   ├── tbn.mjs                 TBN 物種紀錄逐類群取樣與彙整（GET/POST /api/tbn）
+    │   └── ndvi.mjs                Sentinel-2 NDVI 中位數合成與四個半徑的景觀結構指標（GET /api/ndvi）
     └── shared/
         ├── model-catalog.js        模型目錄：各系列最新一版、單價、建議規則（analyze.js 與 models.js 共用）
         └── sse-relay.js            串流轉送：搜尋迴圈暫停時自動接續、keepalive、網頁全文不轉送
 ```
+
+### 植生與景觀結構（Sentinel-2 NDVI，`/api/ndvi`）
+
+選定基地點後，伺服器以 Earth Search（Element 84）的 STAC 服務找出近 12（或 24）個月、整景雲量 < 70% 的
+Copernicus Sentinel-2 Level-2A 影像（Collection 1，10 m），分季各取雲量最低的景（最多 8 景），只讀以基地點為中心
+20 km 見方視窗所需的 COG tile（紅光 B04、近紅外 B08，各約 9 個 tile；SCL 場景分類層 20 m），
+以 SCL 遮掉雲、雲影、卷雲、雪與無資料，逐像元取 NDVI 的中位數，再算四個半徑（500 m、1 km、5 km、10 km）的：
+
+- 綠度：NDVI 平均、中位數、第 10／90 百分位
+- 組成：水域（NDVI < 0）、無植生或人工鋪面（0–0.2）、低植生（0.2–0.5）、密植生（≥ 0.5）的比例
+- 景觀結構（密植生與全部植生各算一次；斑塊為圓內 8 鄰接的連續像元）：斑塊數、平均與最大斑塊面積、
+  最大斑塊佔比、有效網目大小（effective mesh size，Jaeger 2000）、邊緣密度、斑塊密度
+
+面板顯示疊在底圖上的 NDVI 預覽圖與四個半徑圈、指標表、使用的景與雲量；數字連同門檻說明與使用方式寫進提示詞
+（500 m／1 km 供分區與資源利用矩陣，5 km／10 km 供活動範圍大的物種與連結度），並附 APA 7 參考文獻。
+查證把它認成本工具提供的資料集（與 iNaturalist／OSM／TBN 相同），附錄「資料來源」列出景數、期間、遮罩與門檻。
+
+**誠實標示**：NDVI 量的是綠色生物量，不是棲地品質；農田、人工草坪也算植生，密植生不等於天然林；
+門檻是通用值、不是在地校正的土地覆蓋分類；斑塊是依門檻切出來的，不是土地覆蓋圖。這些話由 `/api/ndvi` 隨資料回傳（`notes`），
+提示詞明確要求模型不可寫成「森林覆蓋率」或「棲地面積」。
+
+為什麼是中位數而不是最大值：最大值合成偏向生長季、會撿到殘雲邊緣的異常值；中位數對殘雲與陰影穩健。
+分季挑景是因為臺灣的無雲景集中在冬季乾季，不分季的話中位數會偏低。
+第一次算一個基地約 10–20 秒；同一基地、同一個月的查詢由 Netlify CDN 快取接手（期間鍵取「本月 1 日往前 N 個月」），
+全班五十人只算一次。影像經 HTTP Range 直接讀 AWS 上的公開 COG，不需金鑰。
 
 ### 分析模型（不寫死）
 
@@ -137,6 +169,8 @@ Anthropic 推出新版時自動跟上，舊版的偏好設定也會自動改用�
 | OpenStreetMap | 圖磚、Overpass 環境特徵、Nominatim 地名搜尋 | ODbL |
 | iNaturalist | 在地物種觀察記錄、物種在臺灣的身分（特有／原生／外來） | CC BY-NC |
 | TaiCOL 臺灣物種名錄 | 特有種與保育類等級（卡片標示） | CC BY 4.0 |
+| TBN 臺灣生物多樣性網絡 | 物種出現紀錄（原生／外來、保育等級、紅皮書） | OGDL-1.0 及各資料集授權 |
+| Copernicus Sentinel-2（ESA），經 Earth Search（Element 84） | NDVI 植生與景觀結構（10 m，近 12／24 個月中位數合成） | Copernicus 資料授權（免費開放；註明「含經修改之 Copernicus Sentinel 資料」） |
 | Anthropic Claude | 分析生成 | — |
 
 ---
