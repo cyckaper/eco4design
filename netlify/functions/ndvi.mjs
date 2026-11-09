@@ -51,8 +51,8 @@ const SCL_OK = new Uint8Array(16); [2, 4, 5, 6, 7].forEach(c => { SCL_OK[c] = 1;
 const MAX_SCENES = 8;
 const MAX_TILE_CLOUD = 70;         // 整景雲量上限（%）；局部的雲由 SCL 逐像元處理
 const TOTAL_BUDGET_MS = 23000;     // 函式上限 26 秒，留時間給合成、指標與回傳
-const FETCH_DEADLINE_MS = 15000;   // 這個時點之後不再開始抓新的景
-const SCENE_CONCURRENCY = 2;       // 每景最多約 22 個 Range 請求，兩景並行已足夠把頻寬吃滿
+const FETCH_DEADLINE_MS = 12000;   // 這個時點之後不再開始抓新的景（線上實測：8 景抓完 15.7 s、合成與指標 6.6 s，總共 22.4 s 太貼近上限）
+const SCENE_CONCURRENCY = 3;       // 每景約 22 個 Range 請求；線上實測兩景並行約 13 MB/s，三景並行多開連線把頻寬吃滿
 const HEADER_BYTES = 65536;        // IFD0 與 tile 位移表通常在前 64 KB（實測 121 個 tile 的檔案都在）
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -395,17 +395,26 @@ export function landscapeMetrics(med, w, h, cx, cy, radiusPx, labels) {
   const r2 = radiusPx * radiusPx;
   const rmin = Math.max(0, Math.floor(cy - radiusPx) - 1), rmax = Math.min(h - 1, Math.ceil(cy + radiusPx) + 1);
   const cmin = Math.max(0, Math.floor(cx - radiusPx) - 1), cmax = Math.min(w - 1, Math.ceil(cx + radiusPx) + 1);
-  const inside = (r, c) => { const dy = r + 0.5 - cy, dx = c + 0.5 - cx; return dx * dx + dy * dy <= r2; };
+  const bw = cmax - cmin + 1, bh = rmax - rmin + 1;
+  // 外接方框內的兩張遮罩（Lambda 的 CPU 約是本機的三分之一，逐像元呼叫閉包會把 10 km 那一圈拖到好幾秒）：
+  //   inside：像元中心在圓內且有值；val：NDVI ×10000（圓外或無值為 NDVI_NA）
+  const inside = new Uint8Array(bw * bh);
+  const val = new Int16Array(bw * bh).fill(NDVI_NA);
   let nIn = 0, nValid = 0, sum = 0, water = 0, bare = 0, low = 0, dense = 0;
   const hist = new Int32Array(20001);                                 // NDVI ×10000 的直方圖，算分位數用
   const tW = Math.round(THRESHOLDS.water * 10000), tV = Math.round(THRESHOLDS.veg * 10000), tD = Math.round(THRESHOLDS.dense * 10000);
-  for (let r = rmin; r <= rmax; r++) for (let c = cmin; c <= cmax; c++) {
-    if (!inside(r, c)) continue;
-    nIn++;
-    const v = med[r * w + c];
-    if (v === NDVI_NA) continue;
-    nValid++; sum += v; hist[v + 10000]++;
-    if (v < tW) water++; else if (v < tV) bare++; else if (v < tD) low++; else dense++;
+  for (let r = rmin; r <= rmax; r++) {
+    const dy = r + 0.5 - cy, dy2 = dy * dy, rowOff = r * w, bOff = (r - rmin) * bw - cmin;
+    for (let c = cmin; c <= cmax; c++) {
+      const dx = c + 0.5 - cx;
+      if (dx * dx + dy2 > r2) continue;
+      nIn++;
+      const v = med[rowOff + c];
+      if (v === NDVI_NA) continue;
+      inside[bOff + c] = 1; val[bOff + c] = v;
+      nValid++; sum += v; hist[v + 10000]++;
+      if (v < tW) water++; else if (v < tV) bare++; else if (v < tD) low++; else dense++;
+    }
   }
   const haPerPx = (PIXEL_M * PIXEL_M) / 10000;
   const out = {
@@ -416,51 +425,53 @@ export function landscapeMetrics(med, w, h, cx, cy, radiusPx, labels) {
   const quantile = p => { let acc = 0; const target = p * nValid; for (let i = 0; i < hist.length; i++) { acc += hist[i]; if (acc > target) return (i - 10000) / 10000; } return 1; };
   out.ndvi = { mean: sum / nValid / 10000, median: quantile(0.5), p10: quantile(0.1), p90: quantile(0.9) };
   out.classes = { water: water / nValid, bare: bare / nValid, low: low / nValid, dense: dense / nValid };
-  const NB = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+  // 斑塊（8 鄰接）與邊緣（4 鄰接的類別交界，兩邊都要在圓內且有值；從類別這一側數，每條只算一次）。
+  // labels 只用外接方框的那一段（索引同 inside／val），大小夠：labels.length ≥ w*h ≥ bw*bh。
+  const lab = labels.subarray(0, bw * bh);
+  const stack = new Int32Array(bw * bh);
   const patchStats = thr => {
-    // labels：0 未標、>0 斑塊編號；只在這個圓的外接方框內重設
-    for (let r = rmin; r <= rmax; r++) labels.fill(0, r * w + cmin, r * w + cmax + 1);
-    const isOn = (r, c) => { if (r < rmin || r > rmax || c < cmin || c > cmax || !inside(r, c)) return false; const v = med[r * w + c]; return v !== NDVI_NA && v >= thr; };
-    const areas = [];
-    const stack = [];
-    let edge = 0, total = 0, largest = 0, sumSq = 0;
-    for (let r = rmin; r <= rmax; r++) for (let c = cmin; c <= cmax; c++) {
-      if (!isOn(r, c)) continue;
-      // 邊緣：這個類別像元與圓內「有值且非類別」鄰居之間的交界，從類別這一側數，每條只算一次
-      for (const [dr, dc] of NB) {
-        const rr = r + dr, cc = c + dc;
-        if (rr < rmin || rr > rmax || cc < cmin || cc > cmax || !inside(rr, cc)) continue;
-        const v = med[rr * w + cc];
-        if (v !== NDVI_NA && v < thr) edge++;
-      }
-      if (labels[r * w + c]) continue;
-      const id = areas.length + 1;
-      let area = 0;
-      labels[r * w + c] = id; stack.push(r * w + c);
-      while (stack.length) {
-        const p = stack.pop(); area++;
-        const pr = (p / w) | 0, pc = p - pr * w;
-        for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
-          if (!dr && !dc) continue;
-          const nr = pr + dr, nc = pc + dc;
-          if (!isOn(nr, nc)) continue;
-          const q2 = nr * w + nc;
-          if (labels[q2]) continue;
-          labels[q2] = id; stack.push(q2);
+    lab.fill(0);
+    let edge = 0, total = 0, largest = 0, sumSq = 0, nPatch = 0;
+    for (let r = 0; r < bh; r++) {
+      for (let c = 0; c < bw; c++) {
+        const i = r * bw + c;
+        if (!inside[i] || val[i] < thr) continue;
+        // 右、下、左、上
+        if (c + 1 < bw && inside[i + 1] && val[i + 1] < thr) edge++;
+        if (r + 1 < bh && inside[i + bw] && val[i + bw] < thr) edge++;
+        if (c > 0 && inside[i - 1] && val[i - 1] < thr) edge++;
+        if (r > 0 && inside[i - bw] && val[i - bw] < thr) edge++;
+        if (lab[i]) continue;
+        const id = ++nPatch;
+        let area = 0, sp = 0;
+        lab[i] = id; stack[sp++] = i;
+        while (sp) {
+          const p = stack[--sp]; area++;
+          const pr = (p / bw) | 0, pc = p - pr * bw;
+          const r0 = pr > 0 ? pr - 1 : 0, r1 = pr + 1 < bh ? pr + 1 : bh - 1;
+          const c0 = pc > 0 ? pc - 1 : 0, c1 = pc + 1 < bw ? pc + 1 : bw - 1;
+          for (let nr = r0; nr <= r1; nr++) {
+            const base = nr * bw;
+            for (let nc = c0; nc <= c1; nc++) {
+              const q = base + nc;
+              if (lab[q] || !inside[q] || val[q] < thr) continue;
+              lab[q] = id; stack[sp++] = q;
+            }
+          }
         }
+        total += area; sumSq += area * area; if (area > largest) largest = area;
       }
-      areas.push(area); total += area; sumSq += area * area; if (area > largest) largest = area;
     }
     const landscapeHa = nValid * haPerPx;
     return {
       share: total / nValid,
-      patches: areas.length,
-      meanHa: areas.length ? total * haPerPx / areas.length : 0,
+      patches: nPatch,
+      meanHa: nPatch ? total * haPerPx / nPatch : 0,
       largestHa: largest * haPerPx,
       largestShare: largest / nValid,                                // largest patch index（佔景觀的比例）
       meshHa: landscapeHa ? sumSq * haPerPx * haPerPx / landscapeHa : 0,
       edgeMPerHa: landscapeHa ? edge * PIXEL_M / landscapeHa : 0,
-      densityPer100Ha: landscapeHa ? areas.length / landscapeHa * 100 : 0,
+      densityPer100Ha: landscapeHa ? nPatch / landscapeHa * 100 : 0,
     };
   };
   out.veg = patchStats(tV);
