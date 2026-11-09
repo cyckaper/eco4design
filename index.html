@@ -3009,7 +3009,7 @@ out tags center;`;
     h += row(en ? 'Vegetated (NDVI ≥ 0.2)' : '植生覆蓋（NDVI ≥ 0.2）', x => x.classes ? pct(x.classes.low + x.classes.dense) : '–');
     h += row(en ? 'Dense vegetation (≥ 0.5)' : '密植生（≥ 0.5）', x => x.classes ? pct(x.classes.dense) : '–');
     h += row(en ? 'Water (< 0)' : '水域（< 0）', x => x.classes ? pct(x.classes.water) : '–');
-    h += sect(en ? 'Dense-vegetation patches (8-connected)' : '密植生塊區（8 鄰接）');
+    h += sect(en ? 'Dense-vegetation patches (8-connected)' : '密植生塊區（patch，8 鄰接）');
     h += row(en ? 'Patches' : '塊區數', patch('dense', d => d.patches.toLocaleString('en-US')));
     h += row(en ? 'Largest patch (ha · share)' : '最大塊區（ha・佔比）', patch('dense', d => `${num1(d.largestHa, 1)} · ${pct(d.largestShare)}`));
     h += row(en ? 'Mean patch (ha)' : '平均塊區（ha）', patch('dense', d => num1(d.meanHa, 2)));
@@ -3636,7 +3636,7 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
       const L = [];
       L.push(en
         ? `Thresholds: water NDVI < 0; bare or built 0–0.2; low vegetation 0.2–0.5 (grassland, cropland, scrub); dense vegetation ≥ 0.5 (trees, closed vegetation). Patches are 8-connected pixels above the threshold within the circle; effective mesh size (Jaeger 2000) is the expected size of the patch a random point falls in — smaller means more fragmented.`
-        : `門檻：水域 NDVI < 0；無植生或人工鋪面 0–0.2；低植生 0.2–0.5（草地、農田、灌叢）；密植生 ≥ 0.5（喬木、鬱閉植被）。塊區為圓內高於門檻、8 鄰接的連續像元；有效網目大小（Jaeger 2000）是隨機落點所在塊區的期望面積，越小越破碎。`);
+        : `門檻：水域 NDVI < 0；無植生或人工鋪面 0–0.2；低植生 0.2–0.5（草地、農田、灌叢）；密植生 ≥ 0.5（喬木、鬱閉植被）。塊區（patch）為圓內高於門檻、8 鄰接的連續像元；有效網目大小（Jaeger 2000）是隨機落點所在塊區的期望面積，越小越破碎。`);
       v.radii.forEach(x => L.push(line(x)));
       const obs = v.observations || {};
       if ((obs.noData || 0) > 0.02) L.push(en
@@ -10383,7 +10383,7 @@ ${block}`;
             : `Level-2A 地表反射率（Collection 1），經 Earth Search（Element 84）取得；像元 10 m；${escapeHtml(v.start)}～${escapeHtml(v.end)} 期間${v.scenes != null ? ' ' + v.scenes + ' 景' : ''}（分季依雲量挑選），以場景分類層（SCL，保留類別 2、4–7）遮雲後取逐像元中位數；以 ${v.lat.toFixed(4)}, ${v.lon.toFixed(4)} 為中心計算 500 m、1 km、5 km、10 km 四個半徑的指標・擷取於 ${date(v.at)}。`) +
         `${extLink(api, api)}` +
         (en ? '. NDVI thresholds (water < 0, bare 0–0.2, low vegetation 0.2–0.5, dense ≥ 0.5) are generic, not locally calibrated; patches are threshold-defined, not a land-cover map; NDVI indicates green biomass, not habitat quality. Copernicus Sentinel data are free and open under the Copernicus data licence; credit “Contains modified Copernicus Sentinel data”.'
-            : '。NDVI 門檻（水域 < 0、無植生 0–0.2、低植生 0.2–0.5、密植生 ≥ 0.5）為通用值、未在地校正；塊區依門檻切出，不是土地覆蓋圖；NDVI 反映綠色生物量，不是棲地品質。Copernicus Sentinel 資料依 Copernicus 資料授權免費開放，使用時註明「含經修改之 Copernicus Sentinel 資料」。') +
+            : '。NDVI 門檻（水域 < 0、無植生 0–0.2、低植生 0.2–0.5、密植生 ≥ 0.5）為通用值、未在地校正；塊區（patch）依門檻切出，不是土地覆蓋圖；NDVI 反映綠色生物量，不是棲地品質。Copernicus Sentinel 資料依 Copernicus 資料授權免費開放，使用時註明「含經修改之 Copernicus Sentinel 資料」。') +
         `${pasteNote}</li>`);
     }
     if (ds && !ds.inat && !ds.osm && !ds.tbn && !ds.ndvi) items.push(`<li>${en ? 'No iNaturalist, OpenStreetMap, TBN or Sentinel-2 data from this tool were included in the prompt.' : '提示詞未附本工具的 iNaturalist／OpenStreetMap／TBN／Sentinel-2 資料。'}</li>`);
