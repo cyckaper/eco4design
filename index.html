@@ -4014,7 +4014,7 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
   // 參考文獻查證的樣式（徽章、查證段落、來源清單）。內含於 REPORT_CSS；
   // 舊報告（樣式表裡沒有這段）查證時另以 <style id="heals-vf-style"> 補上。不加 .heals-doc 前綴，舊格式文件也適用。
   // 列印友善：不靠底色區分（列印預設不印背景），以文字色、框線樣式與符號區分。
-  const VF_CSS_MARK = '/*heals-vf3*/';   // 版本號：舊報告缺少新樣式時（排除附錄、過濾狀態）由 applyVerification 補上
+  const VF_CSS_MARK = '/*heals-vf4*/';   // 版本號：舊報告缺少新樣式時（排除附錄、過濾狀態、引用句比對表）由 applyVerification 補上
   const VF_CSS = `${VF_CSS_MARK}
 .vf{display:inline-block;margin:0 0 0 6px;padding:0 6px;border:1px solid #456238;border-radius:3px;background:#fffdf7;color:#456238;font-family:'Noto Sans TC',sans-serif;font-size:11px;font-weight:600;font-style:normal;line-height:1.6;text-indent:0;white-space:nowrap;vertical-align:baseline}
 .vf.vf-warn{color:#b8694a;border-color:#b8694a;border-style:dashed}
@@ -4033,7 +4033,10 @@ section.verification table.vf-table{font-size:12px}
 section.verification table.vf-table td:first-child,section.verification table.vf-table th:first-child{width:2.2em;white-space:nowrap;text-align:right}
 section.verification table.vf-table td:nth-child(3),section.verification table.vf-table td:nth-child(4){white-space:nowrap}
 section.verification table.vf-table .vf{margin-left:0}
-section.verification .vf-sub{display:block;margin-top:3px;font-size:11px;line-height:1.5;color:#6b6e6a}
+section.verification table.vf-sup-table td:first-child,section.verification table.vf-sup-table th:first-child{width:22%;white-space:normal;text-align:left}
+section.verification table.vf-sup-table th:nth-child(2){width:38%}
+section.verification table.vf-sup-table td:nth-child(4){white-space:normal}
+section.verification .vf-sub{display:block;margin-top:3px;font-size:11px;line-height:1.5;font-weight:400;color:#6b6e6a}
 section.verification ul.vf-list{margin:4px 0 12px;padding-left:1.2em}
 section.verification ul.vf-list>li{margin-bottom:6px}
 section.verification .vf-okline{color:#456238}
@@ -4067,6 +4070,8 @@ section.verification ul.vf-excl .vf{margin-left:0}
  .heals-doc section.verification table.vf-table td:nth-child(4){order:2}
  .heals-doc section.verification table.vf-table td:nth-child(5){order:3}
  .heals-doc section.verification table.vf-table td:nth-child(3){order:4}
+ .heals-doc section.verification table.vf-sup-table td:nth-child(3){order:2}
+ .heals-doc section.verification table.vf-sup-table td:nth-child(4){order:3}
  .heals-doc section.verification table.vf-table td[data-l]::before{content:attr(data-l);display:block;font-size:10.5px;font-weight:400;color:#6b6e6a}
 }
 @media print{
@@ -9645,14 +9650,17 @@ ${block}`;
     let h = `<h3>${escapeHtml(L.head)}</h3><p class="vf-lead">${escapeHtml(L.lead)}</p>`;
     h += `<p class="vf-scope">${escapeHtml(L.summary(counts, groups.length, noneRefs.length, uncitedRefs.length))}</p>`;
     if (groups.length) {
-      h += '<table class="vf-table"><thead><tr>' + L.cols.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead><tbody>';
+      // vf-sup-table：欄位與文獻表不同（第一欄是來源、第四欄是說明），樣式表另有欄寬與換行規則；
+      // data-l 是手機版（≤600px）把每列改成卡片時顯示的欄名
+      h += '<table class="vf-table vf-sup-table"><thead><tr>' + L.cols.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead><tbody>';
+      const dl = i => ` data-l="${escapeHtml(L.cols[i])}"`;
       groups.forEach(g => g.stmts.forEach((st, j) => {
         const r = verdicts.get(`${g.key}-${j + 1}`);
         h += '<tr>' +
-          `<td>${escapeHtml(g.key)} ${escapeHtml(refShortLabel(g.ref, en))}<span class="vf-sub">${escapeHtml(L.kind[g.kind] || '')}${g.src ? ' · ' + escapeHtml(g.src) : ''}</span></td>` +
-          `<td>${escapeHtml(clip(st.text, 320))}</td>` +
-          `<td>${r ? `<span class="vf ${L.cls[r.v]}">${escapeHtml(L.kl[g.kind][r.v])}</span>` : '—'}</td>` +
-          `<td>${escapeHtml(r ? r.why : L.noVerdict)}</td></tr>`;
+          `<td${dl(0)}>${escapeHtml(g.key)} ${escapeHtml(refShortLabel(g.ref, en))}<span class="vf-sub">${escapeHtml(L.kind[g.kind] || '')}${g.src ? ' · ' + escapeHtml(g.src) : ''}</span></td>` +
+          `<td${dl(1)}>${escapeHtml(clip(st.text, 320))}</td>` +
+          `<td${dl(2)}>${r ? `<span class="vf ${L.cls[r.v]}">${escapeHtml(L.kl[g.kind][r.v])}</span>` : '—'}</td>` +
+          `<td${dl(3)}>${escapeHtml(r ? r.why : L.noVerdict)}</td></tr>`;
       }));
       h += '</tbody></table>';
       const extra = groups.reduce((n, g) => n + (g.extra || 0), 0);
