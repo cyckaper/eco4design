@@ -14,10 +14,12 @@
 # `export const config = { path }`，不必在這裡逐一列出：
 #   /api/pdf-text  PDF 內文抽取（pdf-text.mjs）
 #   /api/tbn       TBN 臺灣生物多樣性網絡物種查詢（tbn.mjs）
+#   /api/ndvi      Sentinel-2 NDVI 中位數合成與四個半徑的景觀結構（ndvi.mjs；GET，回應由 CDN 快取一天）
 #
-# 這兩件事放 Function 而不是 Edge Function，都是同一個原因：
+# 這三件事放 Function 而不是 Edge Function，都是同一個原因：
 # Edge 每次請求只有 50 ms CPU。pdf.js 解析一份報告要 100 ms 上下（實測曾衝到 73 ms，
-# 超支會中止整個請求）；TBN 要 JSON.parse 約 3 MB、彙整兩千多筆各 64 欄的紀錄，同樣在天花板上。
+# 超支會中止整個請求）；TBN 要 JSON.parse 約 3 MB、彙整兩千多筆各 64 欄的紀錄，同樣在天花板上；
+# NDVI 每景要解壓縮約 20 MB 的 tile、對 400 萬像元取中位數並找塊區，是秒級的工作。
 [functions]
   directory = "netlify/functions"
 

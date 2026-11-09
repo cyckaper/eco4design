@@ -34,7 +34,7 @@ function extract(name) {
   return html.slice(start, html.indexOf(';\n', start) + 2);
 }
 const NAMES = ['trimUnbalanced', 'cleanUrl', 'TRACKING_PARAM_RE', 'normUrlKey', 'safeHref', 'hostOf', 'numIn', 'isoOrNull',
-  'inatWebUrl', 'osmWebUrl', 'tbnApiUrl', 'EN_MONTHS', 'datasetRefText', 'compactMeta',
+  'inatWebUrl', 'osmWebUrl', 'tbnApiUrl', 'ndviStacUrl', 'EN_MONTHS', 'datasetRefText', 'compactMeta',
   'toolDatasetKeys', 'TOOL_DATASET_AUTHOR', 'toolDatasetHost', 'toolDataset'];
 const src = NAMES.map(extract).join('\n') + `\nreturn { ${NAMES.join(', ')} };`;
 const F = new Function(src)();
@@ -49,6 +49,8 @@ const raw = {
     osm: { lat, lon, radius: 2, total: 2417, at: '2026-11-02T00:10:00.000Z' },
     tbn: { lat, lon, radius: 3, total: 445698, taxa: 389, atSpecies: 316, perGroup: 100, complete: false,
       at: '2026-11-02T00:10:00.000Z', names: ['八哥', 'Acridotheres cristatellus', '無霸勾蜓'] },
+    // Sentinel-2 NDVI（2026-11-09 加入）：同樣要被認成本工具的資料集
+    ndvi: { lat, lon, radius: 10, months: 12, start: '2025-11-01', end: '2026-11-01', scenes: 7, grid: 'MGRS-51RUH', at: '2026-11-09T12:00:00.000Z' },
   },
 };
 const meta = F.compactMeta(raw);
@@ -70,6 +72,11 @@ check('座標不合理時不保留 ds.tbn', !F.compactMeta({ ds: { tbn: { lat: 9
 check('名單有上限、只收字串', F.compactMeta({ ds: { inat: { lat, lon, radius: 1,
   names: [...Array(200)].map((_, i) => 'x' + i).concat([123, null, {}]) } } }).ds.inat.names.length === 60, 'no cap');
 
+// ── 1b. Sentinel-2 NDVI ──────────────────────────────────────────────────
+check('compactMeta 保留 ds.ndvi（期間、景數、圖幅）', !!(meta.ds.ndvi && meta.ds.ndvi.start === '2025-11-01' && meta.ds.ndvi.scenes === 7 && meta.ds.ndvi.grid === 'MGRS-51RUH'),
+  JSON.stringify(meta.ds.ndvi));
+check('ds.ndvi 的期間格式不對時不保留', !F.compactMeta({ ds: { ndvi: { lat, lon, start: 'last year', end: '2026-11-01' } } }).ds.ndvi, 'kept');
+
 // ── 2. 模型照抄的 TBN 參考文獻，網址要落在本工具資料集的鍵裡 ─────────────
 const keys = F.toolDatasetKeys(meta);
 const urlOf = s => (s.match(/https?:\/\/[^\s［\]]+/) || [])[0];
@@ -79,6 +86,12 @@ for (const en of [false, true]) {
   check(`${en ? '英文' : '中文'} TBN 參考文獻裡有網址`, !!u, ref);
   check(`${en ? '英文' : '中文'} TBN 參考文獻的網址被認成本工具資料集`, !!u && keys.has(F.normUrlKey(u)),
     `${u} → ${F.normUrlKey(u)} ∉ ${[...keys].join(' | ')}`);
+}
+for (const en of [false, true]) {
+  const ref = F.datasetRefText('ndvi', meta.ds.ndvi, en);
+  const u = urlOf(ref);
+  check(`${en ? '英文' : '中文'} Sentinel-2 參考文獻的網址被認成本工具資料集`, !!u && keys.has(F.normUrlKey(u)), `${u} → ${[...keys].join(' | ')}`);
+  check(`${en ? '英文' : '中文'} Sentinel-2 參考文獻寫明景數與期間、沒有 DOI`, /7/.test(ref) && /2025-11-01/.test(ref) && !/doi\.org/.test(ref), ref);
 }
 // iNaturalist／OSM 原本就認得，不能因為這次修改壞掉
 for (const kind of ['inat', 'osm']) {
@@ -90,7 +103,8 @@ for (const kind of ['inat', 'osm']) {
 for (const [a, want] of [
   ['臺灣生物多樣性網絡（無日期）', true], ['Taiwan Biodiversity Network. (n.d.)', true],
   ['iNaturalist（無日期）', true], ['OpenStreetMap 貢獻者（無日期）', true], ['OpenStreetMap contributors. (n.d.)', true],
-  ['臺灣生命大百科（無日期）', false], ['林業及自然保育署（無日期）', false], ['iNaturalistic Society (2020)', false],
+  ['歐洲太空總署（無日期）', true], ['European Space Agency. (n.d.)', true],
+  ['臺灣生命大百科（無日期）', false], ['林業及自然保育署（無日期）', false], ['iNaturalistic Society (2020)', false], ['European Space Agency Bulletin (2019)', true],
 ]) {
   check(`作者「${a}」${want ? '是' : '不是'}本工具資料集`, F.TOOL_DATASET_AUTHOR.test(a) === want, String(!want));
 }
@@ -103,6 +117,8 @@ check('冒牌網域（eviltbn.org.tw）不算', !F.toolDatasetHost(meta.ds, F.ho
 check('相似網域（tbn.org.tw.evil.com）不算', !F.toolDatasetHost(meta.ds, F.hostOf('https://tbn.org.tw.evil.com/')), 'recognised');
 check('toolDataset 認得 TBN 參考文獻',
   F.toolDataset({ allUrls: [urlOf(F.datasetRefText('tbn', meta.ds.tbn, false))] }, meta), 'false');
+check('附了 NDVI 時，earth-search.aws.element84.com 算本工具資料集', F.toolDatasetHost(meta.ds, F.hostOf('https://earth-search.aws.element84.com/v1/search?x=1')), 'not recognised');
+check('沒附 NDVI 時，earth-search 不算', !F.toolDatasetHost({ tbn: meta.ds.tbn }, F.hostOf('https://earth-search.aws.element84.com/v1/search')), 'recognised');
 check('toolDataset 不把一般網站當成本工具資料集',
   !F.toolDataset({ allUrls: ['https://taieol.tw/pages/1234'] }, meta), 'true');
 

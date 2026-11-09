@@ -280,6 +280,27 @@
   .osm-attribution { font-size: 10.5px; color: var(--moss-light); font-family: var(--serif); font-style: italic; margin-top: 10px; text-align: right; }
   .osm-attribution a { color: var(--clay); text-decoration: none; }
 
+  /* NDVI 植生與景觀結構 panel — osm skeleton, moss-tinted */
+  .ndvi-panel { border: 1px solid var(--border-soft); background: rgba(223, 231, 210, 0.25); border-radius: 3px; padding: 12px; margin-bottom: 16px; }
+  .ndvi-results { display: none; }
+  .ndvi-results.on { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 14px; align-items: start; }
+  @media (max-width: 760px) { .ndvi-results.on { grid-template-columns: 1fr; } }
+  .ndvi-map { width: 100%; aspect-ratio: 1; min-height: 220px; border: 1px solid var(--border-soft); border-radius: 3px; background: #eef0e6; }
+  .ndvi-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-family: var(--serif); font-size: 10.5px; color: var(--ink-soft); margin-top: 6px; }
+  .ndvi-ramp { flex: 1 1 90px; height: 9px; border-radius: 2px; background: linear-gradient(90deg, #a67646, #d6be6e, #96be5a, #3c8c3c, #10501e); }
+  .ndvi-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 3px; }
+  .ndvi-table { width: 100%; border-collapse: collapse; font-family: var(--serif); font-size: 12px; color: var(--ink); }
+  .ndvi-table th, .ndvi-table td { padding: 5px 7px; border-bottom: 1px dashed var(--border-soft); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .ndvi-table th { font-weight: 500; color: var(--moss); font-size: 11.5px; }
+  .ndvi-table th:first-child, .ndvi-table td:first-child { text-align: left; }
+  .ndvi-table tbody th { text-align: left; color: var(--ink-soft); font-weight: 400; }
+  .ndvi-table tr.ndvi-sect th { padding-top: 9px; color: var(--moss); font-weight: 500; font-size: 11.5px; letter-spacing: 0.02em; }
+  .ndvi-bar { display: inline-flex; width: 100%; height: 10px; border-radius: 2px; overflow: hidden; background: rgba(255,255,255,0.6); border: 1px solid var(--border-soft); }
+  .ndvi-bar span { display: block; height: 100%; }
+  .ndvi-scenes { font-family: var(--serif); font-size: 11px; color: var(--ink-soft); line-height: 1.6; margin-top: 8px; }
+  .ndvi-scenes b { font-weight: 500; color: var(--moss); }
+  .ndvi-note { font-family: var(--serif); font-size: 11.5px; color: #5f4e16; background: var(--gold-pale); border-left: 3px solid var(--gold); padding: 7px 10px; border-radius: 3px; margin-top: 8px; line-height: 1.6; }
+
   /* TBN 臺灣生物多樣性網絡 panel — inat skeleton, gold-tinted accents */
   .tbn-panel { border: 1px solid var(--border-soft); background: rgba(226, 213, 178, 0.18); border-radius: 3px; padding: 12px; margin-bottom: 16px; }
   .tbn-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -367,12 +388,25 @@
   .loading-text { font-family: var(--serif); font-size: 14px; color: var(--moss); text-align: center; font-weight: 500; }
   .loading-subtext { font-family: var(--serif); font-size: 12px; color: var(--moss-light); font-style: italic; text-align: center; }
 
-  /* Result display */
-  .result-display { margin-top: 14px; }
-  .result-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding: 10px 12px; background: var(--moss-pale); border-radius: 3px; border-left: 3px solid var(--moss); }
+  /* Result display：報告檢視區。標題列（深苔綠）→ 工具列 → 狀態附註 → 報告（在較深的托盤底色上、帶陰影，像一張紙）→ 產生資訊 */
+  .result-display { margin-top: 18px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-alt); box-shadow: inset 0 1px 0 rgba(255,255,255,0.4); overflow: hidden; }
+  .result-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 14px; padding: 11px 16px; background: var(--moss); color: #f6f3e8; }
+  .result-head .rh-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; }
+  .result-head .rh-kicker { font-family: var(--serif); font-size: 12px; letter-spacing: 0.12em; opacity: 0.85; white-space: nowrap; }
+  .result-head .rh-title { font-family: var(--display); font-size: 17px; line-height: 1.3; overflow-wrap: anywhere; }
+  .result-head .rh-sub { font-family: var(--serif); font-size: 12px; opacity: 0.85; white-space: nowrap; }
+  .result-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 10px 14px; background: var(--moss-pale); border-bottom: 1px solid var(--border-soft); }
   .result-actions .btn { padding: 7px 14px; font-size: 13px; }
-  .result-frame { width: 100%; height: 720px; border: 1px solid var(--border); border-radius: 3px; background: white; display: block; }
-  .result-meta { font-family: var(--serif); font-size: 11.5px; color: var(--moss-light); font-style: italic; margin-top: 6px; text-align: right; }
+  .result-display .filter-notice, .result-display .verify-status, .result-display .verify-list, .result-display .result-notice { margin: 10px 14px 0; }
+  .result-display .verify-list { margin-top: 6px; }
+  .result-frame { display: block; width: calc(100% - 28px); height: 720px; margin: 12px 14px 0; border: 1px solid var(--border); border-radius: 2px; background: #faf6ea; box-shadow: 0 12px 28px rgba(31,45,34,0.18), 0 2px 5px rgba(31,45,34,0.12); }
+  .result-meta { font-family: var(--serif); font-size: 11.5px; color: var(--moss-light); font-style: italic; margin: 8px 16px 12px; text-align: right; }
+  @media (max-width: 600px) {
+    .result-display .filter-notice, .result-display .verify-status, .result-display .verify-list, .result-display .result-notice { margin-left: 8px; margin-right: 8px; }
+    .result-frame { width: calc(100% - 16px); margin: 10px 8px 0; }
+    .result-meta { margin: 8px 10px 10px; }
+    .result-head { padding: 10px 12px; }
+  }
   .result-notice { padding: 10px 14px; margin: 0 0 12px; background: var(--gold-pale); border: 1px solid var(--clay-light); border-left: 4px solid var(--clay); border-radius: 3px; color: #5a2810; font-family: var(--serif); font-size: 13px; line-height: 1.6; }
   .result-error { padding: 14px 16px; background: var(--clay-pale); border: 1px solid var(--clay); border-left: 4px solid var(--clay); border-radius: 3px; color: #5a2810; font-family: var(--serif); font-size: 13px; line-height: 1.65; margin: 14px 0; }
   .result-error strong { color: var(--clay); }
@@ -391,10 +425,13 @@
   .verify-list .vl-badge { font-weight: 700; white-space: nowrap; }
   .verify-list .vl-sum { display: block; color: #5a5f58; }
   .result-actions .btn[disabled] { opacity: 0.55; cursor: progress; }
-  /* 過濾狀態（主頁面、報告框外）：未過濾的報告一律顯示醒目提示 */
-  .filter-notice { padding: 11px 14px; margin: 0 0 12px; border: 2px solid var(--clay); border-radius: 3px; background: var(--clay-pale); color: #5a2810; font-family: var(--serif); font-size: 13.5px; line-height: 1.6; overflow-wrap: anywhere; }
-  .filter-notice .fn-text { margin: 0; font-weight: 600; }
-  .filter-notice .btn { margin-top: 8px; padding: 7px 14px; font-size: 13px; }
+  /* 過濾狀態（主頁面、報告框外）：未過濾（failed／unfiltered）的報告用琥珀色警示；查證已完成、只是以規則排除（is-rules）的
+     用與查證結果相同的中性樣式——那是完成後的附註，不是分析出了錯 */
+  .filter-notice { padding: 10px 14px; margin: 0 0 12px; border: 1px solid var(--clay-light); border-left: 4px solid var(--clay); border-radius: 3px; background: var(--gold-pale); color: #5a2810; font-family: var(--serif); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+  .filter-notice .fn-text { margin: 0; font-weight: 500; }
+  .filter-notice .btn { margin-top: 8px; padding: 6px 12px; font-size: 12.5px; }
+  .filter-notice.is-rules { border-color: var(--border-soft); border-left-color: var(--moss-light); background: var(--paper); color: var(--ink-soft); }
+  .filter-notice.is-rules .fn-text { font-weight: 400; font-size: 12.5px; }
   .filter-notice.is-pending, .filter-notice.is-revise { border-color: var(--clay-light); background: var(--gold-pale); }
   .filter-notice.is-pending .fn-text::before, .filter-notice.is-revise .fn-text::before { content: ''; display: inline-block; width: 11px; height: 11px; margin-right: 8px; vertical-align: -1px; border: 2px solid var(--border); border-top-color: var(--clay); border-radius: 50%; animation: qi-spin 0.8s linear infinite; }
   .filter-notice.is-unfiltered, .filter-notice.is-pre { border-color: var(--clay-light); background: var(--gold-pale); }
@@ -698,6 +735,37 @@
       </p>
     </div>
 
+    <!-- NDVI landscape-structure panel: Sentinel-2 10 m, median composite, four radii -->
+    <div class="ndvi-panel">
+      <div class="osm-head">
+        <div class="osm-head-title">🛰️ 植生與景觀結構（Sentinel-2 NDVI · 10 m）</div>
+        <div class="osm-controls">
+          <select id="ndviMonths" title="合成期間">
+            <option value="12" selected>近 12 個月</option>
+            <option value="24">近 24 個月</option>
+          </select>
+          <button class="btn-mini" id="ndviRefresh">🔄 查詢</button>
+        </div>
+      </div>
+      <div id="ndviStatus" class="osm-status">📍 請先選擇基地位置，會自動計算 500 m、1 km、5 km、10 km 四個半徑的植生覆蓋與景觀結構</div>
+      <div id="ndviResults" class="ndvi-results">
+        <div>
+          <div id="ndviMap" class="ndvi-map" aria-label="NDVI 預覽圖"></div>
+          <div class="ndvi-legend"><span>NDVI 0</span><span class="ndvi-ramp"></span><span>≥0.8</span>
+            <span><i class="ndvi-sw" style="background:#4682c8"></i>水域</span><span><i class="ndvi-sw" style="background:#c8c8c8"></i>無資料</span></div>
+        </div>
+        <div>
+          <div id="ndviTable"></div>
+          <div id="ndviScenes" class="ndvi-scenes"></div>
+        </div>
+      </div>
+      <div id="ndviNote" class="ndvi-note" style="display:none"></div>
+      <p class="osm-attribution">
+        資料來源 © <a href="https://dataspace.copernicus.eu/" target="_blank" rel="noopener">Copernicus Sentinel-2</a> Level-2A（ESA）·
+        經 <a href="https://earth-search.aws.element84.com/v1" target="_blank" rel="noopener">Earth Search</a>（Element 84）取得 · 雲遮罩 SCL · 中位數合成
+      </p>
+    </div>
+
     <div class="preset-label">🏷️ 已選條件</div>
     <div class="chip-container" id="conditionChips">
       <div class="chips"></div>
@@ -866,6 +934,11 @@
     <div id="resultError" class="result-error" style="display:none;"></div>
 
     <div id="resultDisplay" class="result-display" style="display:none;">
+      <!-- 報告檢視區：深色標題列＋托盤底色，報告像一張紙放在上面，一眼看得出報告從哪裡開始 -->
+      <div class="result-head">
+        <div class="rh-main"><span class="rh-kicker">📄 分析報告</span><span class="rh-title" id="resultTitle"></span></div>
+        <div class="rh-sub" id="resultSub"></div>
+      </div>
       <div class="result-actions">
         <button class="btn btn-secondary" id="downloadResultBtn">⬇ 下載 HTML</button>
         <button class="btn btn-secondary" id="downloadPdfBtn">🖨 列印 PDF</button>
@@ -1083,6 +1156,13 @@
   let tbnCache = {};
   let tbnTimer = null;
   let tbnSeq = 0, tbnCtl = null;
+  // NDVI 植生與景觀結構（Sentinel-2）：伺服器算好四個半徑的指標，這裡只畫與寫進提示詞
+  let ndviCache = {};
+  let ndviTimer = null;
+  let ndviSeq = 0, ndviCtl = null;
+  let ndviInflight = null;       // 進行中的 NDVI 查詢（Promise；成功、失敗或被取代都會 resolve）：開始分析前要等它
+  let ndviLastSummary = null, ndviLastData = null;
+  let ndviMap = null, ndviMapLayers = [];
   let tbnLastData = null;        // 切換語言時重繪用
   let tbnGroupFilter = '';       // 類群篩選：只改變這裡顯示的卡片，不影響提示詞
   let tbnLastSummary = null;
@@ -1222,6 +1302,8 @@
     '含網路搜尋與引用驗證通常需要數分鐘': 'Includes web search and citation checking — usually a few minutes',
     '⚠️ 請保持本頁在前景，勿切換 App 或讓螢幕鎖定，否則連線會中斷':
       '⚠️ Keep this page in the foreground — switching apps or letting the screen lock will break the connection',
+    '📄 分析報告': '📄 Report',
+    '⏳ 等待植生與景觀結構（Sentinel-2 NDVI）資料完成…': '⏳ Waiting for the vegetation & landscape-structure (Sentinel-2 NDVI) data…',
     '⬇ 下載 HTML': '⬇ Download HTML',
     '🖨 列印 PDF': '🖨 Print PDF',
     '↗ 新分頁開啟': '↗ Open in new tab',
@@ -1366,6 +1448,16 @@
     '經過時間：0 秒': 'Elapsed: 0s',
     '資料來源 ©': 'Data ©',
     '魚類': 'Fish',
+    // ── NDVI 植生與景觀結構 ──
+    '🛰️ 植生與景觀結構（Sentinel-2 NDVI · 10 m）': '🛰️ Vegetation & Landscape Structure (Sentinel-2 NDVI · 10 m)',
+    '合成期間': 'Composite period',
+    '近 12 個月': 'Last 12 months', '近 24 個月': 'Last 24 months',
+    '📍 請先選擇基地位置，會自動計算 500 m、1 km、5 km、10 km 四個半徑的植生覆蓋與景觀結構':
+      '📍 Select a site location first — vegetation cover and landscape structure are computed for 500 m, 1 km, 5 km and 10 km radii',
+    'NDVI 預覽圖': 'NDVI preview',
+    '水域': 'Water', '無資料': 'No data',
+    'Level-2A（ESA）·\n        經': 'Level-2A (ESA) ·\n        via',
+    '（Element 84）取得 · 雲遮罩 SCL · 中位數合成': '(Element 84) · SCL cloud mask · median composite',
     '，只需輸入授課教師提供的通行碼。\n          通行碼僅儲存於您本機瀏覽器；分析請求經由本站伺服器轉送，金鑰不會出現在瀏覽器端。': ', just enter the passcode provided by your instructor. The passcode is stored only in your browser; requests are relayed by this site\u2019s server and the API key never reaches the browser.',
     '📍 請先選擇基地位置，會自動偵測周邊森林、水體、保護區、聚落、步道': '📍 Select a site location first — nearby forests, water, protected areas, settlements and trails are detected automatically',
     '棲共生 Qi-Coexistence · 景觀生態設計工作流 ·\n      歷史紀錄儲存於瀏覽器本機 localStorage，可匯出 JSON 備份': 'Qi-Coexistence · Landscape ecology design workflow · History is stored in your browser and can be exported as JSON',
@@ -1470,6 +1562,8 @@
       if (typeof osmLastData !== 'undefined' && osmLastData && typeof renderOsm === 'function') renderOsm(osmLastData, osmLastRadius);
       if (typeof tbnLastData !== 'undefined' && tbnLastData && typeof renderTbn === 'function') renderTbn(tbnLastData);
     } catch (e) { console.warn('[i18n] re-render partial:', e); }
+    // 各面板分開重繪：前一個面板出錯不該讓後面的停在舊語言
+    try { if (ndviLastData) renderNdvi(ndviLastData); } catch (e) { console.warn('[i18n] ndvi re-render:', e); }
   }
 
   function initLang() {
@@ -1748,6 +1842,7 @@
     debounceInat();
     debounceOsm();
     debounceTbn();
+    debounceNdvi();
   }
 
   // ========== iNaturalist data ==========
@@ -2827,6 +2922,188 @@ out tags center;`;
     osmTimer = setTimeout(() => loadOsm(false), 1500);
   }
 
+  // ========== NDVI 植生與景觀結構（Sentinel-2，/api/ndvi）==========
+  // 伺服器端抓近 12（或 24）個月的 Sentinel-2 影像、做雲遮罩與中位數合成，算四個半徑的指標；
+  // 第一次要 10–20 秒（同一基地之後走 CDN 快取，幾百毫秒）。
+  const NDVI_RADIUS_LABEL = r => r >= 1000 ? `${r / 1000} km` : `${r} m`;
+  const pct = (x, d) => `${(x * 100).toFixed(d === undefined ? (x > 0 && x < 0.1 ? 1 : 0) : d)}%`;   // 小於 10% 給一位小數
+  const num1 = (x, d = 1) => Number(x).toFixed(d);
+
+  function renderNdviEmpty() {
+    const status = document.getElementById('ndviStatus');
+    if (!status) return;
+    status.classList.remove('error');
+    status.textContent = LANG === 'en'
+      ? '📍 Select a site location first — vegetation cover and landscape structure are computed for 500 m, 1 km, 5 km and 10 km radii'
+      : '📍 請先選擇基地位置，會自動計算 500 m、1 km、5 km、10 km 四個半徑的植生覆蓋與景觀結構';
+    document.getElementById('ndviResults').classList.remove('on');
+    document.getElementById('ndviNote').style.display = 'none';
+    ndviMapLayers.forEach(l => { try { l.remove(); } catch (_) {} });
+    ndviMapLayers = [];
+  }
+
+  async function loadNdvi(force = false) {
+    const status = document.getElementById('ndviStatus');
+    if (!status) return;
+    if (state.lat == null) { renderNdviEmpty(); return; }
+    const months = document.getElementById('ndviMonths').value === '24' ? 24 : 12;
+    const cacheKey = `${state.lat.toFixed(4)}_${state.lon.toFixed(4)}_${months}`;
+    if (!force && ndviCache[cacheKey]) { renderNdvi(ndviCache[cacheKey]); return; }
+
+    status.classList.remove('error');
+    status.textContent = LANG === 'en'
+      ? '⏳ Fetching Sentinel-2 scenes and compositing NDVI… (10–20 s the first time for a site)'
+      : '⏳ 正在抓取 Sentinel-2 影像、合成 NDVI…（同一基地第一次約 10–20 秒）';
+    document.getElementById('ndviNote').style.display = 'none';
+
+    const seq = ++ndviSeq;
+    if (ndviCtl) ndviCtl.abort();
+    const ac = ndviCtl = new AbortController();
+    const timeoutId = setTimeout(() => ac.abort(), 40000);
+    let settle;
+    ndviInflight = new Promise(r => { settle = r; });
+    try {
+      const url = `/api/ndvi?lat=${state.lat.toFixed(4)}&lon=${state.lon.toFixed(4)}&months=${months}`;
+      const res = await fetch(url, { signal: ac.signal });
+      const body = await res.json().catch(() => null);
+      if (seq !== ndviSeq) return;
+      if (!res.ok || !body || body.error) {
+        const msg = (body && (LANG === 'en' ? body.error : (body.zh || body.error))) || ('HTTP ' + res.status);
+        throw new Error(msg);
+      }
+      body.__fetchedAt = new Date().toISOString();
+      body.__months = months;
+      ndviCache[cacheKey] = body;
+      renderNdvi(body);
+    } catch (e) {
+      if (seq !== ndviSeq) return;
+      if (e && (e.name === 'AbortError' || /abort/i.test(String(e)))) return;
+      status.classList.add('error');
+      status.textContent = LANG === 'en'
+        ? `⚠️ NDVI analysis failed: ${String(e.message || e)}. The other panels are unaffected.`
+        : `⚠️ NDVI 分析失敗：${String(e.message || e)}。其他面板不受影響。`;
+      ndviLastSummary = null;
+      updatePrompt();
+    } finally {
+      clearTimeout(timeoutId);
+      if (seq === ndviSeq) ndviInflight = null;   // 被更新的查詢取代時，由新的那一個接手
+      settle();
+    }
+  }
+
+  function debounceNdvi() {
+    clearTimeout(ndviTimer);
+    ndviTimer = setTimeout(() => { ndviTimer = null; loadNdvi(false); }, 1800);
+  }
+  // 開始分析前：NDVI 還在查、或剛移動基地還沒開始查 → 等它完成（最多 maxMs），報告才會有景觀結構這一段
+  function ndviBusy() { return !!(ndviTimer || ndviInflight); }
+  async function waitNdvi(maxMs) {
+    if (ndviTimer) { clearTimeout(ndviTimer); ndviTimer = null; loadNdvi(false); }
+    const p = ndviInflight;
+    if (!p) return;
+    await Promise.race([p, new Promise(r => setTimeout(r, maxMs))]);
+  }
+
+  // 面板裡的小地圖：預覽圖疊在 OSM 底圖上，四個半徑畫圈
+  function ensureNdviMap() {
+    if (ndviMap || typeof L === 'undefined') return ndviMap;
+    try {
+      ndviMap = L.map('ndviMap', { zoomControl: false, attributionControl: false, scrollWheelZoom: false, dragging: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, opacity: 0.55 }).addTo(ndviMap);
+    } catch (e) { console.warn('[ndvi] map init failed:', e); ndviMap = null; }
+    return ndviMap;
+  }
+
+  function renderNdvi(data) {
+    ndviLastData = data;
+    const en = LANG === 'en';
+    const status = document.getElementById('ndviStatus');
+    const results = document.getElementById('ndviResults');
+    const note = document.getElementById('ndviNote');
+    status.classList.remove('error');
+    const radii = Array.isArray(data.radii) ? data.radii : [];
+    const scenes = Array.isArray(data.scenes) ? data.scenes : [];
+    const dates = scenes.map(x => x.date).filter(Boolean).sort();
+    status.textContent = en
+      ? `✅ NDVI composite of ${scenes.length} Sentinel-2 scenes, ${data.period.start} – ${data.period.end} · 10 m · tile ${String(data.source.grid || '').replace('MGRS-', '')}${data.cache === 'hit' ? ' · cached' : ''}`
+      : `✅ 完成：${scenes.length} 景 Sentinel-2 的 NDVI 中位數合成（${data.period.start}～${data.period.end}・10 m・圖幅 ${String(data.source.grid || '').replace('MGRS-', '')}）${data.cache === 'hit' ? '・快取' : ''}`;
+    results.classList.add('on');
+
+    // 表格：列是指標、欄是四個半徑
+    const cols = radii.map(x => `<th>${NDVI_RADIUS_LABEL(x.r)}</th>`).join('');
+    const row = (label, f, cls = '') => `<tr class="${cls}"><th>${label}</th>${radii.map(x => `<td>${f(x)}</td>`).join('')}</tr>`;
+    const sect = label => `<tr class="ndvi-sect"><th colspan="${radii.length + 1}">${label}</th></tr>`;
+    const bar = c => c ? `<span class="ndvi-bar" title="${en ? 'water / bare / low / dense' : '水域／無植生／低植生／密植生'}">`
+      + `<span style="width:${c.water * 100}%;background:#4682c8"></span><span style="width:${c.bare * 100}%;background:#c9b48a"></span>`
+      + `<span style="width:${c.low * 100}%;background:#96be5a"></span><span style="width:${c.dense * 100}%;background:#2f6e36"></span></span>` : '–';
+    const patch = (k, f) => x => x[k] ? f(x[k]) : '–';
+    let h = `<table class="ndvi-table"><thead><tr><th>${en ? 'Radius' : '半徑'}</th>${cols}</tr></thead><tbody>`;
+    h += row(en ? 'Area (ha) · valid pixels' : '面積（ha）・有值像元', x => `${num1(x.areaHa, 0)} · ${pct(x.validShare)}`);
+    h += sect(en ? 'Greenness (NDVI)' : '綠度（NDVI）');
+    h += row(en ? 'Mean · median' : '平均・中位數', x => x.ndvi ? `${num1(x.ndvi.mean, 2)} · ${num1(x.ndvi.median, 2)}` : '–');
+    h += row(en ? 'Cover: water / bare / low / dense' : '組成：水域／無植生／低植生／密植生', x => bar(x.classes));
+    h += row(en ? 'Vegetated (NDVI ≥ 0.2)' : '植生覆蓋（NDVI ≥ 0.2）', x => x.classes ? pct(x.classes.low + x.classes.dense) : '–');
+    h += row(en ? 'Dense vegetation (≥ 0.5)' : '密植生（≥ 0.5）', x => x.classes ? pct(x.classes.dense) : '–');
+    h += row(en ? 'Water (< 0)' : '水域（< 0）', x => x.classes ? pct(x.classes.water) : '–');
+    h += sect(en ? 'Dense-vegetation patches (8-connected)' : '密植生塊區（patch，8 鄰接）');
+    h += row(en ? 'Patches' : '塊區數', patch('dense', d => d.patches.toLocaleString('en-US')));
+    h += row(en ? 'Largest patch (ha · share)' : '最大塊區（ha・佔比）', patch('dense', d => `${num1(d.largestHa, 1)} · ${pct(d.largestShare)}`));
+    h += row(en ? 'Mean patch (ha)' : '平均塊區（ha）', patch('dense', d => num1(d.meanHa, 2)));
+    h += row(en ? 'Effective mesh size (ha)' : '有效網目大小（ha）', patch('dense', d => num1(d.meshHa, 1)));
+    h += row(en ? 'Edge density (m/ha)' : '邊緣密度（m/ha）', patch('dense', d => num1(d.edgeMPerHa, 0)));
+    h += sect(en ? 'All vegetation patches (≥ 0.2)' : '植生塊區（≥ 0.2）');
+    h += row(en ? 'Patches · largest share' : '塊區數・最大塊區佔比', patch('veg', v => `${v.patches.toLocaleString('en-US')} · ${pct(v.largestShare)}`));
+    h += row(en ? 'Effective mesh size (ha)' : '有效網目大小（ha）', patch('veg', v => num1(v.meshHa, 1)));
+    h += row(en ? 'Edge density (m/ha)' : '邊緣密度（m/ha）', patch('veg', v => num1(v.edgeMPerHa, 0)));
+    h += '</tbody></table>';
+    document.getElementById('ndviTable').innerHTML = h;
+
+    const obs = data.observations || {};
+    document.getElementById('ndviScenes').innerHTML =
+      `<b>${en ? 'Scenes' : '使用影像'}</b>：${scenes.map(x => `${x.date}（${en ? 'cloud' : '雲'} ${Math.round(x.cloud)}%）`).join(en ? ', ' : '、')}<br>`
+      + (en ? `Pixels with ≥ 3 cloud-free observations: ${pct(obs.ge3Share || 0)} · no observation: ${pct(obs.noData || 0, 1)}`
+            : `≥ 3 次無雲觀測的像元：${pct(obs.ge3Share || 0)}・整年沒有無雲觀測：${pct(obs.noData || 0, 1)}`)
+      + (data.timing ? `<br>${en ? 'computed in' : '計算時間'} ${(data.timing.totalMs / 1000).toFixed(1)} s` : '');
+
+    // 提醒：景數少或無資料多時，數字要保守看
+    const warn = [];
+    if (scenes.length < 3) warn.push(en ? `Only ${scenes.length} scene(s) were usable; the composite may carry residual cloud or season bias.` : `只有 ${scenes.length} 景可用，合成結果可能帶殘雲或季節偏差。`);
+    if ((obs.noData || 0) > 0.05) warn.push(en ? `${pct(obs.noData)} of pixels had no cloud-free observation in the period (treated as missing).` : `${pct(obs.noData)} 的像元整個期間都沒有無雲觀測（視為缺值）。`);
+    if (data.source && data.source.windowCornersInGrid != null && data.source.windowCornersInGrid < 4) warn.push(en ? 'The 10 km window crosses the edge of the satellite tile; the outer radii are partly unobserved.' : '10 km 視窗跨到衛星圖幅邊界，外圈半徑有一部分沒有資料。');
+    if (data.skipped && data.skipped.length) warn.push(en ? `${data.skipped.length} scene(s) skipped (${data.skipped.map(x => x.why).join(', ')}).` : `跳過 ${data.skipped.length} 景（${data.skipped.map(x => x.why).join('、')}）。`);
+    note.style.display = warn.length ? '' : 'none';
+    note.textContent = warn.join(' ');
+
+    // 小地圖
+    const m = ensureNdviMap();
+    if (m && data.preview && data.preview.png) {
+      ndviMapLayers.forEach(l => { try { l.remove(); } catch (_) {} });
+      ndviMapLayers = [];
+      const b = data.preview.bounds;
+      const bounds = L.latLngBounds([b[0][0], b[0][1]], [b[1][0], b[1][1]]);
+      ndviMapLayers.push(L.imageOverlay(data.preview.png, bounds, { opacity: 0.85 }).addTo(m));
+      radii.forEach(x => ndviMapLayers.push(L.circle([state.lat, state.lon], { radius: x.r, color: '#1f2d22', weight: x.r >= 5000 ? 1 : 1.5, fill: false, dashArray: x.r >= 5000 ? '4 4' : null }).addTo(m)));
+      ndviMapLayers.push(L.circleMarker([state.lat, state.lon], { radius: 4, color: '#b86b4a', fillColor: '#b86b4a', fillOpacity: 1, weight: 1 }).addTo(m));
+      setTimeout(() => { try { m.invalidateSize(); m.fitBounds(bounds, { padding: [2, 2] }); } catch (_) {} }, 50);
+    }
+
+    ndviLastSummary = buildNdviSummary(data);
+    updatePrompt();
+  }
+
+  function buildNdviSummary(data) {
+    const scenes = Array.isArray(data.scenes) ? data.scenes : [];
+    return {
+      months: data.__months || (data.period && data.period.months) || 12,
+      start: data.period && data.period.start, end: data.period && data.period.end,
+      grid: data.source && data.source.grid, pixelM: (data.source && data.source.pixelM) || 10,
+      nScenes: scenes.length, scenes: scenes.map(x => ({ date: x.date, cloud: x.cloud })),
+      radii: (data.radii || []).map(x => ({ r: x.r, areaHa: x.areaHa, validShare: x.validShare, ndvi: x.ndvi, classes: x.classes, veg: x.veg, dense: x.dense })),
+      observations: data.observations || null, thresholds: data.thresholds || { water: 0, veg: 0.2, dense: 0.5 },
+      fetchedAt: data.__fetchedAt || null,
+    };
+  }
+
   // ========== Auto-clear on new location ==========
   const LOCATION_CHANGE_THRESHOLD_M = 300; // 距離超過此值視為「新基地」，自動清空
   let lastClearedSnapshot = null;
@@ -2874,6 +3151,9 @@ out tags center;`;
     tbnLastData = null;
     tbnGroupFilter = '';
     tbnSeq++;           // 舊基地進行中的 TBN 查詢不再寫回
+    ndviLastSummary = null;
+    ndviLastData = null;
+    ndviSeq++;
 
     // 更新 UI
     document.getElementById('locname').value = '';
@@ -3147,8 +3427,8 @@ out tags center;`;
         en: `[Key findings] After the <h1>, one <p class="meta">${o.metaEn}</p>, then <ul class="summary"> with 3–5 bullets, each ≤25 words and ≤100 words in total: the most critical resource conflict (by R#), the top zoning decision or measure${o.act ? ', the activity that needs the tightest control' : ''}, the most important conservation/legal warning, and the main data limitation. Point to later sections; no details or citations.` },
       { zh: `〔地圖〕重點摘要之後單獨一行輸出 <!--HEALS:MAP-->；不要自行撰寫地圖、<img>、<figure> 或圖說，系統會在此插入基地位置圖。`,
         en: `[Map] After the key findings, output <!--HEALS:MAP--> on its own line. Do not write a map, <img>, <figure> or caption yourself; the tool inserts the site map there.` },
-      { zh: `1 基地判讀：一張兩欄表（項目｜內容），≤8 列：海拔（取自已搜得的資料，不必為此單獨搜尋）、植被／林相、流域／水系、保育或法定身分、鄰近聚落／原住民族傳統領域、主要人為干擾、OSM 環境重點、在地代表物種（≤5 種${o.hasInat ? '，可取自 iNaturalist 清單' : ''}）。每格 ≤30 字（引用不計入）並附來源；未搜尋或查無資料寫「未查得」。表後 <ul class="warn"> 列設計警示 3–5 點，每點 ≤50 字，格式為「風險 → 必要對策（來源）」；保育敏感區、原住民族傳統領域、人為干擾三類各至少一點（有來源確認不適用者寫「經查無」並附該來源，如（原住民族委員會, 無日期）；沒有來源者寫「未查得」）。警示為必備，不受篇幅壓縮。不寫敘述段落。`,
-        en: `1 Site reading: one two-column table (item | finding) of ≤8 rows: elevation (from sources you already found; do not spend a search on it), vegetation/forest type, watershed/water system, conservation or legal status, nearby settlements / indigenous traditional territories, main human disturbances, OSM highlights, and local representative species (≤5${o.hasInat ? ', may come from the iNaturalist list' : ''}). Each cell ≤20 words (citations excluded) with a source; write "not found" when you did not search for it or found nothing, never an estimate. Then <ul class="warn"> with 3–5 design warnings, each ≤30 words, in the form "risk → required response (source)". Conservation-sensitive areas, indigenous traditional territories and human disturbance each get at least one item (write "confirmed absent (Source, Year)" only when a cited source shows it does not apply; otherwise "not found"). The warnings are mandatory and exempt from length cuts. No narrative paragraphs.` },
+      { zh: `1 基地判讀：一張兩欄表（項目｜內容），≤${o.hasNdvi ? 9 : 8} 列：海拔（取自已搜得的資料，不必為此單獨搜尋）、植被／林相、流域／水系、保育或法定身分、鄰近聚落／原住民族傳統領域、主要人為干擾、OSM 環境重點${o.hasNdvi ? '、景觀結構（依上方「植生與景觀結構」的數字：500 m 與 1 km 的密植生比例與塊區破碎程度、5 km 與 10 km 的景觀基質，寫一句判讀，附（歐洲太空總署，無日期））' : ''}、在地代表物種（≤5 種${o.hasInat ? '，可取自 iNaturalist 清單' : ''}）。每格 ≤30 字（引用不計入）並附來源；未搜尋或查無資料寫「未查得」。${o.hasNdvi ? '表後單獨一行輸出 <!--HEALS:LANDSCAPE-->，系統會在此插入四個半徑的景觀結構指標表（不要自行抄寫那張表）。' : ''}表後 <ul class="warn"> 列設計警示 3–5 點，每點 ≤50 字，格式為「風險 → 必要對策（來源）」；保育敏感區、原住民族傳統領域、人為干擾三類各至少一點（有來源確認不適用者寫「經查無」並附該來源，如（原住民族委員會, 無日期）；沒有來源者寫「未查得」）。警示為必備，不受篇幅壓縮。不寫敘述段落。`,
+        en: `1 Site reading: one two-column table (item | finding) of ≤${o.hasNdvi ? 9 : 8} rows: elevation (from sources you already found; do not spend a search on it), vegetation/forest type, watershed/water system, conservation or legal status, nearby settlements / indigenous traditional territories, main human disturbances, OSM highlights${o.hasNdvi ? ', landscape structure (one-sentence reading of the VEGETATION AND LANDSCAPE STRUCTURE figures above: dense-vegetation share and patch fragmentation at 500 m and 1 km, the landscape matrix at 5 km and 10 km, cited as (European Space Agency, n.d.))' : ''}, and local representative species (≤5${o.hasInat ? ', may come from the iNaturalist list' : ''}). Each cell ≤20 words (citations excluded) with a source; write "not found" when you did not search for it or found nothing, never an estimate. ${o.hasNdvi ? 'After the table, output <!--HEALS:LANDSCAPE--> on its own line; the tool inserts the four-radius landscape-structure table there (do not copy that table yourself). ' : ''}Then <ul class="warn"> with 3–5 design warnings, each ≤30 words, in the form "risk → required response (source)". Conservation-sensitive areas, indigenous traditional territories and human disturbance each get at least one item (write "confirmed absent (Source, Year)" only when a cited source shows it does not apply; otherwise "not found"). The warnings are mandatory and exempt from length cuts. No narrative paragraphs.` },
       { zh: `2 物種需求表：一張表，每個焦點物種一列。欄位：物種（中名・學名・保育等級）｜食｜住（棲位高度 m／掩蔽）｜育（繁殖月份／巢位）｜活動時段與範圍｜敏感因子（光、噪音、犬貓、路殺等）。食、住、育每格 ≤40 字，並以一筆（作者, 年）結尾；同一物種的三格可引用同一份物種文獻，不必逐格搜尋。其餘各欄 ≤25 字；焦點物種超過 5 種時，上限改為 30 字與 20 字（引用均不計入字數）。這是全文唯一陳述物種生態之處；不寫物種卡片、圖示或段落。`,
         en: `2 Species requirements: one table with one row per focal species. Columns: species (common name · scientific name · conservation status) | food | shelter (niche height in m / cover) | breeding (months / nest site) | activity period & range | sensitivities (light, noise, dogs/cats, roadkill, etc.). Food, shelter and breeding cells are ≤25 words and each ends with one (Author, Year); one species account may serve all three cells, so no separate search per cell is needed. Other cells ≤15 words. With more than 5 focal species, the caps drop to 18 and 10 words (citations never count toward word caps). This is the only place species biology is stated; no species cards, icons or paragraphs.` },
       { zh: `3 資源利用矩陣：<table class="matrix">，欄位為 編號｜環境資源｜〔各焦點物種〕｜物種互動｜設計啟示。「基地條件」中的每項資源一列，編號 R1、R2…；相近條件可合併為一列（列出原名稱），但每項條件都須出現；所有物種皆為低／無的條件不另立列，改於表下以一行「低利用條件（不另立列）：…」列出。最後加一列「捕食／干擾」（如 犬貓→地棲鳥、夜間照明→蛙類）。「棲地需求」各項併入對應 R 列的資源名稱；步道、林道、橋梁、堤防等設施不另立資源列，列於最後的「捕食／干擾」列。物種格只填 高／中／低／無。「物種互動」寫配對與重疊時段，如「A↔B 強烈競爭（3–6 月重疊）；A↔C 無關」，≤30 字。「設計啟示」≤30 字，寫一種機制（時間分離、垂直分層、緩衝、獨立結構）；寫數值時附（作者, 年），如「緩衝 N m（作者, 年）」，沒有來源就不寫數值。表後 ≤3 點（每點 ≤60 字）：① 需分區或時空分離的資源（以 R 編號）② 可共享資源 ③ 主要捕食／干擾關係與緩解策略。不另寫整體互動段落。`,
@@ -3206,7 +3486,7 @@ ${N.act}.2 Activity × zone compatibility (<h3>): <table class="compat">. The fi
   // o.act：有「未來使用活動」一節（類別、標題層級、篇幅上限與優先壓縮的節次隨之調整）
   const reportRulesZh = o => { const N = sectionNumbers(o.act); return `【輸出格式與篇幅（全文適用）】
 1. 只輸出報告本文：一個 <article>，從 <article> 開始、到 </article> 結束。不要 <!DOCTYPE>、<head>、<style>、style 屬性、顏色、字型或 <svg>（唯一例外是第 4.2 節的 JSON 資料區塊）。版面、配色、字型與地圖由系統套用。
-2. 只用 h1–h3、p、ul、li、table、thead、tbody、tr、th、td、strong、em、a，以及 class：meta、summary、warn、matrix${o.act ? '、activities、compat' : ''}、cases、refs、note（另含第 4.2 節的 JSON <script> 區塊與 <!--HEALS:MAP--> 標記）。各節標題用 <h2>（4.1、4.2${o.act ? `、${N.act}.1、${N.act}.2` : ''} 用 <h3>），依上列編號與名稱。
+2. 只用 h1–h3、p、ul、li、table、thead、tbody、tr、th、td、strong、em、a，以及 class：meta、summary、warn、matrix${o.act ? '、activities、compat' : ''}、cases、refs、note（另含第 4.2 節的 JSON <script> 區塊與 <!--HEALS:MAP-->${o.hasNdvi ? '、<!--HEALS:LANDSCAPE-->' : ''} 標記）。各節標題用 <h2>（4.1、4.2${o.act ? `、${N.act}.1、${N.act}.2` : ''} 用 <h3>），依上列編號與名稱。
 3. 不要封面、目錄、輸入條件複述、方法論、導言、結語或過場段落；不要 ASCII 框線圖；不要平面分區圖、配置圖或任何裝飾圖示。除系統插入的基地位置圖外，報告中唯一的圖由系統依 4.2 的 JSON 資料區塊繪製。
 4. 表格優先，每個事實只寫一次：物種生態只在第 2 節，資源衝突只在第 3 節，空間位置只在第 4 節${o.act ? `，人類活動的影響與使用程度只在第 ${N.act} 節` : ''}。其他地方以物種中名、矩陣列號（R1、R2…）或分區名回指，不得重述。同一物種全文使用同一中名。
 5. 全文可見文字（不含參考文獻與剖面 JSON）≤ ${(o.act ? Math.min(7500, 6000 + 150 * o.nAct) : 6000).toLocaleString('en-US')} 字。篇幅不足時先壓縮第 ${N.meas}、${N.cases} 節；設計警示、資源矩陣、${o.act ? '活動影響表、' : ''}參考文獻與檢索聲明不得刪減。
@@ -3217,7 +3497,7 @@ ${N.act}.2 Activity × zone compatibility (<h3>): <table class="compat">. The fi
 
   const reportRulesEn = o => { const N = sectionNumbers(o.act); return `OUTPUT FORMAT AND LENGTH (applies to the whole report)
 1. Output only the report body: one <article>, starting with <article> and ending with </article>. No <!DOCTYPE>, <head>, <style>, style attributes, colours, fonts or <svg> (the only exception is the JSON data block in section 4.2). The tool applies layout, colour, fonts and the map.
-2. Use only h1–h3, p, ul, li, table, thead, tbody, tr, th, td, strong, em, a, and the classes meta, summary, warn, matrix${o.act ? ', activities, compat' : ''}, cases, refs, note (plus the 4.2 JSON <script> block and the <!--HEALS:MAP--> marker). Section headings are <h2> (<h3> for ${o.act ? `4.1, 4.2, ${N.act}.1 and ${N.act}.2` : '4.1 and 4.2'}), with the numbers and names given above.
+2. Use only h1–h3, p, ul, li, table, thead, tbody, tr, th, td, strong, em, a, and the classes meta, summary, warn, matrix${o.act ? ', activities, compat' : ''}, cases, refs, note (plus the 4.2 JSON <script> block and the <!--HEALS:MAP-->${o.hasNdvi ? ' and <!--HEALS:LANDSCAPE-->' : ''} marker${o.hasNdvi ? 's' : ''}). Section headings are <h2> (<h3> for ${o.act ? `4.1, 4.2, ${N.act}.1 and ${N.act}.2` : '4.1 and 4.2'}), with the numbers and names given above.
 3. No cover, table of contents, restatement of inputs, methodology, introduction, conclusion or transition paragraphs. No ASCII box drawings. No plan-view zoning or layout diagrams and no decorative graphics. Apart from the site map the tool inserts, the only figures in the report are drawn by the tool from the 4.2 JSON data block.
 4. Tables first, and each fact stated once: species biology only in section 2, resource conflicts only in section 3, spatial placement only in section 4${o.act ? `, activity impacts and use levels only in section ${N.act}` : ''}. Elsewhere, refer back by species common name, matrix row number (R1, R2 …) or zone name; never restate. Use the same common name for each species throughout.
 5. Visible text ≤${(o.act ? Math.min(4400, 3500 + 90 * o.nAct) : 3500).toLocaleString('en-US')} words, excluding references and the cross-section JSON. If space runs short, compress sections ${N.meas} and ${N.cases} first. Never cut the design warnings, the resource matrix, ${o.act ? 'the activity table, ' : ''}the references or the retrieval note.
@@ -3290,7 +3570,7 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
           ? `💧 Water bodies (${osmLastSummary.waterCount})${named(osmLastSummary.water, 5)}`
           : `💧 水體 (${osmLastSummary.waterCount} 處)${named(osmLastSummary.water, 5)}`);
       }
-      if (osmLastSummary.forestCount > 0) lines.push(en ? `🌲 Forest patches: ${osmLastSummary.forestCount}` : `🌲 森林斑塊: ${osmLastSummary.forestCount} 處`);
+      if (osmLastSummary.forestCount > 0) lines.push(en ? `🌲 Forest patches: ${osmLastSummary.forestCount}` : `🌲 森林塊區: ${osmLastSummary.forestCount} 處`);
       if (osmLastSummary.settlementCount > 0) {
         lines.push(en
           ? `🏘️ Settlements (${osmLastSummary.settlementCount})${named(osmLastSummary.settlements, 3)}`
@@ -3374,6 +3654,45 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
         : `\n原生性、特有性與保育等級均依 TBN 記載，僅供參考，以主管機關公告為準。若引用上列資料，行內引用寫（臺灣生物多樣性網絡，無日期），並將下列文獻原樣列入參考文獻：\n${datasetRefText('tbn', dsT, false)}`;
     }
 
+    // NDVI 植生與景觀結構：四個半徑的數字照列，並說清楚怎麼用、不能怎麼用。
+    // 這是遙測推估，不是棲地調查——不講清楚，模型會把「密植生 35%」寫成「森林覆蓋 35%」。
+    let ndviContext = '';
+    if (ndviLastSummary && state.lat != null && ndviLastSummary.radii.length) {
+      const v = ndviLastSummary;
+      const P = (x, d) => `${(x * 100).toFixed(d === undefined ? (x > 0 && x < 0.1 ? 1 : 0) : d)}%`;   // 與面板相同：小於 10% 給一位小數
+      const F = (x, d) => Number(x).toFixed(d);
+      const rl = r => r >= 1000 ? `${r / 1000} km` : `${r} m`;
+      const line = x => {
+        if (!x.classes) return en ? `radius ${rl(x.r)}: no valid pixels` : `半徑 ${rl(x.r)}：沒有有值像元`;
+        const c = x.classes, d = x.dense, g = x.veg;
+        return en
+          ? `radius ${rl(x.r)} (${F(x.areaHa, 0)} ha, ${P(x.validShare)} observed): NDVI mean ${F(x.ndvi.mean, 2)}, median ${F(x.ndvi.median, 2)} | water ${P(c.water)}, bare/built ${P(c.bare)}, low vegetation ${P(c.low)}, dense vegetation ${P(c.dense)} | dense-vegetation patches ${d.patches}, largest ${F(d.largestHa, 1)} ha (${P(d.largestShare)} of the area), mean ${F(d.meanHa, 2)} ha, effective mesh ${F(d.meshHa, 1)} ha, edge density ${F(d.edgeMPerHa, 0)} m/ha | all vegetation (≥0.2): ${g.patches} patches, largest ${P(g.largestShare)}, mesh ${F(g.meshHa, 1)} ha`
+          : `半徑 ${rl(x.r)}（${F(x.areaHa, 0)} ha，有值 ${P(x.validShare)}）：NDVI 平均 ${F(x.ndvi.mean, 2)}、中位數 ${F(x.ndvi.median, 2)}｜水域 ${P(c.water)}、無植生 ${P(c.bare)}、低植生 ${P(c.low)}、密植生 ${P(c.dense)}｜密植生塊區 ${d.patches} 個，最大 ${F(d.largestHa, 1)} ha（佔 ${P(d.largestShare)}），平均 ${F(d.meanHa, 2)} ha，有效網目 ${F(d.meshHa, 1)} ha，邊緣密度 ${F(d.edgeMPerHa, 0)} m/ha｜全部植生（≥0.2）：${g.patches} 個塊區，最大佔 ${P(g.largestShare)}，有效網目 ${F(g.meshHa, 1)} ha`;
+      };
+      const L = [];
+      L.push(en
+        ? `Thresholds: water NDVI < 0; bare or built 0–0.2; low vegetation 0.2–0.5 (grassland, cropland, scrub); dense vegetation ≥ 0.5 (trees, closed vegetation). Patches are 8-connected pixels above the threshold within the circle; effective mesh size (Jaeger 2000) is the expected size of the patch a random point falls in — smaller means more fragmented.`
+        : `門檻：水域 NDVI < 0；無植生或人工鋪面 0–0.2；低植生 0.2–0.5（草地、農田、灌叢）；密植生 ≥ 0.5（喬木、鬱閉植被）。塊區（patch）為圓內高於門檻、8 鄰接的連續像元；有效網目大小（Jaeger 2000）是隨機落點所在塊區的期望面積，越小越破碎。`);
+      v.radii.forEach(x => L.push(line(x)));
+      const obs = v.observations || {};
+      if ((obs.noData || 0) > 0.02) L.push(en
+        ? `⚠️ ${P(obs.noData, 1)} of pixels had no cloud-free observation in the period and are missing from the figures above.`
+        : `⚠️ ${P(obs.noData, 1)} 的像元整個期間沒有無雲觀測，不在上列數字內。`);
+      if (v.nScenes < 3) L.push(en
+        ? `⚠️ Only ${v.nScenes} scene(s) were usable; treat the figures as indicative.`
+        : `⚠️ 只有 ${v.nScenes} 景可用，數字僅供參考。`);
+      L.push(en
+        ? `How to use: the 500 m and 1 km radii describe the site and its immediate surroundings (green cover, fragmentation, edges) for the resource-use matrix and zoning; the 5 km and 10 km radii describe the landscape matrix for focal species with large home ranges (raptors, medium and large mammals) and for connectivity. These are remote-sensing estimates: NDVI measures green biomass, not habitat quality; cropland and mown turf count as vegetation and dense vegetation is not necessarily natural forest; the thresholds are generic and the patches are not a land-cover map. Do not report them as forest cover or habitat area.`
+        : `使用方式：500 m 與 1 km 描述基地及其周邊的綠量、破碎程度與邊緣，供資源利用矩陣與分區參考；5 km 與 10 km 描述基地所在的景觀基質，供活動範圍大的焦點物種（猛禽、中大型哺乳類）與連結度判斷。這些是遙測推估：NDVI 量的是綠色生物量不是棲地品質，農田與人工草坪也算植生，密植生不等於天然林；門檻為通用值，塊區不是土地覆蓋圖。不可寫成「森林覆蓋率」或「棲地面積」。`);
+      ndviContext = (en
+        ? `\n\n🛰️ VEGETATION AND LANDSCAPE STRUCTURE (Sentinel-2 NDVI, 10 m · median of ${v.nScenes} cloud-screened scenes, ${v.start} to ${v.end})\n`
+        : `\n\n🛰️ 植生與景觀結構（Sentinel-2 NDVI，10 m・${v.start}～${v.end} 期間 ${v.nScenes} 景雲遮罩後的中位數合成）\n`) + L.join('\n');
+      const dsN = captureDatasets().ndvi;
+      if (dsN) ndviContext += en
+        ? `\nIf you use these figures, cite them in the text as (European Space Agency, n.d.) and copy this entry into the references unchanged:\n${datasetRefText('ndvi', dsN, true)}`
+        : `\n若引用上列數字，行內引用寫（歐洲太空總署，無日期），並將下列文獻原樣列入參考文獻：\n${datasetRefText('ndvi', dsN, false)}`;
+    }
+
     // 剖面模板只送出被選中的 ≤3 個（代碼與 renderCrossSections 接受的完全一致）
     const picked = pickXsecTemplates(state.conditions);
     const metaParts = [coordStr, state.locationName, today].filter(Boolean);
@@ -3383,6 +3702,7 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
       todayZh: `${ty} 年 ${tm} 月 ${td} 日`,
       todayEn: `${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][tm - 1]} ${td}, ${ty}`,
       hasInat: !!inatContext,
+      hasNdvi: !!ndviContext,
       act: acts.length > 0,
       nAct: acts.length,
       scale: !!useScale,
@@ -3406,7 +3726,7 @@ Today's date: ${today}
 ${species}
 
 🌳 SITE CONDITIONS
-${conditions}${habitatNeedsStr}${activitiesStr}${special}${osmContext}${inatContext}${inatCite}${tbnContext}
+${conditions}${habitatNeedsStr}${activitiesStr}${special}${osmContext}${ndviContext}${inatContext}${inatCite}${tbnContext}
 
 📋 REPORT STRUCTURE (in this order; use the section numbers and names given)
 
@@ -3425,7 +3745,7 @@ ${reportRulesEn({ act: acts.length > 0, nAct: acts.length })}`;
 ${species}
 
 🌳 基地條件
-${conditions}${habitatNeedsStr}${activitiesStr}${special}${osmContext}${inatContext}${inatCite}${tbnContext}
+${conditions}${habitatNeedsStr}${activitiesStr}${special}${osmContext}${ndviContext}${inatContext}${inatCite}${tbnContext}
 
 📋 報告結構（依序輸出；各節標題的編號與名稱照列）
 
@@ -3760,6 +4080,10 @@ ${reportRulesZh({ act: acts.length > 0, nAct: acts.length })}`;
     tbnLastData = null;
     tbnGroupFilter = '';
     tbnSeq++;
+    ndviLastSummary = null;
+    ndviLastData = null;
+    ndviSeq++;
+    renderNdviEmpty();
     document.getElementById('lat').value = '';
     document.getElementById('lon').value = '';
     document.getElementById('locname').value = '';
@@ -4117,6 +4441,13 @@ body.heals-doc{margin:0;background:#faf6ea;color:#2e2a22;font-family:'Noto Serif
 .heals-doc figure.heals-map{margin:4px 0 22px;text-align:center}
 .heals-doc figure.heals-map img{display:block;box-sizing:border-box;max-width:100%;height:auto;margin:0 auto;border:1px solid #d4cdb8;border-radius:3px;background:#fffdf7}
 .heals-doc figure.heals-map figcaption{font-family:'Noto Sans TC',sans-serif;font-size:12px;color:#456238;font-style:italic;margin-top:6px;line-height:1.5}
+.heals-doc figure.heals-landscape{margin:4px 0 18px}
+.heals-doc figure.heals-landscape table.landscape{margin:0;font-size:12px;font-variant-numeric:tabular-nums}
+.heals-doc figure.heals-landscape table.landscape th,.heals-doc figure.heals-landscape table.landscape td{text-align:right;white-space:nowrap;padding:4px 8px}
+.heals-doc figure.heals-landscape table.landscape th:first-child{text-align:left;white-space:normal;font-weight:500;color:#456238;background:#fffdf7;min-width:9em}
+.heals-doc figure.heals-landscape table.landscape thead th{text-align:right;font-weight:700}
+.heals-doc figure.heals-landscape table.landscape thead th:first-child{text-align:left;font-weight:700;background:#ede4cc}
+.heals-doc figure.heals-landscape figcaption{font-family:'Noto Sans TC',sans-serif;font-size:11.5px;color:#456238;font-style:italic;margin-top:6px;line-height:1.5}
 .heals-doc .heals-swipe{display:none;margin:8px 0 -6px;font-family:'Noto Sans TC',sans-serif;font-size:11.5px;color:#456238;text-align:right}
 .heals-doc table.activities{font-size:12px}
 .heals-doc table.activities tbody td:first-child,.heals-doc table.compat tbody td:first-child{font-weight:700;color:#456238;background:#fffdf7}
@@ -4229,8 +4560,8 @@ ${VF_CSS}</style>`;
     const doc = new DOMParser().parseFromString('<!DOCTYPE html><html><head></head><body>' + repairRawText(String(a)) + '</body></html>', 'text/html');
     const walk = parent => {
       for (const node of [...parent.childNodes]) {
-        if (node.nodeType === 8) { // 註解：只留地圖標記
-          if (!/^\s*HEALS:MAP\s*$/i.test(node.data)) node.remove();
+        if (node.nodeType === 8) { // 註解：只留地圖與景觀結構表的標記
+          if (!/^\s*HEALS:(?:MAP|LANDSCAPE)\s*$/i.test(node.data)) node.remove();
           continue;
         }
         if (node.nodeType !== 1) { if (node.nodeType !== 3) node.remove(); continue; }
@@ -4502,6 +4833,51 @@ ${VF_CSS}</style>`;
     return `\n<figure class="heals-map">${img}<figcaption>${cap}</figcaption></figure>\n`;
   }
 
+  // 景觀結構指標表（<!--HEALS:LANDSCAPE--> 處）：由本工具依分析開始時的 NDVI 面板資料直接寫入，數字與面板一致、不經模型抄寫。
+  // 圖說不寫成（作者, 年）的引用格式：資料來源已由模型依提示詞列入參考文獻，這裡只標明出處與計算方式
+  function buildLandscapeFigure(s, en) {
+    if (!s || !Array.isArray(s.radii) || !s.radii.length) return '';
+    const P = (x, d) => `${(x * 100).toFixed(d === undefined ? (x > 0 && x < 0.1 ? 1 : 0) : d)}%`;
+    const F = (x, d) => Number(x).toFixed(d);
+    const rl = r => r >= 1000 ? `${r / 1000} km` : `${r} m`;
+    const T = s.thresholds || { water: 0, veg: 0.2, dense: 0.5 };
+    const rows = [
+      [en ? 'Area (ha) · observed pixels' : '面積（ha）・有效像元', x => `${F(x.areaHa, 0)} · ${P(x.validShare)}`],
+      [en ? 'NDVI mean · median' : 'NDVI 平均・中位數', x => x.classes ? `${F(x.ndvi.mean, 2)} · ${F(x.ndvi.median, 2)}` : '—'],
+      [en ? `Vegetated (NDVI ≥ ${T.veg})` : `植生（NDVI ≥ ${T.veg}）`, x => x.classes ? P(x.classes.low + x.classes.dense) : '—'],
+      [en ? `Dense vegetation (≥ ${T.dense})` : `密植生（≥ ${T.dense}）`, x => x.classes ? P(x.classes.dense) : '—'],
+      [en ? `Water (< ${T.water})` : `水域（< ${T.water}）`, x => x.classes ? P(x.classes.water) : '—'],
+      [en ? 'Dense-vegetation patches' : '密植生塊區數', x => x.dense ? x.dense.patches.toLocaleString('en-US') : '—'],
+      [en ? 'Largest patch (ha · share)' : '最大塊區（ha・佔比）', x => x.dense ? `${F(x.dense.largestHa, 1)} · ${P(x.dense.largestShare)}` : '—'],
+      [en ? 'Effective mesh size (ha)' : '有效網目大小（ha）', x => x.dense ? F(x.dense.meshHa, 1) : '—'],
+      [en ? 'Edge density (m/ha)' : '邊緣密度（m/ha）', x => x.dense ? F(x.dense.edgeMPerHa, 0) : '—'],
+    ];
+    const head = `<tr><th>${en ? 'Indicator' : '指標'}</th>${s.radii.map(x => `<th>${rl(x.r)}</th>`).join('')}</tr>`;
+    const body = rows.map(([label, f]) => `<tr><th scope="row">${escapeHtml(label)}</th>${s.radii.map(x => `<td>${escapeHtml(f(x))}</td>`).join('')}</tr>`).join('');
+    const period = s.start && s.end ? `${s.start}～${s.end}` : '';
+    const cap = en
+      ? `Landscape structure around the site: Sentinel-2 NDVI median composite (${period ? period.replace('～', ' to ') + ', ' : ''}${s.nScenes} cloud-screened scenes, ${s.pixelM || 10} m), class shares and dense-vegetation patch metrics (8-connected patches, effective mesh size) within four radii. Thresholds are generic (water &lt; ${T.water}, vegetation ≥ ${T.veg}, dense ≥ ${T.dense}); NDVI measures green biomass, not habitat quality, so these are not forest-cover or habitat-area figures. Data: Copernicus Sentinel-2 (ESA), computed by this tool; see the data-sources appendix.`
+      : `基地周邊景觀結構：Sentinel-2 NDVI 中位數合成（${period ? period + '，' : ''}${s.nScenes} 景雲遮罩後，${s.pixelM || 10} m），四個半徑內的覆蓋比例與密植生塊區（patch，8 鄰接）指標（含有效網目大小 effective mesh size）。門檻為通用值（水域 &lt; ${T.water}、植生 ≥ ${T.veg}、密植生 ≥ ${T.dense}）；NDVI 量的是綠色生物量而非棲地品質，不可視為森林覆蓋率或棲地面積。資料：Copernicus Sentinel-2（ESA），由本工具計算，詳見附錄資料來源。`;
+    return `\n<figure class="heals-landscape"><table class="landscape"><thead>${head}</thead><tbody>${body}</tbody></table><figcaption>${cap}</figcaption></figure>\n`;
+  }
+  // 把景觀結構表放進 <article> 字串：有標記就放在標記處；沒有就放在第 1 節第一張表之後（再不然放在第一個 <h2> 之前）
+  function placeLandscape(a, fig) {
+    if (/<!--\s*HEALS:LANDSCAPE\s*-->/i.test(a)) {
+      let first = true;
+      return a.replace(/<!--\s*HEALS:LANDSCAPE\s*-->/gi, () => { const r = first ? fig : ''; first = false; return r; });
+    }
+    if (!fig) return a;
+    const h2 = a.search(/<h2\b/i);
+    if (h2 >= 0) {
+      const t = a.indexOf('</table>', h2);
+      const next = a.slice(h2 + 1).search(/<h2\b/i);
+      const nextH2 = next >= 0 ? h2 + 1 + next : -1;
+      if (t >= 0 && (nextH2 < 0 || t < nextH2)) return a.slice(0, t + 8) + fig + a.slice(t + 8);
+      if (nextH2 >= 0) return a.slice(0, nextH2) + fig + a.slice(nextH2);
+    }
+    return a.replace(/<\/article\s*>\s*$/i, m => fig + m);
+  }
+
   // 把 <article> 包成可獨立開啟／下載／列印的完整 HTML 文件
   // opts: { lang, site: {lat, lon, name}, mapDataUrl, incomplete }
   function wrapReport(article, opts) {
@@ -4524,6 +4900,8 @@ ${VF_CSS}</style>`;
       else if (/<\/h1\s*>/i.test(a)) a = a.replace(/<\/h1\s*>/i, m => m + fig);
       else a = a.replace(/<article\b[^>]*>/i, m => m + fig);
     }
+    // 景觀結構指標表：<!--HEALS:LANDSCAPE--> 換成本工具寫的表（沒有 NDVI 資料時只移除標記）
+    a = placeLandscape(a, buildLandscapeFigure(opts.landscape, en));
 
     // 引用比對與 AI 產出聲明（頁尾）
     const check = checkCitations(a, opts.sources, en, opts.datasets);
@@ -4791,6 +5169,16 @@ ${a}
       return;
     }
 
+    // 植生與景觀結構（NDVI）還在查（第一次約 10–20 秒）：等它完成再組提示詞，報告才會有這一段；最多等 30 秒，逾時就不附
+    if (ndviBusy()) {
+      const btn = document.getElementById('analyzeBtn');
+      btn.disabled = true;
+      showLoading();
+      const prog = document.getElementById('loadingProgress');
+      if (prog) prog.textContent = t('⏳ 等待植生與景觀結構（Sentinel-2 NDVI）資料完成…');
+      try { await waitNdvi(30000); } finally { hideLoading(); btn.disabled = false; }
+    }
+
     // 加上回應格式指令：只輸出 <article>，方便解析（版面與地圖由 wrapReport 套用）；
     // 搜尋次數上限只適用 API 路徑（手動到 Claude.ai 沒有上限，buildPrompt 不提）
     const basePrompt = buildPrompt();
@@ -4834,6 +5222,7 @@ ${a}
     const sourceTitles = new Map();   // 網址 → 搜尋結果標題
     const citedMap = new Map();       // 模型撰寫時實際引用的來源（citations_delta）：網址 → { t, q: [被引用原文] }
     const runDatasets = captureDatasets();   // 本次提示詞附上的 iNaturalist／OSM 資料（之後重新查證也能列出）
+    const runLandscape = ndviLastSummary ? JSON.parse(JSON.stringify(ndviLastSummary)) : null;   // 景觀結構表的數字：與送出的提示詞相同
     const runMeta = () => compactMeta({
       route: 'api', model, searchCalls, at: new Date().toISOString(), ds: runDatasets,
       src: sources.slice(0, 80).map(u => ({ u, t: sourceTitles.get(u) || '' })),
@@ -4986,14 +5375,14 @@ ${a}
 
       if (extracted.isArticle) {
         // 新格式：包成完整文件，套固定樣式表並插入地圖
-        html = wrapReport(html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources, datasets: runDatasets,
+        html = wrapReport(html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources, datasets: runDatasets, landscape: runLandscape,
           provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
       } else {
         // 模型輸出了完整文件（未依格式）：模型自帶的樣式表不可信（可偽造或遮蔽查證標記），
         // 只取其內容，與新格式相同地包裝（固定樣式表、本工具地圖與頁尾）
         const d = new DOMParser().parseFromString(html, 'text/html');
         const root = d.querySelector('article') || d.body;
-        html = wrapReport('<article>' + (root ? root.innerHTML : '') + '</article>', { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources, datasets: runDatasets,
+        html = wrapReport('<article>' + (root ? root.innerHTML : '') + '</article>', { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources, datasets: runDatasets, landscape: runLandscape,
           provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
       }
 
@@ -5036,7 +5425,7 @@ ${a}
         try {
           const ex = extractHTML(fullText);
           if (ex && ex.isArticle) {
-            const ph = wrapReport(ex.html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: true, sources, datasets: runDatasets,
+            const ph = wrapReport(ex.html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: true, sources, datasets: runDatasets, landscape: runLandscape,
               provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
             const meta = runMeta();
             analysisMeta = { model, elapsed: elapsedSec, timestamp: new Date().toISOString(), usage: {}, searchCalls, stopReason: 'interrupted', sources: sources.slice(0, 80),
@@ -6226,6 +6615,11 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     }
     frame.srcdoc = html;
     if (!keepHidden) display.style.display = 'block';
+    // 檢視區標題列：報告的 <h1>（沒有就用基地名）＋產生時間，讓人一眼看出報告從這裡開始
+    const h1m = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i);
+    const titleEl = document.getElementById('resultTitle'), subEl = document.getElementById('resultSub');
+    if (titleEl) titleEl.textContent = (h1m ? h1m[1].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim() : '') || state.locationName || '';
+    if (subEl) { const when = (currentReport && currentReport.ts) || opts.ts || null; subEl.textContent = fmtLocalDateTime(when || new Date().toISOString()); }
 
     // 報告可能不完整的提示：放在結果區（頁面上），不寫進報告本身
     const notice = document.getElementById('resultNotice');
@@ -6431,6 +6825,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
           site: { lat: state.lat, lon: state.lon, name: state.locationName },
           mapDataUrl,
           incomplete: !extracted.complete,
+          landscape: ndviLastSummary,   // 手動路徑：以貼上當下面板中的景觀結構資料填表（與 ds.ndvi 的推定相同）
           provenance: { route: 'manual', timestamp: new Date().toISOString() },
         });
       } else {
@@ -6443,7 +6838,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       analysisMeta = null;
       // 手動路徑沒有搜尋紀錄；提示詞若附了 iNaturalist／OSM，只能依貼上當下表單中載入的資料推定（報告中會註明）
       const ds = captureDatasets();
-      const meta = compactMeta({ route: 'manual', at: new Date().toISOString(), ds, dsAtPaste: !!(ds.inat || ds.osm || ds.tbn) });
+      const meta = compactMeta({ route: 'manual', at: new Date().toISOString(), ds, dsAtPaste: !!(ds.inat || ds.osm || ds.tbn || ds.ndvi) });
       showResult(html, { meta, trusted: true });
       const savedTs = saveToHistoryWithResult(html, null, { meta });
       if (currentReport && currentReport.raw === html) currentReport.ts = savedTs || null;
@@ -6632,6 +7027,11 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
         // 提示詞所附的物種名單（剖面圖伴生物種的依據之一）
         names: (t.top || []).flatMap(x => [x.name, x.sci]).filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 80)) };
     }
+    const v = ndviLastSummary;
+    if (v && v.nScenes && v.start && v.end) {
+      ds.ndvi = { lat, lon, radius: 10, months: +v.months || 12, start: v.start, end: v.end, scenes: +v.nScenes || 0,
+        grid: String(v.grid || '').slice(0, 20), at: v.fetchedAt || null };
+    }
     return ds;
   }
   // 資料集的網頁連結（讀者可重現）與 API 查詢網址（逐字記錄本工具實際送出的查詢條件）
@@ -6647,6 +7047,13 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
   // TBN：讀者可自行重現的查詢網址（不分類群的同一圓形範圍，其 meta.total 即報告中的總筆數）
   const tbnApiUrl = t => safeHref(`https://www.tbn.org.tw/api/v26/occurrence?circle=`
     + encodeURIComponent(`${(+t.lon).toFixed(5)} ${(+t.lat).toFixed(5)},${t.radius || 1}`) + `&limit=1`);
+  // Sentinel-2：讀者可重現的 STAC 查詢（同一個 10 km 外框與期間，GET 版）
+  function ndviStacUrl(v) {
+    const dLat = 10 / 111.32, dLon = 10 / (111.32 * Math.max(0.2, Math.cos(+v.lat * Math.PI / 180)));
+    const f = x => (+x).toFixed(4);
+    return safeHref(`https://earth-search.aws.element84.com/v1/search?collections=sentinel-2-c1-l2a`
+      + `&bbox=${f(+v.lon - dLon)},${f(+v.lat - dLat)},${f(+v.lon + dLon)},${f(+v.lat + dLat)}&datetime=${v.start}T00:00:00Z/${v.end}T00:00:00Z`);
+  }
   // APA 7：內容會變動、無存檔版本的資料庫 → 日期寫 n.d.／無日期，並加擷取日期（Retrieved Month Day, Year, from URL）
   const EN_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   function datasetRefText(kind, d, en) {
@@ -6669,6 +7076,11 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       return en
         ? `Taiwan Biodiversity Network. (n.d.). [${d.taxa} taxa within ${d.radius} km of ${c}, from ${how}] [Data set]. Retrieved ${EN_MONTHS[M - 1]} ${D}, ${Y}, from ${tbnApiUrl(d)} [Database]`
         : `臺灣生物多樣性網絡（無日期）。［以 ${c} 為中心半徑 ${d.radius} km 之 ${d.taxa} 個分類群，取自${how}］［資料集］。${Y} 年 ${M} 月 ${D} 日，取自 ${tbnApiUrl(d)}［資料庫］`;
+    }
+    if (kind === 'ndvi') {
+      return en
+        ? `European Space Agency. (n.d.). [Copernicus Sentinel-2 Level-2A surface reflectance, Collection 1: NDVI median composite of ${d.scenes} cloud-screened scenes, ${d.start} to ${d.end}, within 10 km of ${c}, via Earth Search] [Data set]. Retrieved ${EN_MONTHS[M - 1]} ${D}, ${Y}, from ${ndviStacUrl(d)} [Database]`
+        : `歐洲太空總署（無日期）。［Copernicus Sentinel-2 Level-2A 地表反射率（Collection 1）：以 ${c} 為中心半徑 10 km、${d.start}～${d.end} 期間 ${d.scenes} 景雲遮罩影像之 NDVI 中位數合成，經 Earth Search 取得］［資料集］。${Y} 年 ${M} 月 ${D} 日，取自 ${ndviStacUrl(d)}［資料庫］`;
     }
     return en
       ? `OpenStreetMap contributors. (n.d.). [Environmental features within ${d.radius} km of ${c}, queried via the Overpass API] [Data set]. Retrieved ${EN_MONTHS[M - 1]} ${D}, ${Y}, from ${osmWebUrl(d)} [Database]`
@@ -6702,7 +7114,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     if (numIn(m.nSrc, 0, 1e5)) out.nSrc = Math.round(m.nSrc);
     if (numIn(m.nCited, 0, 1e5)) out.nCited = Math.round(m.nCited);
     if (m.ds && typeof m.ds === 'object') {
-      const ds = {}, i = m.ds.inat, o = m.ds.osm, b = m.ds.tbn;
+      const ds = {}, i = m.ds.inat, o = m.ds.osm, b = m.ds.tbn, v = m.ds.ndvi;
       // 提示詞所附的物種名單：剖面圖的伴生物種以此為依據之一（groundXsecSpecies）。
       // 以前這裡沒有保留 names，於是剖面圖只能依報告正文判斷，名單裡的物種也被刪掉。
       const names = v => Array.isArray(v)
@@ -6724,6 +7136,11 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
           atSpecies: numIn(b.atSpecies, 0, 1e5) ? Math.round(b.atSpecies) : null,
           perGroup: numIn(b.perGroup, 0, 1000) ? Math.round(b.perGroup) : null, complete: b.complete === true,
           at: isoOrNull(b.at), names: names(b.names) };
+      }
+      // Sentinel-2 NDVI（植生與景觀結構）：同樣要被認成本工具的資料集，否則查證會拿 STAC 網址去開、判為無法確認
+      if (v && numIn(v.lat, -90, 90) && numIn(v.lon, -180, 180) && /^\d{4}-\d{2}-\d{2}$/.test(String(v.start)) && /^\d{4}-\d{2}-\d{2}$/.test(String(v.end))) {
+        ds.ndvi = { lat: v.lat, lon: v.lon, radius: 10, months: v.months === 24 ? 24 : 12, start: v.start, end: v.end,
+          scenes: numIn(v.scenes, 0, 100) ? Math.round(v.scenes) : null, grid: str(v.grid, 20), at: isoOrNull(v.at) };
       }
       out.ds = ds;
     }
@@ -7376,17 +7793,19 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     if (ds && ds.inat) out.add(normUrlKey(inatWebUrl(ds.inat)));
     if (ds && ds.osm) out.add(normUrlKey(osmWebUrl(ds.osm)));
     if (ds && ds.tbn) out.add(normUrlKey(tbnApiUrl(ds.tbn)));
+    if (ds && ds.ndvi) out.add(normUrlKey(ndviStacUrl(ds.ndvi)));
     out.delete('');
     return out;
   }
   // 本工具資料集的作者欄（參考文獻開頭）。中文名不能接 \b：在 JavaScript 的正規表示式裡，
   // 漢字不算「字元」，\b 永遠不成立。
-  const TOOL_DATASET_AUTHOR = /^(?:iNaturalist\b|OpenStreetMap\b|臺灣生物多樣性網絡|Taiwan Biodiversity Network\b)/i;
+  const TOOL_DATASET_AUTHOR = /^(?:iNaturalist\b|OpenStreetMap\b|臺灣生物多樣性網絡|Taiwan Biodiversity Network\b|European Space Agency\b|歐洲太空總署)/i;
   // 本工具資料集的主機：參考文獻網址落在這些主機上，且這份報告確實附了該資料
   const toolDatasetHost = (ds, h) => !!ds && !!(
     (ds.inat && /(^|\.)inaturalist\.org$/.test(h)) ||
     (ds.osm && /(^|\.)(openstreetmap\.org|overpass-api\.de)$/.test(h)) ||
-    (ds.tbn && /(^|\.)tbn\.org\.tw$/.test(h)));
+    (ds.tbn && /(^|\.)tbn\.org\.tw$/.test(h)) ||
+    (ds.ndvi && /(^|\.)(earth-search\.aws\.element84\.com|element84\.com|copernicus\.eu|esa\.int)$/.test(h)));
   function repairFrom(res) {
     const r = res.reason;
     const c = (res.checks || []).find(x => (x.kind === 'doi' || x.kind === 'url') && (r === 'year' ? x.foundYear != null : !!x.foundAuthors));
@@ -7499,6 +7918,8 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     unwrapActivityMarks(c);   // 使用程度徽章與本工具的圖例只是外殼：改寫時看到的是模型原本的文字
     const figs = c.querySelectorAll('figure.heals-map');
     figs.forEach((f, i) => { if (i === 0) f.replaceWith(doc.createComment('HEALS:MAP')); else f.remove(); });
+    // 景觀結構表也是本工具寫的：換成標記，改寫後放回原物（數字不經模型）
+    c.querySelectorAll('figure.heals-landscape').forEach((f, i) => { if (i === 0) f.replaceWith(doc.createComment('HEALS:LANDSCAPE')); else f.remove(); });
     return c.outerHTML;
   }
   const clip = (s, n) => { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
@@ -7536,7 +7957,7 @@ RULES
 3. Apply each correction to its reference entry and to every matching in-text (Author, Year) citation, so that the list and the text agree exactly.
 4. Rewrite the key findings <ul class="summary"> only as needed to stay consistent with what remains: delete or shorten, never add.
 5. Do NOT add any new fact, number, species, source, citation, URL or DOI, and do not reword content unrelated to the exclusions and corrections. The tool compares every sentence of your output with the original and deletes anything new.
-6. Keep every class (meta, summary, warn, matrix, activities, compat, cases, refs, note), every section heading and the section order, and the <!--HEALS:MAP--> marker. The 4.2 block <script type="application/json" class="heals-xsec"> must remain valid JSON with the same section ids (no trailing commas after deletions).
+6. Keep every class (meta, summary, warn, matrix, activities, compat, cases, refs, note), every section heading and the section order, and the <!--HEALS:MAP--> and <!--HEALS:LANDSCAPE--> markers. The 4.2 block <script type="application/json" class="heals-xsec"> must remain valid JSON with the same section ids (no trailing commas after deletions).
 7. Output only the complete revised <article>…</article> (without the REPORT block markers), with no commentary before or after and no code fence.
 
 ${block}`;
@@ -7555,7 +7976,7 @@ ${missedZh}
 3. 依「必須更正的書目」更正參考文獻條目，並把正文中所有對應的（作者, 年）引用改成相同的作者與年份，使清單與正文完全一致。
 4. 重點摘要 <ul class="summary"> 只可刪除或縮短，使其與保留的內容一致；不得新增內容。
 5. 不得加入任何新的事實、數值、物種、來源、引用、網址或 DOI；與排除、更正無關的內容不要改寫。本工具會逐句比對修訂稿與原稿，新增的內容一律刪除。
-6. 保留所有 class（meta、summary、warn、matrix、activities、compat、cases、refs、note）、各節標題與順序，以及 <!--HEALS:MAP--> 標記；第 4.2 節的 <script type="application/json" class="heals-xsec"> 必須仍是合法 JSON，且剖面代號（id）不變（刪除項目後不留結尾逗號）。
+6. 保留所有 class（meta、summary、warn、matrix、activities、compat、cases、refs、note）、各節標題與順序，以及 <!--HEALS:MAP-->、<!--HEALS:LANDSCAPE--> 標記；第 4.2 節的 <script type="application/json" class="heals-xsec"> 必須仍是合法 JSON，且剖面代號（id）不變（刪除項目後不留結尾逗號）。
 7. 只輸出修訂後的完整 <article>…</article>（不含 REPORT 區塊的標記），前後不加任何說明，也不要 code fence。
 
 ${block}`;
@@ -7662,17 +8083,18 @@ ${block}`;
     const art = doc.querySelector('article');
     if (!art) return false;
     const fig = art.querySelector('figure.heals-map');
+    const land = art.querySelector('figure.heals-landscape');
     const footer = art.querySelector('footer.provenance');
     const holder = doc.createElement('div');
     holder.innerHTML = sanitizeArticle(String(articleHtml));
     const na = holder.querySelector('article');
     if (!na) return false;
-    na.querySelectorAll('footer.provenance, figure.heals-map').forEach(n => n.remove());
+    na.querySelectorAll('footer.provenance, figure.heals-map, figure.heals-landscape').forEach(n => n.remove());
     // 本工具寫的說明（來源比對會略過）：內容一律改回本工具的固定文字，改寫不能藉它夾帶內容
     na.querySelectorAll('p.cases-nf').forEach(p => { p.textContent = CASES_NF_TXT[/[㐀-鿿]/.test(p.textContent || '') ? 'zh' : 'en']; });
-    const marks = [];
+    const marks = [], lmarks = [];
     const w = doc.createTreeWalker(na, 128 /* SHOW_COMMENT */);
-    for (let n; (n = w.nextNode());) if (/^\s*HEALS:MAP\s*$/i.test(n.data)) marks.push(n);
+    for (let n; (n = w.nextNode());) { if (/^\s*HEALS:MAP\s*$/i.test(n.data)) marks.push(n); else if (/^\s*HEALS:LANDSCAPE\s*$/i.test(n.data)) lmarks.push(n); }
     if (fig) {
       if (marks.length) marks[0].replaceWith(fig);
       else {
@@ -7681,6 +8103,17 @@ ${block}`;
       }
     }
     marks.slice(fig ? 1 : 0).forEach(m => m.remove());
+    // 景觀結構表放回標記處；標記被改掉時放在第 1 節第一張表之後（沒有表就放在第二個 <h2> 之前）
+    if (land) {
+      if (lmarks.length) lmarks[0].replaceWith(land);
+      else {
+        const h2s = na.querySelectorAll('h2');
+        let anchor = null;
+        if (h2s[0]) { for (let el = h2s[0].nextElementSibling; el && el !== h2s[1]; el = el.nextElementSibling) if (el.tagName === 'TABLE') { anchor = el; break; } }
+        if (anchor) anchor.after(land); else if (h2s[1]) h2s[1].before(land); else na.append(land);
+      }
+    }
+    lmarks.slice(land ? 1 : 0).forEach(m => m.remove());
     if (footer) na.append(footer);
     art.replaceWith(na);
     return true;
@@ -8880,7 +9313,8 @@ ${block}`;
                      : 'ℹ️ 這份報告尚未經查證與過濾，可能含有引用查無或不正確來源的陳述。使用前請按「🔎 查證並排除」。',
       failed: (en ? '⚠️ This report has NOT been filtered.' : '⚠️ 這份報告尚未過濾。') + d + (en ? ' It may contain statements that cite sources which do not exist or are cited incorrectly; do not cite it as it is.' : '報告中可能含有引用查無或不正確來源的陳述，請勿直接引用。'),
       // 部分過濾：detail 為原因（rulesLead）
-      rules: (en ? '⚠️ Only partly filtered: ' : '⚠️ 只完成部分過濾：') + (detail ? detail.replace(/^⚠️\s*/, '') + ' ' : '') + (tail === undefined ? RULES_TAIL[en ? 'en' : 'zh'] : tail),
+      // 以規則排除（AI 改寫未採用）：查證已完成，這是附註而非警示
+      rules: (en ? 'ℹ️ Filtered by automatic rules: ' : 'ℹ️ 已依自動規則排除未通過查證的內容：') + (detail ? detail.replace(/^⚠️\s*/, '') + ' ' : '') + (tail === undefined ? RULES_TAIL[en ? 'en' : 'zh'] : tail),
       pre: en ? 'ℹ️ This is the version BEFORE exclusion. It contains material that failed verification and is shown for comparison only — do not cite it.'
               : 'ℹ️ 這是「排除前」的版本，含有未通過查證的內容，僅供對照，請勿引用。',
     };
@@ -9367,17 +9801,18 @@ ${block}`;
       : `🔎 查證完成（${counted}）。` + (nEx || nRep
         ? `✂️ 已排除 ${nEx} 個未通過查證的來源及引用它們的內容${nRep ? `，並更正 ${nRep} 筆書目` : ''}。保留的文獻：${displayCountsText(fRefs, fResults, ev, 'zh') || '0'}。詳見附錄「已排除之資料來源」。`
         : `查證未發現須排除的來源。${displayCountsText(fRefs, fResults, ev, 'zh')}。`) + usageTxt;
-    if (status === 'rules') msg = rulesLead(whyCode, aiWhy, uen) + ' ' + msg;
+    if (status === 'rules') msg = rulesLead(whyCode, aiWhy, uen).replace(/^⚠️\s*/, 'ℹ️ ') + ' ' + msg;   // 完成後的附註：不用警示符號
     if (!trusted) msg += ' ' + (fin.hist.backedUp
       ? t('ℹ️ 這份報告不是由本工具目前的版本組裝，為防止原文件的樣式偽造查證結果，已改用本工具的版面重新排版後再查證（文字與基地地圖保留，原文件的樣式與向量圖形不保留）；查證前的原始版面已另存於歷史紀錄，可按該筆的「📜 原始版面」檢視。')
       : t('ℹ️ 這份報告不是由本工具目前的版本組裝，為防止原文件的樣式偽造查證結果，已改用本工具的版面重新排版後再查證（文字與基地地圖保留，原文件的樣式與向量圖形不保留）。'));
-    setVerifyStatus(msg, status === 'rules' || !trusted ? 'warn' : 'ok');
+    // 查證完成一律用中性的完成樣式：以規則排除或重新排版都是附註（文字裡說明），黃色只留給真正需要處理的警示
+    setVerifyStatus(msg, 'ok');
     if (target === currentReport) setFilterNotice(...(status === 'rules' ? ['rules', rulesLead(whyCode, aiWhy, uen), partialTail(filter, uen)] : ['hidden']));
     // 引用句與來源摘要比對（附加步驟：失敗時報告維持上面的查證結果）
     if (target === currentReport && seq === verifySeq && !opts.noSupport) {
       try {
         const r2 = await supportCheck(fin.updated, { lang, uen, passcode, seq, target, ts: ts || (currentReport && currentReport.ts) || null,
-          filter, pre: changed ? pre : prevPre, rec, baseMsg: msg, baseKind: status === 'rules' || !trusted ? 'warn' : 'ok' });
+          filter, pre: changed ? pre : prevPre, rec, baseMsg: msg, baseKind: 'ok' });
         if (r2) return r2;
       } catch (e) {
         console.error('[support] failed', e);
@@ -9793,6 +10228,9 @@ ${block}`;
     xsecRevisionCheck, classifyClauses, exclusionCtx, narrativeBadRanges, speciesNames, wipeMatrixColumns, displayCounts, verifyProvenanceLine, historyVerifyBadge, compactVerification });
   // 提示詞（單元測試用）：buildPrompt 依目前表單狀態；responseFormatSuffix 為 API 路徑附加的搜尋上限與優先序
   window.__qiPrompt = Object.freeze({ buildPrompt, responseFormatSuffix, sectionNumbers, WEB_SEARCH_MAX, PROMPT_MAX_CHARS, ACTIVITY_MAX });
+  // 資料面板與匯出（單元測試用）：setLocation 會觸發 iNaturalist／OSM／TBN／NDVI 四個面板的查詢
+  window.__qiData = Object.freeze({ setLocation, setLang, resetForm, captureDatasets, toolDatasetKeys, toolDatasetHost, buildHealsExport, buildDataSourcesHtml, loadNdvi, renderNdvi,
+    ndviSummary: () => ndviLastSummary, ndviBusy, waitNdvi, wrapReport, buildLandscapeFigure, placeLandscape, showResult, setFilterNotice });
 
   function stripVerification(doc) {
     doc.querySelectorAll('section.verification, .vf, .vf-detail, .vf-x, p.vf-prov').forEach(n => n.remove());
@@ -10062,7 +10500,18 @@ ${block}`;
             : '原生性、特有性與保育等級依 TBN 記載，以主管機關公告為準。授權：政府資料開放授權條款（OGDL-1.0）及各來源資料集之授權。') +
         `${pasteNote}</li>`);
     }
-    if (ds && !ds.inat && !ds.osm && !ds.tbn) items.push(`<li>${en ? 'No iNaturalist, OpenStreetMap or TBN data from this tool were included in the prompt.' : '提示詞未附本工具的 iNaturalist／OpenStreetMap／TBN 資料。'}</li>`);
+    if (ds && ds.ndvi) {
+      const v = ds.ndvi;
+      const api = ndviStacUrl(v);
+      items.push(`<li><strong>${en ? 'Copernicus Sentinel-2 (ESA)' : 'Copernicus Sentinel-2（ESA）'}</strong>${en ? ' — vegetation and landscape structure (NDVI)' : '——植生與景觀結構（NDVI）'}${en ? ': ' : '：'}` +
+        (en ? `Level-2A surface reflectance, Collection 1, obtained via Earth Search (Element 84); 10 m pixels; ${v.scenes != null ? v.scenes + ' ' : ''}scenes from ${escapeHtml(v.start)} to ${escapeHtml(v.end)} selected per season by cloud cover, cloud-screened with the Scene Classification Layer (classes 2, 4–7 kept) and combined as the per-pixel median; metrics computed within 500 m, 1 km, 5 km and 10 km of ${v.lat.toFixed(4)}, ${v.lon.toFixed(4)} · retrieved ${date(v.at)}. `
+            : `Level-2A 地表反射率（Collection 1），經 Earth Search（Element 84）取得；像元 10 m；${escapeHtml(v.start)}～${escapeHtml(v.end)} 期間${v.scenes != null ? ' ' + v.scenes + ' 景' : ''}（分季依雲量挑選），以場景分類層（SCL，保留類別 2、4–7）遮雲後取逐像元中位數；以 ${v.lat.toFixed(4)}, ${v.lon.toFixed(4)} 為中心計算 500 m、1 km、5 km、10 km 四個半徑的指標・擷取於 ${date(v.at)}。`) +
+        `${extLink(api, api)}` +
+        (en ? '. NDVI thresholds (water < 0, bare 0–0.2, low vegetation 0.2–0.5, dense ≥ 0.5) are generic, not locally calibrated; patches are threshold-defined, not a land-cover map; NDVI indicates green biomass, not habitat quality. Copernicus Sentinel data are free and open under the Copernicus data licence; credit “Contains modified Copernicus Sentinel data”.'
+            : '。NDVI 門檻（水域 < 0、無植生 0–0.2、低植生 0.2–0.5、密植生 ≥ 0.5）為通用值、未在地校正；塊區（patch）依門檻切出，不是土地覆蓋圖；NDVI 反映綠色生物量，不是棲地品質。Copernicus Sentinel 資料依 Copernicus 資料授權免費開放，使用時註明「含經修改之 Copernicus Sentinel 資料」。') +
+        `${pasteNote}</li>`);
+    }
+    if (ds && !ds.inat && !ds.osm && !ds.tbn && !ds.ndvi) items.push(`<li>${en ? 'No iNaturalist, OpenStreetMap, TBN or Sentinel-2 data from this tool were included in the prompt.' : '提示詞未附本工具的 iNaturalist／OpenStreetMap／TBN／Sentinel-2 資料。'}</li>`);
     if (!ds) items.push(`<li>${en ? 'Datasets provided by this tool: not recorded for this report (created before source tracking was added).' : '本工具提供的資料集：此報告產生時尚未記錄（早於來源紀錄功能）。'}</li>`);
     // (ii) 網路搜尋
     if (meta && meta.route === 'manual') {
@@ -10531,6 +10980,11 @@ ${block}`;
       useScale: state.useScale || '',
       boundary: (HEALS_SITE && Array.isArray(HEALS_SITE.boundary)) ? HEALS_SITE.boundary : null,
       geojson: state.healsSiteGeo || null,
+      // 植生與景觀結構（Sentinel-2 NDVI 中位數合成）：四個半徑的覆蓋與塊區指標，供分區站判斷基質與連結
+      landscape: ndviLastSummary ? {
+        source: 'Copernicus Sentinel-2 L2A via Earth Search', pixelM: ndviLastSummary.pixelM, period: { start: ndviLastSummary.start, end: ndviLastSummary.end },
+        scenes: ndviLastSummary.nScenes, thresholds: ndviLastSummary.thresholds, radii: ndviLastSummary.radii
+      } : null,
       analysisHtml: (typeof analysisResult!=='undefined' && analysisResult) ? analysisResult : null
     };
   }
@@ -10656,6 +11110,8 @@ ${block}`;
     document.getElementById('tbnRadius').addEventListener('change', () => { tbnGroupFilter = ''; loadTbn(false); });
     document.getElementById('tbnScope').addEventListener('change', () => { tbnGroupFilter = ''; loadTbn(false); });
     document.getElementById('tbnSort').addEventListener('change', () => { if (tbnLastData) renderTbn(tbnLastData); });
+    document.getElementById('ndviRefresh').addEventListener('click', () => loadNdvi(true));
+    document.getElementById('ndviMonths').addEventListener('change', () => loadNdvi(false));
 
     // Claude API analysis (Step 6)
     setupApiKeyUI();
@@ -10721,6 +11177,7 @@ ${block}`;
     debounceInat();
     debounceOsm();
     debounceTbn();
+    debounceNdvi();
   }
 
   if (document.readyState === 'loading') {
