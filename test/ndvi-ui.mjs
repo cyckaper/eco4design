@@ -96,6 +96,18 @@ check('區塊含門檻說明、四個半徑、使用方式與不可寫成森林�
 check('區塊含歐洲太空總署的 APA 參考文獻與 STAC 網址', /歐洲太空總署（無日期）。［Copernicus Sentinel-2 Level-2A/.test(blk) && /earth-search\.aws\.element84\.com\/v1\/search\?collections=sentinel-2-c1-l2a&bbox=/.test(blk), blk.slice(blk.indexOf('歐洲'), blk.indexOf('歐洲') + 300));
 check('提示詞裡的 NDVI 數字與面板一致（密植生 5.1%）', /密植生 5\.1%/.test(blk), blk.match(/半徑 500 m[^\n]*/)[0]);
 
+check('提示詞附三本景觀生態學專書的原則摘要與書目（Forman 1995、Dramstad 等 1996、Botequilha Leitão 等 2006）', /判讀依據（本工具提供/.test(prompt) && /Forman, R\. T\. T\. \(1995\)\. Land mosaics/.test(prompt) && /Dramstad, W\. E\., Olson, J\. D\., & Forman, R\. T\. T\. \(1996\)/.test(prompt) && /Botequilha Leitão, A\., Miller, J\., Ahern, J\., & McGarigal, K\. \(2006\)/.test(prompt) && /聚集並保留離群點/.test(prompt), prompt.slice(prompt.indexOf('判讀依據'), prompt.indexOf('判讀依據') + 300));
+check('報告結構：1.1 景觀結構判讀一段（兩個尺度、對應分區、引用三本書）、第 1 節除 1.1 外不寫敘述段落', /<h3>1\.1 景觀結構判讀<\/h3> 寫一段 120–200 字/.test(prompt) && /Botequilha Leitão et al\., 2006）。數字引用寫（歐洲太空總署，無日期）/.test(prompt) && /除 1\.1 外不寫敘述段落/.test(prompt), prompt.slice(prompt.indexOf('1.1 景觀'), prompt.indexOf('1.1 景觀') + 200));
+const fw = await page.evaluate(() => {
+  const X = window.__qiExclusion, ds = window.__qiData.captureDatasets();
+  const refs = X.LANDSCAPE_REFS.map(b => ({ text: b.entry }));
+  const marked = refs.map(r => !!X.isFrameworkRef(r, ds));
+  const other = X.isFrameworkRef({ text: 'Forman, R. T. T. (2014). Urban ecology: Science of cities. Cambridge University Press.' }, ds);
+  const noNdvi = X.isFrameworkRef(refs[0], { inat: {} });
+  const disp = X.vfDisplay({ verdict: 'unverifiable' }, { framework: true, dataset: true }, null, 'zh');
+  return { marked, other, noNdvi, disp };
+});
+check('三本書的書目被認成判讀依據（其他 Forman 著作不算；沒有 NDVI 資料時不算）、徽章為 📚', fw.marked.every(Boolean) && fw.other === false && fw.noNdvi === false && fw.disp.key === 'framework' && /📚 本工具提供的判讀依據/.test(fw.disp.label), JSON.stringify(fw));
 check('報告結構：第 1 節多一列「景觀結構」並要求輸出 <!--HEALS:LANDSCAPE--> 標記', /景觀結構（依上方「植生與景觀結構」的數字/.test(prompt) && /<!--HEALS:LANDSCAPE-->/.test(prompt) && /≤9 列/.test(prompt), prompt.slice(prompt.indexOf('1 基地判讀'), prompt.indexOf('1 基地判讀') + 400));
 
 // 報告裡的景觀結構指標表：由本工具依面板資料寫入（數字與面板一致），標記處或第 1 節第一張表之後
@@ -136,6 +148,7 @@ const normKey = await page.evaluate(u => window.__qiExclusion.normUrlKey(u), ref
 check('提示詞裡的參考文獻網址就是 toolDatasetKeys 裡的鍵', !!refUrl && keys.includes(normKey), `${refUrl} → ${normKey} ∉ ${keys.join(' | ')}`);
 const appendix = await page.evaluate(() => window.__qiData.buildDataSourcesHtml(document, { ds: window.__qiData.captureDatasets() }, false));
 check('附錄資料來源有 Copernicus Sentinel-2 一項（SCL、門檻、授權）', /Copernicus Sentinel-2（ESA）/.test(appendix) && /SCL/.test(appendix) && /Copernicus 資料授權/.test(appendix), appendix.slice(0, 300));
+check('附錄資料來源列出三本判讀依據的書目', /景觀結構判讀依據（本工具提供）/.test(appendix) && /Land mosaics: The ecology of landscapes and regions/.test(appendix) && /Measuring landscapes: A planner’s handbook/.test(appendix), appendix.slice(appendix.indexOf('判讀依據'), appendix.indexOf('判讀依據') + 300));
 const exp = await page.evaluate(() => window.__qiData.buildHealsExport());
 check('匯出給總控台的 JSON 有 landscape（四個半徑、期間、門檻）', exp.landscape && exp.landscape.radii.length === 4 && exp.landscape.period.start === '2025-11-01' && exp.landscape.thresholds.dense === 0.5, JSON.stringify(exp.landscape && Object.keys(exp.landscape)));
 
@@ -158,6 +171,7 @@ const enMBody = await page.locator('#ndviMethodBody').innerHTML();
 check('英文：指標說明也切換（標題、十小節、Jaeger 2000）', /How these indicators are computed/.test(enMSum) && (enMBody.match(/<details>/g) || []).length === 10 && /Effective mesh size \(ha\)/.test(enMBody) && /Jaeger 2000/.test(enMBody), `${enMSum} | ${enMBody.slice(0, 160)}`);
 const enPrompt = await page.evaluate(() => window.__qiPrompt.buildPrompt());
 check('英文提示詞：區塊標題與 European Space Agency 參考文獻', /🛰️ VEGETATION AND LANDSCAPE STRUCTURE/.test(enPrompt) && /European Space Agency\. \(n\.d\.\)\. \[Copernicus Sentinel-2 Level-2A/.test(enPrompt) && /Do not report them as forest cover/.test(enPrompt), enPrompt.slice(enPrompt.indexOf('🛰️'), enPrompt.indexOf('🛰️') + 300));
+check('英文提示詞：判讀依據與 1.1 小節', /INTERPRETIVE FRAMEWORK FOR THE LANDSCAPE-STRUCTURE FIGURES/.test(enPrompt) && /<h3>1\.1 Landscape-structure reading<\/h3>/.test(enPrompt) && /No narrative paragraphs other than 1\.1/.test(enPrompt), enPrompt.slice(enPrompt.indexOf('INTERPRETIVE'), enPrompt.indexOf('INTERPRETIVE') + 200));
 await page.evaluate(() => window.__qiData.setLang('zh'));
 await page.waitForTimeout(200);
 check('切回中文：表頭復原', (await page.locator('#ndviTable thead th').allTextContents())[0] === '半徑', 'not restored');

@@ -3504,8 +3504,8 @@ out tags center;`;
         en: `[Key findings] After the <h1>, one <p class="meta">${o.metaEn}</p>, then <ul class="summary"> with 3–5 bullets, each ≤25 words and ≤100 words in total: the most critical resource conflict (by R#), the top zoning decision or measure${o.act ? ', the activity that needs the tightest control' : ''}, the most important conservation/legal warning, and the main data limitation. Point to later sections; no details or citations.` },
       { zh: `〔地圖〕重點摘要之後單獨一行輸出 <!--HEALS:MAP-->；不要自行撰寫地圖、<img>、<figure> 或圖說，系統會在此插入基地位置圖。`,
         en: `[Map] After the key findings, output <!--HEALS:MAP--> on its own line. Do not write a map, <img>, <figure> or caption yourself; the tool inserts the site map there.` },
-      { zh: `1 基地判讀：一張兩欄表（項目｜內容），≤${o.hasNdvi ? 9 : 8} 列：海拔（取自已搜得的資料，不必為此單獨搜尋）、植被／林相、流域／水系、保育或法定身分、鄰近聚落／原住民族傳統領域、主要人為干擾、OSM 環境重點${o.hasNdvi ? '、景觀結構（依上方「植生與景觀結構」的數字：500 m 與 1 km 的密植生比例與塊區破碎程度、5 km 與 10 km 的景觀基質，寫一句判讀，附（歐洲太空總署，無日期））' : ''}、在地代表物種（≤5 種${o.hasInat ? '，可取自 iNaturalist 清單' : ''}）。每格 ≤30 字（引用不計入）並附來源；未搜尋或查無資料寫「未查得」。${o.hasNdvi ? '表後單獨一行輸出 <!--HEALS:LANDSCAPE-->，系統會在此插入四個半徑的景觀結構指標表（不要自行抄寫那張表）。' : ''}表後 <ul class="warn"> 列設計警示 3–5 點，每點 ≤50 字，格式為「風險 → 必要對策（來源）」；保育敏感區、原住民族傳統領域、人為干擾三類各至少一點（有來源確認不適用者寫「經查無」並附該來源，如（原住民族委員會, 無日期）；沒有來源者寫「未查得」）。警示為必備，不受篇幅壓縮。不寫敘述段落。`,
-        en: `1 Site reading: one two-column table (item | finding) of ≤${o.hasNdvi ? 9 : 8} rows: elevation (from sources you already found; do not spend a search on it), vegetation/forest type, watershed/water system, conservation or legal status, nearby settlements / indigenous traditional territories, main human disturbances, OSM highlights${o.hasNdvi ? ', landscape structure (one-sentence reading of the VEGETATION AND LANDSCAPE STRUCTURE figures above: dense-vegetation share and patch fragmentation at 500 m and 1 km, the landscape matrix at 5 km and 10 km, cited as (European Space Agency, n.d.))' : ''}, and local representative species (≤5${o.hasInat ? ', may come from the iNaturalist list' : ''}). Each cell ≤20 words (citations excluded) with a source; write "not found" when you did not search for it or found nothing, never an estimate. ${o.hasNdvi ? 'After the table, output <!--HEALS:LANDSCAPE--> on its own line; the tool inserts the four-radius landscape-structure table there (do not copy that table yourself). ' : ''}Then <ul class="warn"> with 3–5 design warnings, each ≤30 words, in the form "risk → required response (source)". Conservation-sensitive areas, indigenous traditional territories and human disturbance each get at least one item (write "confirmed absent (Source, Year)" only when a cited source shows it does not apply; otherwise "not found"). The warnings are mandatory and exempt from length cuts. No narrative paragraphs.` },
+      { zh: `1 基地判讀：一張兩欄表（項目｜內容），≤${o.hasNdvi ? 9 : 8} 列：海拔（取自已搜得的資料，不必為此單獨搜尋）、植被／林相、流域／水系、保育或法定身分、鄰近聚落／原住民族傳統領域、主要人為干擾、OSM 環境重點${o.hasNdvi ? '、景觀結構（依上方「植生與景觀結構」的數字：500 m 與 1 km 的密植生比例與塊區破碎程度、5 km 與 10 km 的景觀基質，寫一句判讀，附（歐洲太空總署，無日期））' : ''}、在地代表物種（≤5 種${o.hasInat ? '，可取自 iNaturalist 清單' : ''}）。每格 ≤30 字（引用不計入）並附來源；未搜尋或查無資料寫「未查得」。${o.hasNdvi ? '表後單獨一行輸出 <!--HEALS:LANDSCAPE-->，系統會在此插入四個半徑的景觀結構指標表（不要自行抄寫那張表）。接著 <h3>1.1 景觀結構判讀</h3> 寫一段 120–200 字（不列點）：先以 500 m 與 1 km 的密植生比例、最大塊區佔比與有效網目，判斷基地位於大型塊區內部、邊緣帶，還是只有小塊區／踏腳石，並以邊緣密度說明邊緣效應的程度（Forman, 1995；Dramstad et al., 1996）；再以 5 km 與 10 km 的塊區數、有效網目與邊緣密度，判斷景觀基質連續或破碎、對活動範圍大的焦點物種與連結度的含意、是否需要廊道或踏腳石（Forman, 1995；Dramstad et al., 1996）；最後點出對本案分區與措施的意義（對應第 3、4 節的 R 編號或分區），並提醒指標須依尺度與規劃目標解讀、是遙測通用門檻的推估（Botequilha Leitão et al., 2006）。數字引用寫（歐洲太空總署，無日期）；判讀只依上列數字，不得替書籍補上數值門檻。' : ''}表後 <ul class="warn"> 列設計警示 3–5 點，每點 ≤50 字，格式為「風險 → 必要對策（來源）」；保育敏感區、原住民族傳統領域、人為干擾三類各至少一點（有來源確認不適用者寫「經查無」並附該來源，如（原住民族委員會, 無日期）；沒有來源者寫「未查得」）。警示為必備，不受篇幅壓縮。${o.hasNdvi ? '除 1.1 外不寫敘述段落。' : '不寫敘述段落。'}`,
+        en: `1 Site reading: one two-column table (item | finding) of ≤${o.hasNdvi ? 9 : 8} rows: elevation (from sources you already found; do not spend a search on it), vegetation/forest type, watershed/water system, conservation or legal status, nearby settlements / indigenous traditional territories, main human disturbances, OSM highlights${o.hasNdvi ? ', landscape structure (one-sentence reading of the VEGETATION AND LANDSCAPE STRUCTURE figures above: dense-vegetation share and patch fragmentation at 500 m and 1 km, the landscape matrix at 5 km and 10 km, cited as (European Space Agency, n.d.))' : ''}, and local representative species (≤5${o.hasInat ? ', may come from the iNaturalist list' : ''}). Each cell ≤20 words (citations excluded) with a source; write "not found" when you did not search for it or found nothing, never an estimate. ${o.hasNdvi ? 'After the table, output <!--HEALS:LANDSCAPE--> on its own line; the tool inserts the four-radius landscape-structure table there (do not copy that table yourself). Then <h3>1.1 Landscape-structure reading</h3> with one paragraph of 80–140 words (no bullets): first use the 500 m and 1 km dense-vegetation share, largest-patch share and effective mesh size to say whether the site lies inside a large patch, in an edge zone, or among small patches / stepping stones, and use edge density to gauge edge effects (Forman, 1995; Dramstad et al., 1996); then use the 5 km and 10 km patch number, effective mesh size and edge density to say whether the landscape matrix is continuous or fragmented, what that means for focal species with large home ranges and for connectivity, and whether corridors or stepping stones are needed (Forman, 1995; Dramstad et al., 1996); end with what this implies for the zoning and measures of this project (refer to the R numbers or zones of sections 3–4) and a reminder that the metrics must be read at the scale of the planning question and are remote-sensing estimates with generic thresholds (Botequilha Leitão et al., 2006). Cite the figures as (European Space Agency, n.d.); interpret only the figures given and do not attribute numeric thresholds to the books. ' : ''}Then <ul class="warn"> with 3–5 design warnings, each ≤30 words, in the form "risk → required response (source)". Conservation-sensitive areas, indigenous traditional territories and human disturbance each get at least one item (write "confirmed absent (Source, Year)" only when a cited source shows it does not apply; otherwise "not found"). The warnings are mandatory and exempt from length cuts. ${o.hasNdvi ? 'No narrative paragraphs other than 1.1.' : 'No narrative paragraphs.'}` },
       { zh: `2 物種需求表：一張表，每個焦點物種一列。欄位：物種（中名・學名・保育等級）｜食｜住（棲位高度 m／掩蔽）｜育（繁殖月份／巢位）｜活動時段與範圍｜敏感因子（光、噪音、犬貓、路殺等）。食、住、育每格 ≤40 字，並以一筆（作者, 年）結尾；同一物種的三格可引用同一份物種文獻，不必逐格搜尋。其餘各欄 ≤25 字；焦點物種超過 5 種時，上限改為 30 字與 20 字（引用均不計入字數）。這是全文唯一陳述物種生態之處；不寫物種卡片、圖示或段落。`,
         en: `2 Species requirements: one table with one row per focal species. Columns: species (common name · scientific name · conservation status) | food | shelter (niche height in m / cover) | breeding (months / nest site) | activity period & range | sensitivities (light, noise, dogs/cats, roadkill, etc.). Food, shelter and breeding cells are ≤25 words and each ends with one (Author, Year); one species account may serve all three cells, so no separate search per cell is needed. Other cells ≤15 words. With more than 5 focal species, the caps drop to 18 and 10 words (citations never count toward word caps). This is the only place species biology is stated; no species cards, icons or paragraphs.` },
       { zh: `3 資源利用矩陣：<table class="matrix">，欄位為 編號｜環境資源｜〔各焦點物種〕｜物種互動｜設計啟示。「基地條件」中的每項資源一列，編號 R1、R2…；相近條件可合併為一列（列出原名稱），但每項條件都須出現；所有物種皆為低／無的條件不另立列，改於表下以一行「低利用條件（不另立列）：…」列出。最後加一列「捕食／干擾」（如 犬貓→地棲鳥、夜間照明→蛙類）。「棲地需求」各項併入對應 R 列的資源名稱；步道、林道、橋梁、堤防等設施不另立資源列，列於最後的「捕食／干擾」列。物種格只填 高／中／低／無。「物種互動」寫配對與重疊時段，如「A↔B 強烈競爭（3–6 月重疊）；A↔C 無關」，≤30 字。「設計啟示」≤30 字，寫一種機制（時間分離、垂直分層、緩衝、獨立結構）；寫數值時附（作者, 年），如「緩衝 N m（作者, 年）」，沒有來源就不寫數值。表後 ≤3 點（每點 ≤60 字）：① 需分區或時空分離的資源（以 R 編號）② 可共享資源 ③ 主要捕食／干擾關係與緩解策略。不另寫整體互動段落。`,
@@ -3768,6 +3768,8 @@ ${inatLastSummary.topSpecies.slice(0, 15).map((s, i) => `  ${i+1}. ${s.name}${s.
       if (dsN) ndviContext += en
         ? `\nIf you use these figures, cite them in the text as (European Space Agency, n.d.) and copy this entry into the references unchanged:\n${datasetRefText('ndvi', dsN, true)}`
         : `\n若引用上列數字，行內引用寫（歐洲太空總署，無日期），並將下列文獻原樣列入參考文獻：\n${datasetRefText('ndvi', dsN, false)}`;
+      // 判讀依據：三本景觀生態學專書的原則摘要（供模型解釋數字，不是新資料）；書目原樣列入參考文獻
+      ndviContext += en ? landscapeFrameworkText(true) : landscapeFrameworkText(false);
     }
 
     // 剖面模板只送出被選中的 ≤3 個（代碼與 renderCrossSections 接受的完全一致）
@@ -6996,13 +6998,14 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       // 標籤只描述「檢核了什麼」：避免「已查證」被讀成「內容已驗證」，也避免與模型自加的［未查證］互相矛盾
       label: { verified: '✅ 書目相符', partial: '⚠️ 來源存在・待核對', mismatch: '❌ 書目不符', not_found: '❌ 查無紀錄', unverifiable: '❓ 需人工查證', inconclusive: '⏳ 未完成查證',
         // 排除政策保留的理由（顯示用）：本工具提供的資料集、未完成查證但出現在本次搜尋結果中者；參考案例列只確認網頁提到案例
-        dataset: '📡 本工具提供的資料集', grounded: '🔍 搜尋結果中出現・未能自動核對', case_ok: '✅ 頁面提及此案例' },
+        dataset: '📡 本工具提供的資料集', framework: '📚 本工具提供的判讀依據', grounded: '🔍 搜尋結果中出現・未能自動核對', case_ok: '✅ 頁面提及此案例' },
       // 過濾後的圖例：只說明保留下來的類別（被排除者見「已排除之資料來源」）
       legendKept: {
         verified: 'DOI 或網頁可開啟，DOI 註冊資料或網頁標示的題名（以及可比對時的年份、第一作者）與引用相符。仍須閱讀原文，確認內容確實支持文中陳述。',
         partial: '來源存在，但內容無法自動比對（PDF、動態網頁）或卷期頁碼有出入；請開啟來源核對。',
         grounded: '網站拒絕自動存取或逾時，未能自動核對；其網址出現在本次網路搜尋結果中，因此保留。請開啟來源核對。',
         dataset: '本工具提供給模型的 iNaturalist／OpenStreetMap／TBN 資料；查詢條件、擷取日期與授權見下方「資料來源」。',
+        framework: '本工具隨植生與景觀結構資料提供給模型的景觀生態學專書（Forman 1995；Dramstad 等 1996；Botequilha Leitão 等 2006），書目由本工具校對，用於解釋景觀結構指標；引用句是否忠於原著仍須對照原書。',
         case_ok: '只確認網頁提到此案例，不確認做法與成效的描述正確。',
       },
       // 圖例：每種結果「代表什麼」與「讀者該做什麼」（寫進報告的查證段落）
@@ -7023,12 +7026,13 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     },
     en: {
       label: { verified: '✅ Record matches', partial: '⚠️ Exists – check details', mismatch: '❌ Citation mismatch', not_found: '❌ No record found', unverifiable: '❓ Check manually', inconclusive: '⏳ Check incomplete',
-        dataset: '📡 Dataset supplied by this tool', grounded: '🔍 In this run’s search results · not auto-checked', case_ok: '✅ Page describes this case' },
+        dataset: '📡 Dataset supplied by this tool', framework: '📚 Interpretive source supplied by this tool', grounded: '🔍 In this run’s search results · not auto-checked', case_ok: '✅ Page describes this case' },
       legendKept: {
         verified: 'The DOI or web page opens and the title in the DOI record or on the page (and, where comparable, the year and first author) matches the citation. You still need to read the source to confirm it supports the claim.',
         partial: 'The source exists, but its content could not be matched automatically (PDF, script-rendered page) or the volume/pages differ; open the source and check it.',
         grounded: 'The site refused automated access or timed out, so it could not be checked automatically; it was kept because its URL appears in this run’s web-search results. Open the source and check it.',
         dataset: 'iNaturalist/OpenStreetMap/TBN data supplied to the model by this tool; the query, retrieval date and licence are under “Data sources” below.',
+        framework: 'Landscape-ecology books supplied to the model by this tool together with the vegetation and landscape-structure data (Forman 1995; Dramstad et al. 1996; Botequilha Leitão et al. 2006); the entries were checked by the tool and are used to interpret the landscape metrics. Whether a sentence is faithful to the book still has to be checked against the book itself.',
         case_ok: 'Confirms only that the page mentions the case, not that the technique or outcome is described correctly.',
       },
       legend: {
@@ -7251,7 +7255,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     const s = v.stats, bad = s.mismatch + s.not_found, unk = s.unverifiable + s.inconclusive;
     // 有顯示類別者（本版本存入）與清單上的徽章一致：資料集 📡、搜尋結果中出現 🔍，不再算成「❓ 需人工查證」
     const d = v.disp;
-    const parts = (d ? [(d.verified || 0) + (d.case_ok || 0) ? `✅${(d.verified || 0) + (d.case_ok || 0)}` : '', d.dataset ? `📡${d.dataset}` : '', d.partial ? `⚠️${d.partial}` : '', d.grounded ? `🔍${d.grounded}` : '',
+    const parts = (d ? [(d.verified || 0) + (d.case_ok || 0) ? `✅${(d.verified || 0) + (d.case_ok || 0)}` : '', d.dataset ? `📡${d.dataset}` : '', d.framework ? `📚${d.framework}` : '', d.partial ? `⚠️${d.partial}` : '', d.grounded ? `🔍${d.grounded}` : '',
       (d.mismatch || 0) + (d.not_found || 0) ? `❌${(d.mismatch || 0) + (d.not_found || 0)}` : '', d.unverifiable ? `❓${d.unverifiable}` : '', d.inconclusive ? `⏳${d.inconclusive}` : '']
       : [s.verified ? `✅${s.verified}` : '', s.partial ? `⚠️${s.partial}` : '', bad ? `❌${bad}` : '', unk ? `❓${unk}` : '']).filter(Boolean).join(' ');
     return `<span class="history-vf-badge${bad ? ' has-bad' : ''}" title="${escapeHtml(t('參考文獻查證結果') + ' · ' + fmtLocalDateTime(v.at))}">🔎 ${parts || v.n}</span>`;
@@ -7711,9 +7715,10 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
   }
   // 顯示用的類別：本工具提供的資料集、未完成查證但出現在本次搜尋結果中者（排除政策保留它們的理由）另立標籤；
   // 參考案例列「書目相符」改稱「頁面提及此案例」（只確認網頁提到案例）
-  const VF_DISPLAY_ORDER = ['verified', 'case_ok', 'dataset', 'partial', 'grounded', 'mismatch', 'not_found', 'unverifiable', 'inconclusive'];
+  const VF_DISPLAY_ORDER = ['verified', 'case_ok', 'dataset', 'framework', 'partial', 'grounded', 'mismatch', 'not_found', 'unverifiable', 'inconclusive'];
   function vfDisplay(res, r, ev, lang) {
     const L = VF_TXT[lang === 'en' ? 'en' : 'zh'];
+    if (r && r.framework) return { key: 'framework', cls: 'vf-ok', label: L.label.framework };
     if (r && r.dataset) return { key: 'dataset', cls: 'vf-ok', label: L.label.dataset };
     if (r && r.kind === 'case' && res.verdict === 'verified') return { key: 'case_ok', cls: 'vf-ok', label: L.label.case_ok };
     if (res.verdict === 'inconclusive' && !res.invalid && !res.synthetic && !res.unchecked && r && ev && groundedBy(ev, r.allUrls || r.urls || [], r.allDois || r.dois || []))
@@ -7877,6 +7882,42 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
   // 本工具資料集的作者欄（參考文獻開頭）。中文名不能接 \b：在 JavaScript 的正規表示式裡，
   // 漢字不算「字元」，\b 永遠不成立。
   const TOOL_DATASET_AUTHOR = /^(?:iNaturalist\b|OpenStreetMap\b|臺灣生物多樣性網絡|Taiwan Biodiversity Network\b|European Space Agency\b|歐洲太空總署)/i;
+  // 景觀結構判讀依據：本工具隨 NDVI 資料提供給模型的三本景觀生態學經典（Forman 1995；Dramstad, Olson & Forman 1996；
+  // Botequilha Leitão, Miller, Ahern & McGarigal 2006）。書目由本工具校對後寫死，提示詞要求原樣列入參考文獻；
+  // 查證時視同本工具提供的來源（不送書目資料庫查核——紙本書常查不到，查不到就會被排除政策連同判讀一起刪掉），
+  // 清單徽章標為「📚 本工具提供的判讀依據」，附錄「資料來源」列出。只在這份報告附有 NDVI 資料時適用。
+  const LANDSCAPE_REFS = [
+    { key: 'forman1995', cite: 'Forman, 1995', match: ['forman', 'land mosaics'],
+      entry: 'Forman, R. T. T. (1995). Land mosaics: The ecology of landscapes and regions. Cambridge University Press.' },
+    { key: 'dramstad1996', cite: 'Dramstad et al., 1996', match: ['dramstad', 'landscape ecology principles in landscape architecture'],
+      entry: 'Dramstad, W. E., Olson, J. D., & Forman, R. T. T. (1996). Landscape ecology principles in landscape architecture and land-use planning. Island Press.' },
+    { key: 'leitao2006', cite: 'Botequilha Leitão et al., 2006', match: ['leitao', 'measuring landscapes'],
+      entry: 'Botequilha Leitão, A., Miller, J., Ahern, J., & McGarigal, K. (2006). Measuring landscapes: A planner’s handbook. Island Press.' },
+  ];
+  const normTitleText = x => String(x || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ');
+  const frameworkRefOf = (r, ds) => {
+    if (!ds || !ds.ndvi || !r) return null;
+    const t = normTitleText(r.text || ((r.author || '') + ' ' + (r.title || '')));
+    return LANDSCAPE_REFS.find(b => b.match.every(m => t.includes(m))) || null;
+  };
+  const isFrameworkRef = (r, ds) => !!frameworkRefOf(r, ds);
+  // 提示詞用：三本書的原則摘要（只寫書裡確實有的一般原則，不替它們發明數值門檻）＋書目
+  function landscapeFrameworkText(en) {
+    const refs = LANDSCAPE_REFS.map(b => b.entry).join('\n');
+    return en
+      ? `\nINTERPRETIVE FRAMEWORK FOR THE LANDSCAPE-STRUCTURE FIGURES (supplied by this tool; use it in section 1.1 and cite as shown):
+- Forman (1995), Land Mosaics: the patch–corridor–matrix model. Large patches of natural vegetation are the only structures that protect aquifers and stream networks, sustain viable populations of interior and large-home-range species and allow near-natural disturbance regimes; small patches serve as stepping stones for dispersal and recolonisation and add heterogeneity but cannot replace large ones; edge species differ from interior species and edge effects reach tens to hundreds of metres into a patch, so convoluted boundaries and high edge density shrink interior habitat; the “indispensable patterns” are a few large natural patches, wide vegetated riparian corridors, connectivity between large patches by corridors or stepping stones, and small bits of nature throughout developed land; the “aggregate-with-outliers” principle keeps land uses aggregated while retaining such outliers. Cite as (Forman, 1995).
+- Dramstad, Olson & Forman (1996), Landscape Ecology Principles in Landscape Architecture and Land-Use Planning: design principles on patches (size, number and location — habitat loss matters more than patch loss, a patch near a large patch is worth more than an isolated one), edges and boundaries (edge structure and width, curvilinear versus straight, hard versus soft boundaries), corridors and connectivity (width, gaps, stepping stones, loops and alternative routes), and mosaics (fine versus coarse grain, interspersion). Cite as (Dramstad et al., 1996).
+- Botequilha Leitão, Miller, Ahern & McGarigal (2006), Measuring Landscapes: landscape metrics are means to planning ends — read a small complementary set (class area proportion, patch number and size, edge, isolation and connectivity) at the scale of the planning question, compare across scales or alternatives rather than treating a value as absolute, and state what each metric can and cannot tell. Cite as (Botequilha Leitão et al., 2006).
+Use these principles to interpret the figures above; do not attribute species-specific thresholds or site facts to the books. Copy these entries into the references unchanged:
+${refs}`
+      : `\n景觀結構數字的判讀依據（本工具提供；用於第 1.1 節，並照下列方式引用）：
+- Forman（1995）《Land Mosaics》：塊區—廊道—基質模式。大型天然植生塊區是唯一能保護地下水與溪流網絡、維持內部種與活動範圍大的物種族群、容許近自然干擾機制的結構；小塊區是擴散與再拓殖的踏腳石、增加異質性，但不能取代大塊區；邊緣種與內部種不同，邊緣效應可深入塊區數十到數百公尺，邊界越曲折、邊緣密度越高，內部棲地越少；「不可或缺的格局」是少數大型天然塊區、寬闊的河岸植生廊道、大塊區之間以廊道或踏腳石連結，以及開發地區中散布的小片自然；「聚集並保留離群點」原則主張土地使用集中，同時保留這些自然的離群點。引用寫（Forman, 1995）。
+- Dramstad、Olson 與 Forman（1996）《Landscape Ecology Principles in Landscape Architecture and Land-Use Planning》：塊區（大小、數量、位置——棲地面積的流失比塊區數的流失更關鍵，緊鄰大塊區的塊區比孤立的更有價值）、邊緣與邊界（邊緣結構與寬度、曲折與平直、硬邊與軟邊）、廊道與連結度（寬度、缺口、踏腳石、環狀與替代路徑）、鑲嵌體（細粒與粗粒、交錯程度）四組設計原則。引用寫（Dramstad et al., 1996）。
+- Botequilha Leitão、Miller、Ahern 與 McGarigal（2006）《Measuring Landscapes》：景觀指標是規劃的手段而非目的——以少數互補的指標（類別面積比例、塊區數與大小、邊緣、隔離與連結度）在規劃問題的尺度上解讀，跨尺度或跨方案比較而不是把單一數值當絕對標準，並說明每個指標能說與不能說什麼。引用寫（Botequilha Leitão et al., 2006）。
+請用這些原則解釋上列數字；不要把物種專屬的門檻或基地事實歸給這三本書。下列書目原樣列入參考文獻：
+${refs}`;
+  }
   // 本工具資料集的主機：參考文獻網址落在這些主機上，且這份報告確實附了該資料
   const toolDatasetHost = (ds, h) => !!ds && !!(
     (ds.inat && /(^|\.)inaturalist\.org$/.test(h)) ||
@@ -9551,6 +9592,8 @@ ${block}`;
       return r;
     };
     refs.forEach(markDataset);
+    // 景觀結構判讀依據（三本書）：視同本工具提供的來源，不送書目查核（見 LANDSCAPE_REFS）
+    refs.forEach(r => { if (!r.dataset && isFrameworkRef(r, meta && meta.ds)) { r.dataset = true; r.framework = true; } });
     const intext = checkInTextCitations(doc, refs);
     const items = refs.concat(cases);
     const ctl = new AbortController();
@@ -9975,7 +10018,7 @@ ${block}`;
       usage: (m, i, o) => `Model: ${m} (${i.toLocaleString()} input / ${o.toLocaleString()} output tokens).`,
     },
   };
-  const supIsDataset = r => /^(?:iNaturalist|OpenStreetMap)\b/i.test(String(r.author || '').trim()) && !(r.allDois || []).length;
+  const supIsDataset = r => (/^(?:iNaturalist|OpenStreetMap)\b/i.test(String(r.author || '').trim()) && !(r.allDois || []).length) || !!r.framework;
 
   // 正文中引用各文獻的句子：{ ri（文獻索引）, text（送去比對的句子）, unit, end（句尾在單元中的位置，供加註）}
   function supportStatements(doc, refs) {
@@ -10202,9 +10245,11 @@ ${block}`;
     const say = (m, kind) => { if (o.seq === verifySeq) setVerifyStatus(o.baseMsg ? o.baseMsg + ' ' + m : m, kind || o.baseKind || 'ok'); };
     const doc = new DOMParser().parseFromString(String(html), 'text/html');
     const all = parseReferences(doc);
+    const dsOfReport = o.target && o.target.meta && o.target.meta.ds;
     const eligible = new Set(all.map((r, i) => i).filter(i => {
       const r = all[i];
-      return !supIsDataset(r) && ((r.allDois || []).length || (r.allUrls || []).length || String(r.title || '').length >= 10);
+      // 本工具提供的資料集與景觀結構判讀依據（專書，沒有摘要可比對）不送比對
+      return !supIsDataset(r) && !isFrameworkRef(r, dsOfReport) && ((r.allDois || []).length || (r.allUrls || []).length || String(r.title || '').length >= 10);
     }));
     if (!eligible.size) return null;
     // 依文獻分組；同一句只送一次，但記下每個出現位置（加註用）
@@ -10302,7 +10347,8 @@ ${block}`;
     guardActivityTables, decorateActivityTables, finishActivityHtml, sanitizeArticle,
     sanitizeVerifyResult, streamVerify, verifyItems, provenanceCheck, derivedNumberCheck, rowRuleAgainstOriginal, syncXsecSpecies, affectedScopes,
     preFilterHtml, restorePreMap, hashKey, groundKeysOf, compactMeta, filterWhyText, excludedSectionHtml, vfDisplay, rebuildGroupInner, textUnits, NF_CELL_RE,
-    xsecRevisionCheck, classifyClauses, exclusionCtx, narrativeBadRanges, speciesNames, wipeMatrixColumns, displayCounts, verifyProvenanceLine, historyVerifyBadge, compactVerification });
+    xsecRevisionCheck, classifyClauses, exclusionCtx, narrativeBadRanges, speciesNames, wipeMatrixColumns, displayCounts, verifyProvenanceLine, historyVerifyBadge, compactVerification,
+    LANDSCAPE_REFS, frameworkRefOf, isFrameworkRef, landscapeFrameworkText });
   // 提示詞（單元測試用）：buildPrompt 依目前表單狀態；responseFormatSuffix 為 API 路徑附加的搜尋上限與優先序
   window.__qiPrompt = Object.freeze({ buildPrompt, responseFormatSuffix, sectionNumbers, WEB_SEARCH_MAX, PROMPT_MAX_CHARS, ACTIVITY_MAX });
   // 資料面板與匯出（單元測試用）：setLocation 會觸發 iNaturalist／OSM／TBN／NDVI 四個面板的查詢
@@ -10587,6 +10633,11 @@ ${block}`;
         (en ? '. NDVI thresholds (water < 0, bare 0–0.2, low vegetation 0.2–0.5, dense ≥ 0.5) are generic, not locally calibrated; patches are threshold-defined, not a land-cover map; NDVI indicates green biomass, not habitat quality. Copernicus Sentinel data are free and open under the Copernicus data licence; credit “Contains modified Copernicus Sentinel data”.'
             : '。NDVI 門檻（水域 < 0、無植生 0–0.2、低植生 0.2–0.5、密植生 ≥ 0.5）為通用值、未在地校正；塊區（patch）依門檻切出，不是土地覆蓋圖；NDVI 反映綠色生物量，不是棲地品質。Copernicus Sentinel 資料依 Copernicus 資料授權免費開放，使用時註明「含經修改之 Copernicus Sentinel 資料」。') +
         `${pasteNote}</li>`);
+      // 判讀依據：隨 NDVI 資料一起提供給模型的三本專書（查證時視同本工具提供的來源）
+      items.push(`<li><strong>${en ? 'Interpretive framework for the landscape structure (supplied by this tool)' : '景觀結構判讀依據（本工具提供）'}</strong>${en ? ': ' : '：'}` +
+        (en ? 'The prompt included a digest of the patch–corridor–matrix principles from these books so that the model could interpret the landscape metrics; the entries below were checked by this tool and are not sent for bibliographic verification. Whether a sentence is faithful to a book still has to be checked against the book. '
+            : '提示詞附上這三本書的塊區—廊道—基質原則摘要，供模型解釋景觀結構指標；下列書目由本工具校對，查證時不另送書目資料庫查核。引用句是否忠於原著仍須對照原書。') +
+        `<ul>${LANDSCAPE_REFS.map(b => `<li>${escapeHtml(b.entry)}</li>`).join('')}</ul></li>`);
     }
     if (ds && !ds.inat && !ds.osm && !ds.tbn && !ds.ndvi) items.push(`<li>${en ? 'No iNaturalist, OpenStreetMap, TBN or Sentinel-2 data from this tool were included in the prompt.' : '提示詞未附本工具的 iNaturalist／OpenStreetMap／TBN／Sentinel-2 資料。'}</li>`);
     if (!ds) items.push(`<li>${en ? 'Datasets provided by this tool: not recorded for this report (created before source tracking was added).' : '本工具提供的資料集：此報告產生時尚未記錄（早於來源紀錄功能）。'}</li>`);
