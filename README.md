@@ -55,7 +55,9 @@ OpenStreetMap 環境特徵、Sentinel-2 衛星影像的植生與景觀結構）�
 ## 架構
 
 ```
-瀏覽器 → /api/analyze（Netlify Edge Function，補上金鑰）→ Anthropic API
+瀏覽器 → /api/jobs（Netlify Function）→ /api/analyze-bg（Netlify Background Function，補上金鑰）→ Anthropic API
+                                              ↘ 串流事件一塊一塊寫進 Netlify Blobs ← 瀏覽器每幾秒輪詢 /api/jobs/<id> 取回
+瀏覽器 → /api/analyze（Netlify Edge Function，補上金鑰）→ Anthropic API（串流；/api/jobs 不可用時的後備，查證的改寫與摘要比對也走這裡）
 瀏覽器 → /api/verify（Netlify Edge Function）→ doi.org／Crossref／OpenAlex／所列網頁
 瀏覽器 → /api/models（Netlify Edge Function）→ Anthropic Models API（可用模型清單，快取 6 小時）
 瀏覽器 → /api/taxon-status（Netlify Edge Function）→ TaiCOL 臺灣物種名錄（保育類與特有種，含臺灣的亞種、變種；快取 24 小時）
@@ -64,7 +66,16 @@ OpenStreetMap 環境特徵、Sentinel-2 衛星影像的植生與景觀結構）�
 ```
 
 金鑰存於 Netlify 伺服器端環境變數，瀏覽器完全看不到。
-Edge Function 採串流回應，因此不受標準 serverless function 逾時限制。
+
+### 分析在背景執行（2026-11-10 起）
+
+分析要 3–15 分鐘。以前瀏覽器得一直拉著一條串流連線，手機鎖屏、切 App、換網路就斷，伺服器端已經花掉的時間與 token 也作廢。
+現在按下「開始分析」後，瀏覽器只把請求送到 `/api/jobs` 拿一個工作編號；分析在 Netlify 的背景 Function（`/api/analyze-bg`，單次上限 15 分鐘，
+跑到 13.5 分鐘還沒完就把目前的內容存下、再叫自己一次接力，最多四棒）裡跑，串流事件一塊一塊寫進 Netlify Blobs；
+瀏覽器每幾秒輪詢一次（長輪詢，伺服器最多等 15 秒）、把拿到的事件餵給原本的 SSE 解析器，斷線就從上一塊接回去。
+工作編號與這次分析的脈絡（語言、基地、模型、附上的資料集、地圖截圖）存在 localStorage：頁面關掉再開會自動接上，報告照常存進歷史。
+`/api/jobs` 不存在或故障時退回原本的串流路徑（`/api/analyze`），行為與以前相同。查證（`/api/verify`）、排除改寫與摘要比對目前仍是串流，
+報告已先存好，中斷了再按「查證文獻」即可。
 
 ### 檔案結構
 
@@ -82,12 +93,16 @@ Edge Function 採串流回應，因此不受標準 serverless function 逾時限
     │   ├── taxon-status.js         iNaturalist 卡片的保育類與特有種（代查 TaiCOL；POST /api/taxon-status）
     │   └── verify.js               參考文獻與案例來源查證（NDJSON 串流）
     ├── functions/
+    │   ├── jobs.mjs                分析背景工作：建立（POST /api/jobs）與輪詢（GET /api/jobs/:id）
+    │   ├── analyze-bg.mjs          分析背景工作的執行者（Background Function；把串流事件寫進 Blobs，13.5 分鐘接力）
     │   ├── pdf-text.mjs            PDF 內文抽取（Node 執行環境；Edge 的 50 ms CPU 裝不下 pdf.js）
     │   ├── tbn.mjs                 TBN 物種紀錄逐類群取樣與彙整（GET/POST /api/tbn）
     │   └── ndvi.mjs                Sentinel-2 NDVI 中位數合成與四個半徑的景觀結構指標（GET /api/ndvi）
     └── shared/
+        ├── analyze-config.js       呼叫 Anthropic 的共用設定：工具、token 上限、推理強度、提示快取（analyze.js 與 analyze-bg.mjs 共用）
+        ├── jobs-store.js           背景工作的 Blobs 鍵名、密鑰、清理與測試用的記憶體 store
         ├── model-catalog.js        模型目錄：各系列最新一版、單價、建議規則（analyze.js 與 models.js 共用）
-        └── sse-relay.js            串流轉送：搜尋迴圈暫停時自動接續、keepalive、網頁全文不轉送
+        └── sse-relay.js            串流轉送：搜尋迴圈暫停時自動接續、keepalive、網頁全文不轉送（組裝器也供背景工作用）
 ```
 
 ### 植生與景觀結構（Sentinel-2 NDVI，`/api/ndvi`）

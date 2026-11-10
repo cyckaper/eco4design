@@ -206,6 +206,27 @@ node test/tbn-ui.mjs        # 面板真的繪得出來（45 項，需要 playwri
 
 ---
 
+## 分析背景工作（`/api/jobs`、`/api/analyze-bg`）— 不必設定任何東西
+
+分析改在 Netlify Background Function 裡跑、結果寫進 Netlify Blobs（store `qi-analysis-jobs`），瀏覽器輪詢取回。
+Blobs 與 Background Functions 都包含在站台的方案裡，Function 執行環境會自動帶 Blobs 的憑證，沒有環境變數要設。
+
+- 選填 `JOB_SECRET`：`/api/jobs` 叫 `/api/analyze-bg` 時帶的密鑰（背景 Function 只接受帶密鑰的呼叫）。
+  沒設就從 `ANTHROPIC_API_KEY` 導出（SHA-256），兩個 Function 讀同一組環境變數即可。
+- 驗證與 `/api/analyze` 相同：`QI_PASSCODE`、提示詞 ≤ 50,000 字元、模型只能是目錄中的。
+- 單次背景執行上限 15 分鐘；跑到 13.5 分鐘未完成會把目前的 assistant 內容存進 `meta.resume` 再叫自己一次接力，最多 4 棒。
+  Netlify 對「出錯」的背景呼叫會在 1、2 分鐘後重試；這裡所有錯誤都寫進 meta 後正常結束，不觸發重試；
+  被強制終止後若真的被重試，看到心跳停了就標失敗（不從頭重跑，免得已寫出的塊與新內容接在一起）。
+- 保留 2 天（`cleanupOldJobs`，每建立 20 次清一次）：報告早已存在瀏覽器歷史裡，Blobs 裡的只是為了斷線重接。
+- 除錯：Netlify → Logs → Functions，選 `jobs` 或 `analyze-bg`；或直接 GET `/api/jobs/<id>?from=0` 看 meta 與塊。
+
+```bash
+node test/jobs.test.mjs       # 建立／輪詢／長輪詢、背景執行者的完成、pause_turn 接續、上游錯誤、接力續跑、冪等、清理（27 項，不需網路）
+node test/jobs-ui.mjs         # 前端：背景工作完整流程、重新載入接續、退回串流、通行碼錯、伺服器端失敗（15 項，需要 playwright）
+```
+
+---
+
 ## 植生與景觀結構（`/api/ndvi`）— 不必設定任何東西
 
 Sentinel-2 影像是公開資料：STAC 查詢打 Earth Search（Element 84，不需金鑰），影像本身是 AWS 上的

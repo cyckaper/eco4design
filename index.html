@@ -946,7 +946,7 @@
       <div class="loading-subtext" id="loadingTimer">經過時間：0 秒</div>
       <div class="loading-subtext" id="loadingProgress">連線中…</div>
       <div class="loading-subtext">含網路搜尋與引用驗證通常需要數分鐘</div>
-      <div class="loading-subtext" style="color:#b86b4a;font-weight:600;margin-top:4px;">⚠️ 請保持本頁在前景，勿切換 App 或讓螢幕鎖定，否則連線會中斷</div>
+      <div class="loading-subtext" id="loadingModeNote" style="color:#b86b4a;font-weight:600;margin-top:4px;">⚠️ 請保持本頁在前景，勿切換 App 或讓螢幕鎖定，否則連線會中斷</div>
     </div>
 
     <div id="resultError" class="result-error" style="display:none;"></div>
@@ -1320,6 +1320,14 @@
     '含網路搜尋與引用驗證通常需要數分鐘': 'Includes web search and citation checking — usually a few minutes',
     '⚠️ 請保持本頁在前景，勿切換 App 或讓螢幕鎖定，否則連線會中斷':
       '⚠️ Keep this page in the foreground — switching apps or letting the screen lock will break the connection',
+    '🛰️ 分析在伺服器端背景執行：鎖定螢幕、切換 App、關閉本頁都不會中斷；回到本頁會自動接上進度':
+      '🛰️ The analysis runs in the background on the server: locking the screen, switching apps or closing this page will not interrupt it; progress picks up when you come back',
+    '🔁 接續先前的分析…': '🔁 Resuming the previous analysis…',
+    '🔁 已接上先前的分析：': '🔁 Resumed the previous analysis: ',
+    '找不到這個分析工作': 'This analysis job could not be found',
+    '連續 20 分鐘無法連上分析服務': 'The analysis service could not be reached for 20 minutes',
+    '背景分析失敗': 'The background analysis failed',
+    '伺服器端的分析停止回應超過 10 分鐘': 'The server-side analysis has not reported progress for more than 10 minutes',
     '📄 分析報告': '📄 Report',
     '⏳ 等待植生與景觀結構（Sentinel-2 NDVI）資料完成…': '⏳ Waiting for the vegetation & landscape-structure (Sentinel-2 NDVI) data…',
     '⬇ 下載 HTML': '⬇ Download HTML',
@@ -5268,6 +5276,136 @@ ${a}
       : `\n\n⚠️ 回應格式：網路搜尋最多 ${WEB_SEARCH_MAX} 次——先查保育／法規身分與焦點物種生態，${act ? '再查所列人類活動的影響：依干擾途徑合併搜尋（接近／驚飛、犬隻、夜間光、噪音、踐踏與沖蝕、水域擾動、餵食），一份文獻可支持多個活動，不必逐項活動搜尋；搜尋不到的活動寫「未查得」，不要為填滿每一列而降低來源品質；最後查案例' : '再查案例'}；同一物種的各欄可共用一份物種文獻。若有讀取網頁全文的工具（最多 ${WEB_FETCH_MAX} 頁），搜尋摘要缺少所需數值（繁殖月份、緩衝寬度、驚飛距離等）時，先開啟最相關的論文或政府文件全文查找，不要直接寫「未查得」；讀過的網頁與搜尋結果一樣可以引用。全部搜尋完成後才開始輸出報告，搜尋期間不要輸出任何說明文字；第一個輸出字元即為 <article>，最後為 </article>；不要加 markdown code fence。`;
   }
 
+  // ========== 分析：背景工作（預設）與串流（後備） ==========
+  // 2026-11-10 起分析在伺服器端的背景 Function 跑（/api/jobs → /api/analyze-bg → Netlify Blobs），瀏覽器每幾秒輪詢一次、
+  // 把拿到的 SSE 事件餵給同一個解析器：鎖屏、切 App、換網路、甚至關掉頁面再開，都接得回去（工作編號存在 localStorage）。
+  // /api/jobs 不可用（舊部署、Blobs 故障）時退回原本的串流路徑（/api/analyze），行為與以前完全相同。
+  const JOBS_ENDPOINT = '/api/jobs';
+  const JOB_RECORD_KEY = 'qi-analysis-job-v1';
+  const JOB_POLL_WAIT_S = 15;            // 長輪詢：伺服器最多等這麼久才回（Function 上限 26 秒）
+  const JOB_POLL_TIMEOUT_MS = 25000;     // 單次輪詢的瀏覽器端逾時
+  const JOB_RETRY_MS = 3000;             // 輪詢失敗（斷網、頁面剛從背景回來）後多久再試
+  const JOB_UNREACHABLE_MS = 20 * 60000; // 連續這麼久都連不上 /api/jobs 才放棄（分析本身還在伺服器上跑）
+  const JOB_STALE_MS = 10 * 60000;       // 伺服器端心跳停了這麼久 → 視為背景執行個體已死
+  const JOB_RECORD_MAX_AGE_MS = 3 * 3600000;   // 重新載入頁面時，多久以內的工作才接續
+  let jobFollowCtl = null;               // 正在輪詢的 AbortController（開始新分析或重設表單時中止）
+
+  function loadJobRecord() {
+    try { const r = JSON.parse(localStorage.getItem(JOB_RECORD_KEY) || 'null'); return r && typeof r === 'object' && typeof r.job === 'string' ? r : null; } catch (_) { return null; }
+  }
+  function saveJobRecord(rec) { try { localStorage.setItem(JOB_RECORD_KEY, JSON.stringify(rec)); } catch (_) { /* 存不下（配額）就算了：只是失去重新載入後接續的能力 */ } }
+  function clearJobRecord() { try { localStorage.removeItem(JOB_RECORD_KEY); } catch (_) {} }
+
+  // SSE 事件的累積器：串流路徑與背景工作路徑都把文字餵進來，得到同樣的狀態
+  function makeCollector() {
+    const col = {
+      fullText: '', searchCalls: 0, fetchCalls: 0, sources: [], sourceTitles: new Map(), citedMap: new Map(),
+      usage: {}, stopReason: '', streamError: null, streamStarted: false, buffer: '',
+      feed(text) {
+        if (!text) return;
+        col.streamStarted = true;
+        col.buffer += text;
+        const lines = col.buffer.split('\n');
+        col.buffer = lines.pop() || '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          let ev;
+          try { ev = JSON.parse(payload); } catch (_) { continue; }
+          col.onEvent(ev);
+        }
+      },
+      onEvent(ev) {
+        if (ev.type === 'content_block_delta' && ev.delta) {
+          if (typeof ev.delta.text === 'string') col.fullText += ev.delta.text;
+          else if (ev.delta.type === 'citations_delta') noteCitation(col.citedMap, ev.delta.citation);
+        } else if (ev.type === 'content_block_start' && ev.content_block) {
+          const cb = ev.content_block;
+          if (cb.type === 'server_tool_use') {
+            // 依工具名稱計數：web_search＝搜尋、web_fetch＝讀取網頁全文；其他（新版工具篩選結果用的程式執行）不計
+            if (cb.name === 'web_fetch') col.fetchCalls++;
+            else if (cb.name === 'web_search' || !cb.name) col.searchCalls++;
+          } else if (cb.type === 'web_fetch_tool_result' && cb.content && cb.content.type === 'web_fetch_result') {
+            // 模型實際讀過全文的網頁：與搜尋結果一樣算作本次取得的來源（查證時的依據）
+            const fr = cb.content, u = fr.url, tt = fr.content && fr.content.title;
+            if (typeof u === 'string' && u) {
+              if (!col.sources.includes(u)) col.sources.push(u);
+              if (typeof tt === 'string' && tt.trim() && !col.sourceTitles.has(u)) col.sourceTitles.set(u, tt.replace(/\s+/g, ' ').trim().slice(0, 200));
+            }
+          } else if (cb.type === 'web_search_tool_result' && Array.isArray(cb.content)) {
+            cb.content.forEach(r => {
+              if (!r || typeof r.url !== 'string') return;
+              if (!col.sources.includes(r.url)) col.sources.push(r.url);
+              if (typeof r.title === 'string' && r.title.trim() && !col.sourceTitles.has(r.url)) col.sourceTitles.set(r.url, r.title.replace(/\s+/g, ' ').trim().slice(0, 200));
+            });
+          } else if (cb.type === 'text' && Array.isArray(cb.citations)) {
+            cb.citations.forEach(c => noteCitation(col.citedMap, c));
+          }
+        } else if (ev.type === 'message_delta') {
+          if (ev.usage) col.usage = Object.assign(col.usage, ev.usage);
+          if (ev.delta && ev.delta.stop_reason) col.stopReason = ev.delta.stop_reason;
+        } else if (ev.type === 'error') {
+          col.streamError = (ev.error && ev.error.message) ? ev.error.message : '串流中發生錯誤';
+        }
+      },
+      progressText(prefix) {
+        const en = LANG === 'en';
+        const searchPart = col.searchCalls ? (en ? `🔍 ${col.searchCalls} searches` : `🔍 ${col.searchCalls} 次搜尋`) : '';
+        const fetchPart = col.fetchCalls ? (en ? ` · 📄 ${col.fetchCalls} pages` : ` · 📄 ${col.fetchCalls} 個網頁`) : '';
+        const charPart = col.fullText ? (en ? `✍️ ${col.fullText.length.toLocaleString()} characters` : `✍️ 已產生 ${col.fullText.length.toLocaleString()} 字`) : '';
+        const body = [searchPart + fetchPart, charPart].filter(Boolean).join(' · ') || (en ? 'Connected, waiting for the model…' : '已連線，等待模型回應…');
+        return (prefix || '') + body + '…';
+      },
+    };
+    return col;
+  }
+
+  // 伺服器回的 HTTP 錯誤 → 給使用者看的說明（建立工作與串流路徑共用）
+  function analysisHttpError(status, serverMsg, serverCode) {
+    let errMsg = serverMsg || ('HTTP ' + status);
+    if (status === 401) {
+      if (LANG === 'en') {
+        errMsg = (serverCode === 'PASSCODE_REQUIRED')
+          ? 'Passcode required\n\nEnter the passcode provided by your instructor in the "🔑 PASSCODE" field above.'
+          : 'Incorrect passcode\n\nCheck the passcode (including capitalisation and stray spaces), or confirm it with your instructor.';
+      } else {
+        errMsg = (serverCode === 'PASSCODE_REQUIRED')
+          ? '需要通行碼\n\n請在上方「🔑 通行碼」欄位輸入授課教師提供的通行碼。'
+          : '通行碼不正確\n\n請確認通行碼是否正確（注意大小寫與前後空白），或向授課教師確認。';
+      }
+    } else if (status === 529) {
+      errMsg = LANG === 'en'
+        ? 'Anthropic servers are busy (HTTP 529 Overloaded)\n\nThis is not a problem with your settings — overall load on Anthropic’s side is too high.\n\nSuggestions:\n• Wait 1–2 minutes and press "🚀 Start Analysis" again\n• Switch to another model in the list (e.g. the recommended one)\n• Avoid peak hours'
+        : 'Anthropic 伺服器繁忙（HTTP 529 Overloaded）\n\n這不是您的設定問題，是 Anthropic 端整體負載過高。\n\n建議：\n• 1-2 分鐘後再按「🚀 開始分析」重試\n• 改用清單中的其他模型（例如建議的模型）\n• 避開高峰時段（亞洲日間 + 美西夜間是高峰）';
+    } else if (status === 429) {
+      errMsg = LANG === 'en'
+        ? 'API rate limit reached (HTTP 429)\n\nToo many concurrent users or requests in a short period. Please wait 1–5 minutes and try again.'
+        : '已達 API 速率上限（HTTP 429）\n\n同時使用的人較多或短時間內呼叫太多次，請等 1-5 分鐘後重試。';
+    } else if (status === 500 && /ANTHROPIC_API_KEY/.test(serverMsg || '')) {
+      errMsg = LANG === 'en'
+        ? 'The server has no API key configured\n\nAsk the administrator to set ANTHROPIC_API_KEY in the Netlify environment variables.'
+        : '伺服器尚未設定 API 金鑰\n\n請聯絡管理者在 Netlify 環境變數中設定 ANTHROPIC_API_KEY。';
+    }
+    const e = new Error(errMsg);
+    e.healsHttp = status;
+    return e;
+  }
+
+  // 載入中那一行的說明：背景模式告訴使用者可以放心離開；串流模式維持原本的提醒
+  function setLoadingMode(mode) {
+    const el = document.getElementById('loadingModeNote');
+    if (!el) return;
+    if (mode === 'job') {
+      el.style.color = 'var(--moss)';
+      el.textContent = t('🛰️ 分析在伺服器端背景執行：鎖定螢幕、切換 App、關閉本頁都不會中斷；回到本頁會自動接上進度');
+    } else {
+      el.style.color = '#b86b4a';
+      el.textContent = t('⚠️ 請保持本頁在前景，勿切換 App 或讓螢幕鎖定，否則連線會中斷');
+    }
+  }
+
   async function callClaudeAPI() {
     const passcode = getPasscode();
     if (!passcode) {
@@ -5306,10 +5444,9 @@ ${a}
       return;
     }
 
-    let model = document.getElementById('apiModel').value;   // 空字串＝由伺服器選建議模型；實際使用的模型見回應標頭 x-model
-    // 分析期間使用者可能切換語言或移動地圖：先記下本次分析的語言與基地
-    const runLang = LANG;
-    const runSite = { lat: state.lat, lon: state.lon, name: state.locationName };
+    // 前一個工作還在輪詢（例如上次分析還沒完就按了新的）：停掉，新的覆蓋
+    if (jobFollowCtl) { try { jobFollowCtl.abort(); } catch (_) {} jobFollowCtl = null; }
+    clearJobRecord();
 
     document.getElementById('analyzeBtn').disabled = true;
     cancelVerification();            // 新的分析開始：前一份報告的查證不再適用
@@ -5320,317 +5457,321 @@ ${a}
 
     // 在本機截下當前 Leaflet 地圖（位置地圖用），失敗就用 staticmap URL 當後備
     const capturedMapDataUrl = await captureMapDataURL().catch(() => null);
-    if (capturedMapDataUrl) {
-      console.info('Map captured for location-map injection.');
-    } else {
-      console.info('Map capture unavailable; report will use staticmap.openstreetmap.de URL as fallback.');
-    }
+    if (capturedMapDataUrl) console.info('Map captured for location-map injection.');
+    else console.info('Map capture unavailable; report will use staticmap.openstreetmap.de URL as fallback.');
 
-    const startTime = Date.now();
-    // 供 catch 使用：紀錄中斷時已完成多少，才能給出具體的失敗說明，並保留已收到的部分報告
-    let progressChars = 0;
-    let progressSearches = 0;
-    let streamStarted = false;
-    let fullText = '';
-    let searchCalls = 0;
-    let fetchCalls = 0;           // 讀取網頁全文（web_fetch）的次數
-    const sources = [];           // 模型實際搜尋到的網址（web_search_tool_result），供引用比對
-    const sourceTitles = new Map();   // 網址 → 搜尋結果標題
-    const citedMap = new Map();       // 模型撰寫時實際引用的來源（citations_delta）：網址 → { t, q: [被引用原文] }
-    const runDatasets = captureDatasets();   // 本次提示詞附上的 iNaturalist／OSM 資料（之後重新查證也能列出）
-    const runLandscape = ndviLastSummary ? JSON.parse(JSON.stringify(ndviLastSummary)) : null;   // 景觀結構表的數字：與送出的提示詞相同
-    const runMeta = () => compactMeta({
-      route: 'api', model, searchCalls, at: new Date().toISOString(), ds: runDatasets,
-      src: sources.slice(0, 80).map(u => ({ u, t: sourceTitles.get(u) || '' })),
-      cited: [...citedMap].map(([u, e]) => ({ u, t: e.t || sourceTitles.get(u) || '', q: e.q })),
-      nSrc: sources.length, nCited: citedMap.size,   // 總數（清單只保留前幾筆，報告中註明「列出前 N 個（共 M 個）」）
-      // 查證依據（排除政策：未完成查證的來源，網址須出現在本次搜尋結果中才保留）：全部搜尋結果與引用，不受清單上限影響
-      gk: [...new Set(sources.concat([...citedMap.keys()]).flatMap(groundKeysOf))],
-    });
-    // 送出前先把表單存進歷史：就算之後斷線，輸入條件也不會遺失；完成或中斷時再把結果補進同一筆
-    const runTs = saveToHistory();
+    // 這一次分析的所有脈絡（分析期間使用者可能切換語言或移動地圖，所以先記下來；背景工作也把它存進 localStorage 供重新載入後接續）
+    const run = {
+      lang: LANG,
+      site: { lat: state.lat, lon: state.lon, name: state.locationName },
+      model: document.getElementById('apiModel').value,   // 空字串＝由伺服器選建議模型；實際使用的模型由伺服器回報
+      mapDataUrl: capturedMapDataUrl,
+      datasets: captureDatasets(),                        // 本次提示詞附上的 iNaturalist／OSM／TBN／NDVI 資料（之後重新查證也能列出）
+      landscape: ndviLastSummary ? JSON.parse(JSON.stringify(ndviLastSummary)) : null,   // 景觀結構表的數字：與送出的提示詞相同
+      startTime: Date.now(),
+      runTs: saveToHistory(),          // 送出前先把表單存進歷史：就算之後斷線，輸入條件也不會遺失；完成或中斷時再把結果補進同一筆
+      mode: 'job',
+    };
+    const col = makeCollector();
+    try {
+      let created = null;
+      try {
+        created = await createAnalysisJob(passcode, run.model, fullPrompt, run.lang);
+      } catch (e) {
+        if (e.healsHttp) throw e;        // 通行碼、提示詞長度等：伺服器明確拒絕，不退回串流
+        created = null;                  // /api/jobs 不存在或暫時故障：退回串流路徑
+        console.warn('[jobs] create failed, falling back to streaming:', e);
+      }
+      if (created) {
+        if (created.model) run.model = created.model;
+        run.job = created.job;
+        saveJobRecord({ job: run.job, startedAt: run.startTime, lang: run.lang, site: run.site, model: run.model, runTs: run.runTs, datasets: run.datasets, landscape: run.landscape, mapDataUrl: run.mapDataUrl });
+        setLoadingMode('job');
+        await followAnalysisJob(run, col);
+      } else {
+        run.mode = 'stream';
+        setLoadingMode('stream');
+        await streamAnalysis(run, col, passcode, fullPrompt);
+      }
+      await finishAnalysis(run, col);
+    } catch (e) {
+      failAnalysis(run, col, e);
+    } finally {
+      if (!run.keepRecord) clearJobRecord();   // 連不上伺服器而放棄時留著：重新載入頁面還能接
+      hideLoading();
+      document.getElementById('analyzeBtn').disabled = false;
+    }
+  }
+
+  // 建立背景工作：202 → { job, model }；4xx 的明確拒絕丟 healsHttp 錯誤；404／5xx／連不上 → 丟一般錯誤（呼叫端退回串流）
+  async function createAnalysisJob(passcode, model, prompt, lang) {
+    const ctl = new AbortController();
+    const tm = setTimeout(() => ctl.abort(), 20000);
+    let res;
+    try {
+      res = await fetch(JOBS_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passcode, model, prompt, lang }), signal: ctl.signal });
+    } finally { clearTimeout(tm); }
+    let body = null;
+    try { body = await res.json(); } catch (_) {}
+    if (res.status === 202 && body && typeof body.job === 'string') return body;
+    // 明確的拒絕（通行碼、提示詞長度、速率、金鑰未設）直接告訴使用者；其他（404 舊部署、5xx、Blobs 故障）退回串流
+    const fatal = [400, 401, 413, 429].includes(res.status) || (res.status === 500 && !!(body && /ANTHROPIC_API_KEY/.test(body.error || '')));
+    if (fatal) throw analysisHttpError(res.status, body && body.error, body && body.code);
+    throw new Error(`jobs HTTP ${res.status}`);
+  }
+
+  // 跟著背景工作走：輪詢 → 餵 collector → 完成或失敗
+  async function followAnalysisJob(run, col) {
+    const ctl = new AbortController();
+    jobFollowCtl = ctl;
+    const subtextEl = document.getElementById('loadingProgress');
+    let next = run.resumeFrom || 0, lastOk = Date.now(), firstPoll = true;
+    const prefix = run.resumed ? t('🔁 已接上先前的分析：') : '';
+    try {
+      while (true) {
+        if (ctl.signal.aborted) throw Object.assign(new Error('superseded'), { healsSuperseded: true });
+        let r = null;
+        try {
+          const pc = new AbortController();
+          const onAbort = () => pc.abort();
+          ctl.signal.addEventListener('abort', onAbort, { once: true });
+          const tm = setTimeout(() => pc.abort(), JOB_POLL_TIMEOUT_MS);
+          try {
+            const res = await fetch(`${JOBS_ENDPOINT}/${encodeURIComponent(run.job)}?from=${next}&wait=${firstPoll ? 3 : JOB_POLL_WAIT_S}`, { signal: pc.signal, cache: 'no-store' });
+            if (res.status === 404) { const b = await res.json().catch(() => ({})); throw Object.assign(new Error(b.error || t('找不到這個分析工作')), { healsJobGone: true }); }
+            if (!res.ok) throw new Error(`jobs HTTP ${res.status}`);
+            r = await res.json();
+          } finally { clearTimeout(tm); ctl.signal.removeEventListener('abort', onAbort); }
+        } catch (e) {
+          if (ctl.signal.aborted) throw Object.assign(new Error('superseded'), { healsSuperseded: true });
+          if (e.healsJobGone) throw e;
+          // 斷網、頁面剛從背景回來、伺服器暫時沒回：等一下再問，分析本身還在伺服器上跑
+          if (Date.now() - lastOk > JOB_UNREACHABLE_MS) throw Object.assign(new Error(t('連續 20 分鐘無法連上分析服務')), { healsUnreachable: true });
+          if (subtextEl) subtextEl.textContent = col.progressText(prefix).replace(/…$/, '') + (LANG === 'en' ? ' · reconnecting…' : '・重新連線中…');
+          await new Promise(res => setTimeout(res, JOB_RETRY_MS));
+          continue;
+        }
+        firstPoll = false;
+        lastOk = Date.now();
+        if (r.model && /^claude-[a-z0-9-]{3,60}$/.test(r.model)) run.model = r.model;
+        for (const c of (r.chunks || [])) col.feed(c);
+        next = typeof r.next === 'number' ? r.next : next;
+        if (subtextEl) subtextEl.textContent = col.progressText(prefix);
+        if (r.status === 'failed') {
+          const err = r.error || {};
+          const e = err.status ? analysisHttpError(err.status, err.message, err.code) : new Error(err.message || t('背景分析失敗'));
+          e.healsJobFailed = true;
+          throw e;
+        }
+        if (r.status === 'done' && next >= (r.total || 0)) break;
+        if (r.status !== 'done' && r.heartbeatAgeMs > JOB_STALE_MS) throw Object.assign(new Error(t('伺服器端的分析停止回應超過 10 分鐘')), { healsJobStale: true });
+      }
+    } finally {
+      if (jobFollowCtl === ctl) jobFollowCtl = null;
+    }
+  }
+
+  // 串流路徑（後備）：與 2026-11-10 之前完全相同
+  async function streamAnalysis(run, col, passcode, fullPrompt) {
     const ctl = new AbortController();
     const STALL_MS = 90000;       // 90 秒完全沒有收到資料 → 視為卡住，主動中止
-    let stalled = false;
-    try {
-      // 送到本站 Edge Function 代理（金鑰在伺服器端，前端看不到）
-      const response = await fetch(API_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passcode, model, prompt: fullPrompt }),
-        signal: ctl.signal,
-      });
-      { const xm = response.headers.get('x-model'); if (xm && /^claude-[a-z0-9-]{3,60}$/.test(xm)) model = xm; }
+    run.stalled = false;
+    const response = await fetch(API_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passcode, model: run.model, prompt: fullPrompt }),
+      signal: ctl.signal,
+    });
+    { const xm = response.headers.get('x-model'); if (xm && /^claude-[a-z0-9-]{3,60}$/.test(xm)) run.model = xm; }
+    if (!response.ok) {
+      let errText = '';
+      try { errText = await response.text(); } catch (_) {}
+      let serverMsg = '', serverCode = '';
+      try { const errJson = JSON.parse(errText); serverMsg = errJson.error || ''; serverCode = errJson.code || ''; } catch (_) { serverMsg = (errText || '').slice(0, 300); }
+      throw analysisHttpError(response.status, serverMsg, serverCode);
+    }
+    if (!response.body) throw new Error('瀏覽器不支援串流回應');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const subtextEl = document.getElementById('loadingProgress');
+    while (true) {
+      let stallTimer;
+      const stall = new Promise((_, rej) => { stallTimer = setTimeout(() => { run.stalled = true; ctl.abort(); rej(new Error('stalled')); }, STALL_MS); });
+      let chunk;
+      try { chunk = await Promise.race([reader.read(), stall]); } finally { clearTimeout(stallTimer); }
+      const { done, value } = chunk;
+      if (done) break;
+      col.feed(decoder.decode(value, { stream: true }));
+      if (subtextEl) subtextEl.textContent = col.progressText('');
+    }
+  }
 
-      if (!response.ok) {
-        let errText = '';
-        try { errText = await response.text(); } catch (_) {}
-        let serverMsg = '';
-        let serverCode = '';
-        try {
-          const errJson = JSON.parse(errText);
-          serverMsg = errJson.error || '';
-          serverCode = errJson.code || '';
-        } catch (_) { serverMsg = (errText || '').slice(0, 300); }
+  // 完成：抽出 <article>、包裝、顯示、存歷史、自動查證（串流與背景工作共用）
+  async function finishAnalysis(run, col) {
+    const { fullText, stopReason, searchCalls, fetchCalls, sources, sourceTitles, citedMap, usage } = col;
+    if (col.streamError) throw new Error(col.streamError);
+    if (!fullText.trim()) throw new Error('API 回應為空');
+    const runLang = run.lang;
+    const extracted = extractHTML(fullText);
+    if (!extracted) {
+      // 模型只回了說明文字（或在搜尋階段就結束），不要把它當成報告顯示
+      const head = fullText.trim().replace(/\s+/g, ' ').slice(0, 160);
+      const noReport = new Error(runLang === 'en'
+        ? `No report was found in the response (expected <article>…</article>)${stopReason ? ` [stop_reason: ${stopReason}]` : ''}.\n\nThe response began: "${head}…"\n\nPress "🚀 Start Analysis" to try again.`
+        : `回應中找不到報告內容（應為 <article>…</article>）${stopReason ? `［stop_reason: ${stopReason}］` : ''}。\n\n回應開頭：「${head}…」\n\n請重新按「🚀 開始分析」。`);
+      noReport.healsNoReport = true;
+      throw noReport;
+    }
+    // 輸出達 max_tokens、伺服器端搜尋迴圈暫停（pause_turn），或 article 沒有結尾 → 報告可能不完整
+    const truncated = stopReason === 'max_tokens' || stopReason === 'pause_turn' || !extracted.complete;
+    let html = extracted.html;
+    const wrapOpts = { lang: runLang, site: run.site, mapDataUrl: run.mapDataUrl, incomplete: truncated, sources, datasets: run.datasets, landscape: run.landscape,
+      provenance: { model: run.model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } };
+    if (extracted.isArticle) {
+      html = wrapReport(html, wrapOpts);      // 新格式：包成完整文件，套固定樣式表並插入地圖
+    } else {
+      // 模型輸出了完整文件（未依格式）：模型自帶的樣式表不可信（可偽造或遮蔽查證標記），只取其內容、同樣包裝
+      const d = new DOMParser().parseFromString(html, 'text/html');
+      const root = d.querySelector('article') || d.body;
+      html = wrapReport('<article>' + (root ? root.innerHTML : '') + '</article>', wrapOpts);
+    }
+    const elapsed = Math.round((Date.now() - run.startTime) / 1000);
+    const meta = runMetaOf(run, col);
+    if (!truncated) recordModelRun(run.model, (Date.now() - run.startTime) / 1000, usage, searchCalls);
+    analysisMeta = {
+      model: run.model, elapsed, timestamp: new Date().toISOString(), usage: usage || {}, searchCalls, fetchCalls, stopReason,
+      sources: sources.slice(0, 80), searchSources: meta.src, cited: meta.cited, datasets: meta.ds,
+    };
+    showResult(html, { meta, trusted: true });
+    if (truncated) toast(LANG === 'en' ? `⚠️ Analysis finished (${elapsed}s) — the report may be incomplete` : `⚠️ 分析結束（${elapsed} 秒）——報告可能不完整`);
+    else toast(LANG === 'en' ? `✅ Analysis complete (${elapsed}s) — now verifying the sources` : `✅ 分析完成（${elapsed} 秒）——接著查證來源`);
+    // 歷史紀錄存「繪製剖面圖之前」的版本；放在完成提示之後，存檔空間不足的警告才不會被蓋掉
+    const savedTs = saveToHistoryWithResult(html, run.runTs, { sources: analysisMeta.sources, meta, site: run.site });
+    if (currentReport && currentReport.raw === html) currentReport.ts = savedTs || null;
+    // 自動查證參考文獻（不阻擋報告顯示；失敗只顯示說明）
+    verifyReferences(html, { auto: true, ts: savedTs || null, meta, lang: runLang, trusted: true });
+  }
 
-        let errMsg = serverMsg || ('HTTP ' + response.status);
-        if (response.status === 401) {
-          if (LANG === 'en') {
-            errMsg = (serverCode === 'PASSCODE_REQUIRED')
-              ? 'Passcode required\n\nEnter the passcode provided by your instructor in the "🔑 PASSCODE" field above.'
-              : 'Incorrect passcode\n\nCheck the passcode (including capitalisation and stray spaces), or confirm it with your instructor.';
-          } else {
-            errMsg = (serverCode === 'PASSCODE_REQUIRED')
-              ? '需要通行碼\n\n請在上方「🔑 通行碼」欄位輸入授課教師提供的通行碼。'
-              : '通行碼不正確\n\n請確認通行碼是否正確（注意大小寫與前後空白），或向授課教師確認。';
-          }
-        } else if (response.status === 529) {
-          errMsg = LANG === 'en'
-            ? 'Anthropic servers are busy (HTTP 529 Overloaded)\n\nThis is not a problem with your settings — overall load on Anthropic\u2019s side is too high.\n\nSuggestions:\n• Wait 1–2 minutes and press "🚀 Start Analysis" again\n• Switch to another model in the list (e.g. the recommended one)\n• Avoid peak hours'
-            : 'Anthropic 伺服器繁忙（HTTP 529 Overloaded）\n\n這不是您的設定問題，是 Anthropic 端整體負載過高。\n\n建議：\n• 1-2 分鐘後再按「🚀 開始分析」重試\n• 改用清單中的其他模型（例如建議的模型）\n• 避開高峰時段（亞洲日間 + 美西夜間是高峰）';
-        } else if (response.status === 429) {
-          errMsg = LANG === 'en'
-            ? 'API rate limit reached (HTTP 429)\n\nToo many concurrent users or requests in a short period. Please wait 1–5 minutes and try again.'
-            : '已達 API 速率上限（HTTP 429）\n\n同時使用的人較多或短時間內呼叫太多次，請等 1-5 分鐘後重試。';
-        } else if (response.status === 500 && /ANTHROPIC_API_KEY/.test(serverMsg)) {
-          errMsg = LANG === 'en'
-            ? 'The server has no API key configured\n\nAsk the administrator to set ANTHROPIC_API_KEY in the Netlify environment variables.'
-            : '伺服器尚未設定 API 金鑰\n\n請聯絡管理者在 Netlify 環境變數中設定 ANTHROPIC_API_KEY。';
+  function runMetaOf(run, col) {
+    return compactMeta({
+      route: 'api', model: run.model, searchCalls: col.searchCalls, at: new Date().toISOString(), ds: run.datasets,
+      src: col.sources.slice(0, 80).map(u => ({ u, t: col.sourceTitles.get(u) || '' })),
+      cited: [...col.citedMap].map(([u, e]) => ({ u, t: e.t || col.sourceTitles.get(u) || '', q: e.q })),
+      nSrc: col.sources.length, nCited: col.citedMap.size,   // 總數（清單只保留前幾筆，報告中註明「列出前 N 個（共 M 個）」）
+      // 查證依據（排除政策：未完成查證的來源，網址須出現在本次搜尋結果中才保留）：全部搜尋結果與引用，不受清單上限影響
+      gk: [...new Set(col.sources.concat([...col.citedMap.keys()]).flatMap(groundKeysOf))],
+    });
+  }
+
+  // 失敗：已收到的部分報告照樣顯示並存歷史；依路徑與原因給具體的說明
+  function failAnalysis(run, col, e) {
+    if (e && e.healsSuperseded) return;     // 被新的分析取代：什麼都不顯示
+    if (e && e.healsUnreachable) run.keepRecord = true;
+    const rawMsg = run.stalled ? 'stalled' : (e.message || String(e));
+    const elapsedSec = Math.round((Date.now() - run.startTime) / 1000);
+    const { fullText, searchCalls, fetchCalls, sources } = col;
+
+    // 已收到部分報告：照樣顯示並存入歷史（標為不完整），3–6 分鐘的等待不會全部歸零
+    let partialShown = false;
+    if (!e.healsNoReport && fullText.trim()) {
+      try {
+        const ex = extractHTML(fullText);
+        if (ex && ex.isArticle) {
+          const ph = wrapReport(ex.html, { lang: run.lang, site: run.site, mapDataUrl: run.mapDataUrl, incomplete: true, sources, datasets: run.datasets, landscape: run.landscape,
+            provenance: { model: run.model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
+          const meta = runMetaOf(run, col);
+          analysisMeta = { model: run.model, elapsed: elapsedSec, timestamp: new Date().toISOString(), usage: {}, searchCalls, fetchCalls, stopReason: 'interrupted', sources: sources.slice(0, 80),
+            searchSources: meta.src, cited: meta.cited, datasets: meta.ds };
+          showResult(ph, { meta, trusted: true });
+          const savedTs = saveToHistoryWithResult(ph, run.runTs, { sources: analysisMeta.sources, partial: true, meta, site: run.site });
+          if (currentReport && currentReport.raw === ph) currentReport.ts = savedTs || null;
+          partialShown = true;
+          verifyReferences(ph, { auto: true, ts: savedTs || null, meta, lang: run.lang, trusted: true });
         }
-        throw new Error(errMsg);
-      }
+      } catch (_) {}
+    }
 
-      // ── 讀取 SSE 串流，累積文字 ──
-      if (!response.body) throw new Error('瀏覽器不支援串流回應');
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let usage = {};
-      let streamError = null;
-      let stopReason = '';   // end_turn / max_tokens / pause_turn…；用來判斷報告是否被截斷
-
-      const subtextEl = document.getElementById('loadingProgress');
-
-      while (true) {
-        let stallTimer;
-        const stall = new Promise((_, rej) => { stallTimer = setTimeout(() => { stalled = true; ctl.abort(); rej(new Error('stalled')); }, STALL_MS); });
-        let chunk;
-        try { chunk = await Promise.race([reader.read(), stall]); } finally { clearTimeout(stallTimer); }
-        const { done, value } = chunk;
-        if (done) break;
-        streamStarted = true;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          const payload = trimmed.slice(5).trim();
-          if (!payload || payload === '[DONE]') continue;
-          let ev;
-          try { ev = JSON.parse(payload); } catch (_) { continue; }
-
-          if (ev.type === 'content_block_delta' && ev.delta) {
-            if (typeof ev.delta.text === 'string') fullText += ev.delta.text;
-            else if (ev.delta.type === 'citations_delta') noteCitation(citedMap, ev.delta.citation);
-          } else if (ev.type === 'content_block_start' && ev.content_block) {
-            if (ev.content_block.type === 'server_tool_use') {
-              // 依工具名稱計數：web_search＝搜尋、web_fetch＝讀取網頁全文；其他（新版工具篩選結果用的程式執行）不計
-              const tn = ev.content_block.name;
-              if (tn === 'web_fetch') fetchCalls++;
-              else if (tn === 'web_search' || !tn) searchCalls++;
-              if (subtextEl) subtextEl.textContent = `🔍 已進行 ${searchCalls} 次網路搜尋${fetchCalls ? `・📄 讀取 ${fetchCalls} 個網頁` : ''}…`;
-            } else if (ev.content_block.type === 'web_fetch_tool_result' && ev.content_block.content && ev.content_block.content.type === 'web_fetch_result') {
-              // 模型實際讀過全文的網頁：與搜尋結果一樣算作本次取得的來源（查證時的依據）
-              const fr = ev.content_block.content, u = fr.url, tt = fr.content && fr.content.title;
-              if (typeof u === 'string' && u) {
-                if (!sources.includes(u)) sources.push(u);
-                if (typeof tt === 'string' && tt.trim() && !sourceTitles.has(u)) sourceTitles.set(u, tt.replace(/\s+/g, ' ').trim().slice(0, 200));
-              }
-            } else if (ev.content_block.type === 'web_search_tool_result' && Array.isArray(ev.content_block.content)) {
-              ev.content_block.content.forEach(r => {
-                if (!r || typeof r.url !== 'string') return;
-                if (!sources.includes(r.url)) sources.push(r.url);
-                if (typeof r.title === 'string' && r.title.trim() && !sourceTitles.has(r.url)) sourceTitles.set(r.url, r.title.replace(/\s+/g, ' ').trim().slice(0, 200));
-              });
-            } else if (ev.content_block.type === 'text' && Array.isArray(ev.content_block.citations)) {
-              ev.content_block.citations.forEach(c => noteCitation(citedMap, c));
-            }
-          } else if (ev.type === 'message_delta') {
-            if (ev.usage) usage = Object.assign(usage, ev.usage);
-            if (ev.delta && ev.delta.stop_reason) stopReason = ev.delta.stop_reason;
-          } else if (ev.type === 'error') {
-            streamError = (ev.error && ev.error.message) ? ev.error.message : '串流中發生錯誤';
-          }
-        }
-        if (fullText && subtextEl && searchCalls === 0) {
-          subtextEl.textContent = `✍️ 已產生 ${fullText.length.toLocaleString()} 字…`;
-        } else if (fullText && subtextEl) {
-          subtextEl.textContent = `🔍 ${searchCalls} 次搜尋${fetchCalls ? ` · 📄 ${fetchCalls} 個網頁` : ''} · ✍️ 已產生 ${fullText.length.toLocaleString()} 字…`;
-        }
-        progressChars = fullText.length;
-        progressSearches = searchCalls;
-      }
-
-      if (streamError) throw new Error(streamError);
-      if (!fullText.trim()) throw new Error('API 回應為空');
-
-      const extracted = extractHTML(fullText);
-      if (!extracted) {
-        // 模型只回了說明文字（或在搜尋階段就結束），不要把它當成報告顯示
-        const head = fullText.trim().replace(/\s+/g, ' ').slice(0, 160);
-        const noReport = new Error(runLang === 'en'
-          ? `No report was found in the response (expected <article>…</article>)${stopReason ? ` [stop_reason: ${stopReason}]` : ''}.\n\nThe response began: "${head}…"\n\nPress "🚀 Start Analysis" to try again.`
-          : `回應中找不到報告內容（應為 <article>…</article>）${stopReason ? `［stop_reason: ${stopReason}］` : ''}。\n\n回應開頭：「${head}…」\n\n請重新按「🚀 開始分析」。`);
-        noReport.healsNoReport = true;
-        throw noReport;
-      }
-      // 輸出達 max_tokens、伺服器端搜尋迴圈暫停（pause_turn），或 article 沒有結尾 → 報告可能不完整
-      const truncated = stopReason === 'max_tokens' || stopReason === 'pause_turn' || !extracted.complete;
-      let html = extracted.html;
-
-      if (extracted.isArticle) {
-        // 新格式：包成完整文件，套固定樣式表並插入地圖
-        html = wrapReport(html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources, datasets: runDatasets, landscape: runLandscape,
-          provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
-      } else {
-        // 模型輸出了完整文件（未依格式）：模型自帶的樣式表不可信（可偽造或遮蔽查證標記），
-        // 只取其內容，與新格式相同地包裝（固定樣式表、本工具地圖與頁尾）
-        const d = new DOMParser().parseFromString(html, 'text/html');
-        const root = d.querySelector('article') || d.body;
-        html = wrapReport('<article>' + (root ? root.innerHTML : '') + '</article>', { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: truncated, sources, datasets: runDatasets, landscape: runLandscape,
-          provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
-      }
-
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-
-      const meta = runMeta();
-      if (!truncated) recordModelRun(model, (Date.now() - startTime) / 1000, usage, searchCalls);
-      analysisMeta = {
-        model: model,
-        elapsed: elapsed,
-        timestamp: new Date().toISOString(),
-        usage: usage || {},
-        searchCalls: searchCalls,
-        fetchCalls: fetchCalls,
-        stopReason: stopReason,
-        sources: sources.slice(0, 80),
-        searchSources: meta.src,     // [{ u, t }] 搜尋取得的來源（含標題）
-        cited: meta.cited,           // [{ u, t, q }] 模型撰寫時實際引用的來源與原文片段
-        datasets: meta.ds,           // 提示詞附上的 iNaturalist／OSM 資料
-      };
-
-      showResult(html, { meta, trusted: true });
-      if (truncated) {
-        toast(LANG==='en' ? `⚠️ Analysis finished (${elapsed}s) — the report may be incomplete` : `⚠️ 分析結束（${elapsed} 秒）——報告可能不完整`);
-      } else {
-        toast(LANG==='en' ? `✅ Analysis complete (${elapsed}s) — now verifying the sources` : `✅ 分析完成（${elapsed} 秒）——接著查證來源`);
-      }
-      // 歷史紀錄存「繪製剖面圖之前」的版本；放在完成提示之後，存檔空間不足的警告才不會被蓋掉
-      const savedTs = saveToHistoryWithResult(html, runTs, { sources: analysisMeta.sources, meta });
-      if (currentReport && currentReport.raw === html) currentReport.ts = savedTs || null;
-      // 自動查證參考文獻（不阻擋報告顯示；失敗只顯示說明）
-      verifyReferences(html, { auto: true, ts: savedTs || null, meta, lang: runLang, trusted: true });
-    } catch (e) {
-      const rawMsg = stalled ? 'stalled' : (e.message || String(e));
-      const elapsedSec = Math.round((Date.now() - startTime) / 1000);
-
-      // 已收到部分報告：照樣顯示並存入歷史（標為不完整），3–6 分鐘的等待不會全部歸零
-      let partialShown = false;
-      if (!e.healsNoReport && fullText.trim()) {
-        try {
-          const ex = extractHTML(fullText);
-          if (ex && ex.isArticle) {
-            const ph = wrapReport(ex.html, { lang: runLang, site: runSite, mapDataUrl: capturedMapDataUrl, incomplete: true, sources, datasets: runDatasets, landscape: runLandscape,
-              provenance: { model, searchCalls, timestamp: new Date().toISOString(), route: 'api' } });
-            const meta = runMeta();
-            analysisMeta = { model, elapsed: elapsedSec, timestamp: new Date().toISOString(), usage: {}, searchCalls, stopReason: 'interrupted', sources: sources.slice(0, 80),
-              searchSources: meta.src, cited: meta.cited, datasets: meta.ds };
-            showResult(ph, { meta, trusted: true });
-            const savedTs = saveToHistoryWithResult(ph, runTs, { sources: analysisMeta.sources, partial: true, meta });
-            if (currentReport && currentReport.raw === ph) currentReport.ts = savedTs || null;
-            partialShown = true;
-            verifyReferences(ph, { auto: true, ts: savedTs || null, meta, lang: runLang, trusted: true });
-          }
-        } catch (_) {}
-      }
-
-      // Safari 的 "Load failed" 與 Chrome 的 "Failed to fetch" 都是連線中斷的通用訊息，
-      // 本身不說明原因。這裡依「跑了多久、串流是否已開始、分頁是否曾被切到背景」
-      // 推斷最可能的原因並給出具體處理方式。
-      const isNetworkDrop = !e.healsNoReport && (stalled || /Load failed|Failed to fetch|NetworkError|network error|network connection was lost|The Internet connection appears to be offline|terminated|aborted/i.test(rawMsg));
-
-      let finalMsg;
+    let finalMsg;
+    const en = LANG === 'en';
+    if (run.mode === 'job' && (e.healsJobFailed || e.healsJobStale || e.healsJobGone || e.healsUnreachable)) {
+      // 背景工作：連線問題不會造成失敗（會一直重連），走到這裡是伺服器端真的失敗或停了
+      const mins = Math.floor(elapsedSec / 60), secs = elapsedSec % 60;
+      const timeStr = en ? (mins > 0 ? `${mins} min ${secs} s` : `${secs} s`) : (mins > 0 ? `${mins} 分 ${secs} 秒` : `${secs} 秒`);
+      finalMsg = en
+        ? `The background analysis did not complete (after ${timeStr}).\n\n${rawMsg}\n\n${searchCalls ? `Progress before it stopped: ${searchCalls} web searches, about ${fullText.length.toLocaleString()} characters generated.\n\n` : ''}Press "🚀 Start Analysis" to run it again (your form entries are preserved). The analysis runs on the server, so locking the screen or switching apps is not the cause.`
+        : `背景分析未能完成（已進行 ${timeStr}）。\n\n${rawMsg}\n\n${searchCalls ? `停止前的進度：${searchCalls} 次搜尋、約 ${fullText.length.toLocaleString()} 字。\n\n` : ''}重新按「🚀 開始分析」即可再跑一次（先前的表單內容都還在）。分析在伺服器端執行，鎖定螢幕或切換 App 不是中斷的原因。`;
+    } else {
+      // 串流路徑（或建立工作就被拒絕）：沿用原本依「跑了多久、串流是否已開始、分頁是否曾被切到背景」推斷原因的說明
+      const isNetworkDrop = !e.healsNoReport && !e.healsHttp && (run.stalled || /Load failed|Failed to fetch|NetworkError|network error|network connection was lost|The Internet connection appears to be offline|terminated|aborted/i.test(rawMsg));
       if (isNetworkDrop) {
-        const mins = Math.floor(elapsedSec / 60);
-        const secs = elapsedSec % 60;
-
-        if (LANG === 'en') {
+        const mins = Math.floor(elapsedSec / 60), secs = elapsedSec % 60;
+        const streamStarted = col.streamStarted, progressChars = fullText.length, progressSearches = searchCalls;
+        if (en) {
           const timeStr = mins > 0 ? `${mins} min ${secs} s` : `${secs} s`;
           finalMsg = `The connection was interrupted during analysis (after ${timeStr})\n\n`;
-          if (streamStarted && progressChars > 0) {
-            finalMsg += `The analysis was running normally: ${progressSearches} web searches completed and about ${progressChars.toLocaleString()} characters generated, but the connection was cut before the full report arrived.\n\n`;
-          } else if (streamStarted) {
-            finalMsg += `The analysis service was reached, but the connection dropped before any content was generated.\n\n`;
-          } else {
-            finalMsg += `Could not reach the analysis service — the network may be unstable or temporarily unavailable.\n\n`;
-          }
+          if (streamStarted && progressChars > 0) finalMsg += `The analysis was running normally: ${progressSearches} web searches completed and about ${progressChars.toLocaleString()} characters generated, but the connection was cut before the full report arrived.\n\n`;
+          else if (streamStarted) finalMsg += `The analysis service was reached, but the connection dropped before any content was generated.\n\n`;
+          else finalMsg += `Could not reach the analysis service — the network may be unstable or temporarily unavailable.\n\n`;
           finalMsg += `Most likely causes:\n`;
           finalMsg += wentBackground
             ? `• This tab was sent to the background during the analysis (app switch or screen lock) — the most common cause on mobile devices, as the browser suspends the page and drops the connection\n`
             : `• Screen lock or switching to another app, which suspends the page and drops the connection\n`;
-          finalMsg += `• Unstable mobile data (4G/5G), or switching between Wi-Fi and mobile data\n` +
-                      `• A network timeout limit on long-lived connections\n\n`;
-          finalMsg += `What to do:\n` +
-                      `• Analysis takes 3–6 minutes — keep this page in the foreground and do not switch apps\n` +
-                      `• Prefer a stable Wi-Fi connection and avoid running it while moving\n` +
-                      `• If waiting is impractical, use "Copy prompt" → "Run manually in Claude.ai" → "Paste manual result"\n\n` +
-                      `Press "🚀 Start Analysis" again to retry (your form entries are preserved).`;
+          finalMsg += `• Unstable mobile data (4G/5G), or switching between Wi-Fi and mobile data\n• A network timeout limit on long-lived connections\n\n`;
+          finalMsg += `What to do:\n• Analysis takes 3–6 minutes — keep this page in the foreground and do not switch apps\n• Prefer a stable Wi-Fi connection and avoid running it while moving\n• If waiting is impractical, use "Copy prompt" → "Run manually in Claude.ai" → "Paste manual result"\n\nPress "🚀 Start Analysis" again to retry (your form entries are preserved).`;
         } else {
           const timeStr = mins > 0 ? `${mins} 分 ${secs} 秒` : `${secs} 秒`;
           finalMsg = `連線在分析途中中斷（已進行 ${timeStr}）\n\n`;
-          if (streamStarted && progressChars > 0) {
-            finalMsg += `分析原本正常進行中：已完成 ${progressSearches} 次搜尋、產生約 ${progressChars.toLocaleString()} 字，` +
-                        `但連線在完成前被切斷，未收到完整報告。\n\n`;
-          } else if (streamStarted) {
-            finalMsg += `已成功連上分析服務，但在開始產生內容前連線就中斷了。\n\n`;
-          } else {
-            finalMsg += `無法連上分析服務，可能是網路不穩或暫時無法連線。\n\n`;
-          }
+          if (streamStarted && progressChars > 0) finalMsg += `分析原本正常進行中：已完成 ${progressSearches} 次搜尋、產生約 ${progressChars.toLocaleString()} 字，但連線在完成前被切斷，未收到完整報告。\n\n`;
+          else if (streamStarted) finalMsg += `已成功連上分析服務，但在開始產生內容前連線就中斷了。\n\n`;
+          else finalMsg += `無法連上分析服務，可能是網路不穩或暫時無法連線。\n\n`;
           finalMsg += `最可能的原因：\n`;
           finalMsg += wentBackground
             ? `• 分析期間這個分頁曾被切到背景（切換 App 或螢幕鎖定）——這是行動裝置上最常見的原因，瀏覽器會暫停頁面並切斷連線\n`
             : `• 螢幕鎖定或切換到其他 App，瀏覽器暫停頁面而切斷連線\n`;
-          finalMsg += `• 行動網路（4G／5G）訊號不穩，或在 Wi-Fi 與行動網路之間切換\n` +
-                      `• 網路環境對長時間連線有逾時限制\n\n`;
-          finalMsg += `建議做法：\n` +
-                      `• 分析需 3–6 分鐘，過程中請讓本頁保持在前景、不要切換 App\n` +
-                      `• 盡量使用穩定的 Wi-Fi，避免在移動中執行\n` +
-                      `• 若不便久候，可改用下方「複製提示詞」→「改在 Claude.ai 手動分析」→「貼上手動結果」\n\n` +
-                      `重新按「🚀 開始分析」即可重試（先前的表單內容都還在）。`;
+          finalMsg += `• 行動網路（4G／5G）訊號不穩，或在 Wi-Fi 與行動網路之間切換\n• 網路環境對長時間連線有逾時限制\n\n`;
+          finalMsg += `建議做法：\n• 分析需 3–6 分鐘，過程中請讓本頁保持在前景、不要切換 App\n• 盡量使用穩定的 Wi-Fi，避免在移動中執行\n• 若不便久候，可改用下方「複製提示詞」→「改在 Claude.ai 手動分析」→「貼上手動結果」\n\n重新按「🚀 開始分析」即可重試（先前的表單內容都還在）。`;
         }
       } else if (/CORS/i.test(rawMsg)) {
-        finalMsg = LANG === 'en'
+        finalMsg = en
           ? `The request was blocked by browser security (CORS)\n\nOpen this page from eco4design.healsdesign.org rather than a local file or another domain.`
           : `瀏覽器安全限制導致請求被擋（CORS）\n\n請確認是從 eco4design.healsdesign.org 開啟本頁，而非本機檔案或其他網域。`;
       } else {
         finalMsg = rawMsg;
       }
+      if (run.stalled) finalMsg = (en ? `No data was received for 90 seconds, so the request was stopped.\n\n` : `連續 90 秒沒有收到任何資料，已自動中止。\n\n`) + finalMsg;
+    }
+    if (partialShown) finalMsg = (en
+      ? 'The part of the report received before the interruption is shown below and saved to history (marked incomplete).\n\n'
+      : '中斷前已收到的部分報告顯示在下方，並已存入歷史紀錄（標示為不完整）。\n\n') + finalMsg;
+    showError(finalMsg);
+    console.error('Claude API error:', e, { elapsedSec, mode: run.mode, streamStarted: col.streamStarted, chars: fullText.length, searchCalls, wentBackground });
+  }
 
-      if (stalled) finalMsg = (LANG === 'en'
-        ? `No data was received for ${STALL_MS / 1000} seconds, so the request was stopped.\n\n`
-        : `連續 ${STALL_MS / 1000} 秒沒有收到任何資料，已自動中止。\n\n`) + finalMsg;
-      if (partialShown) finalMsg = (LANG === 'en'
-        ? 'The part of the report received before the interruption is shown below and saved to history (marked incomplete).\n\n'
-        : '中斷前已收到的部分報告顯示在下方，並已存入歷史紀錄（標示為不完整）。\n\n') + finalMsg;
-      showError(finalMsg);
-      console.error('Claude API error:', e, {
-        elapsedSec, streamStarted, progressChars, progressSearches, wentBackground,
-      });
+  // 重新載入頁面（或關掉再開）：上次的背景工作還沒收尾 → 自動接上（最多 3 小時內的）
+  async function resumePendingJob() {
+    const rec = loadJobRecord();
+    if (!rec) return false;
+    if (!rec.startedAt || Date.now() - rec.startedAt > JOB_RECORD_MAX_AGE_MS) { clearJobRecord(); return false; }
+    const run = { lang: rec.lang === 'en' ? 'en' : 'zh', site: rec.site || { lat: state.lat, lon: state.lon, name: state.locationName }, model: rec.model || '',
+      mapDataUrl: rec.mapDataUrl || null, datasets: rec.datasets || null, landscape: rec.landscape || null, startTime: rec.startedAt, runTs: rec.runTs || null, mode: 'job', job: rec.job, resumed: true, resumeFrom: 0 };
+    const col = makeCollector();
+    document.getElementById('analyzeBtn').disabled = true;
+    document.getElementById('resultError').style.display = 'none';
+    showLoading();
+    setLoadingMode('job');
+    const prog = document.getElementById('loadingProgress');
+    if (prog) prog.textContent = t('🔁 接續先前的分析…');
+    try {
+      await followAnalysisJob(run, col);
+      await finishAnalysis(run, col);
+    } catch (e) {
+      failAnalysis(run, col, e);
     } finally {
+      if (!run.keepRecord) clearJobRecord();
       hideLoading();
       document.getElementById('analyzeBtn').disabled = false;
     }
+    return true;
   }
 
   // 分析期間的連線保護：
@@ -6969,8 +7110,10 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
   }
 
   function saveToHistoryWithResult(html, runTs, extra) {
-    if (state.lat == null && !runTs) return;
     extra = extra || {};
+    // 重新載入頁面後接續背景分析：表單是空的，基地由分析紀錄（extra.site）給
+    const site = extra.site && extra.site.lat != null ? extra.site : null;
+    if (state.lat == null && !runTs && !site) return;
     const arr = loadHistory();
     const now = new Date().toISOString();
     // 分析開始時已存的那一筆（依 ts 對應）→ 補上結果；否則 1 分鐘內、同位置 → 更新；再不然新增
@@ -6992,10 +7135,11 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       savedTs = recent.ts;
       saveHistoryArray(arr);
     } else {
+      const useSite = site && state.lat == null;
       const entry = {
         ts: now,
-        lat: state.lat, lon: state.lon,
-        name: state.locationName,
+        lat: useSite ? site.lat : state.lat, lon: useSite ? site.lon : state.lon,
+        name: useSite ? (site.name || '') : state.locationName,
         species: state.species.slice(),
         conditions: state.conditions.slice(),
         habitatNeeds: state.habitatNeeds.slice(),
@@ -10390,7 +10534,11 @@ ${block}`;
   window.__qiPrompt = Object.freeze({ buildPrompt, responseFormatSuffix, sectionNumbers, WEB_SEARCH_MAX, PROMPT_MAX_CHARS, ACTIVITY_MAX });
   // 資料面板與匯出（單元測試用）：setLocation 會觸發 iNaturalist／OSM／TBN／NDVI 四個面板的查詢
   window.__qiData = Object.freeze({ setLocation, setLang, resetForm, captureDatasets, toolDatasetKeys, toolDatasetHost, buildHealsExport, buildDataSourcesHtml, loadNdvi, renderNdvi,
-    ndviSummary: () => ndviLastSummary, ndviBusy, waitNdvi, wrapReport, buildLandscapeFigure, placeLandscape, showResult, setFilterNotice });
+    ndviSummary: () => ndviLastSummary, ndviBusy, waitNdvi, wrapReport, buildLandscapeFigure, placeLandscape, showResult, setFilterNotice,
+    // 背景分析（測試用）
+    makeCollector, callClaudeAPI, resumePendingJob, loadJobRecord, saveJobRecord, clearJobRecord,
+    addSpecies: name => { if (speciesChip) speciesChip.addItem(name); else state.species.push(name); updatePrompt(); },
+    historyEntries: () => loadHistory() });
 
   function stripVerification(doc) {
     doc.querySelectorAll('section.verification, .vf, .vf-detail, .vf-x, p.vf-prov').forEach(n => n.remove());
@@ -11282,6 +11430,8 @@ ${block}`;
     // Claude API analysis (Step 6)
     setupApiKeyUI();
     document.getElementById('analyzeBtn').addEventListener('click', callClaudeAPI);
+    // 上次的背景分析還沒收尾（頁面被關掉或重新載入）：自動接上
+    setTimeout(() => { resumePendingJob().catch(e => console.warn('[jobs] resume failed:', e)); }, 300);
     document.getElementById('pasteHtmlBtn').addEventListener('click', openPasteModal);
     document.getElementById('downloadResultBtn').addEventListener('click', downloadResult);
     document.getElementById('downloadPdfBtn').addEventListener('click', downloadPDF);

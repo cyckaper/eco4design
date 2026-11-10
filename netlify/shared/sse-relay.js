@@ -40,6 +40,12 @@ export function makeAssembler() {
     },
     // API 不接受空白的文字區塊
     content() { return blocks.filter(b => !(b.type === 'text' && !(b.text || '').length && !(b.citations || []).length)); },
+    // 接力續跑用：中途中止時，還沒收到 content_block_stop 的文字區塊也帶上（已寫出的半段文字就是 assistant 的開頭）；
+    // 未完成的工具呼叫與思考區塊不能帶（JSON 不完整、簽章缺），丟掉由模型重來
+    contentForResume() {
+      const open = cur.filter(b => b && b.type === 'text' && (b.text || '').length).map(b => ({ type: 'text', text: b.text, ...(b.citations ? { citations: b.citations } : {}) }));
+      return this.content().concat(open);
+    },
   };
 }
 
@@ -52,7 +58,7 @@ export function slimEvent(ev) {
     content: { type: 'document', title: typeof doc.title === 'string' ? doc.title : undefined } } } };
 }
 
-const addUsage = (a, u) => {
+export const addUsage = (a, u) => {
   if (!u) return a;
   for (const k of ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']) if (typeof u[k] === 'number') a[k] = (a[k] || 0) + u[k];
   if (u.server_tool_use) {
