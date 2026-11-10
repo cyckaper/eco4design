@@ -5,32 +5,15 @@
 // 且等待上游回應不計入 CPU 時間。Deno 執行環境不需 build/npm install，
 // 因此可直接用拖拉方式部署。
 
-import { getCatalog, parseModelId, supportsEffort, supportsDynamicTools, thinksByDefault } from '../shared/model-catalog.js';
+import { getCatalog, parseModelId, supportsEffort } from '../shared/model-catalog.js';
 import { relay } from '../shared/sse-relay.js';
-
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+// 模型工具、token 上限、推理強度、提示快取：與背景工作路徑（functions/analyze-bg.mjs）共用同一份設定
+import { ANTHROPIC_URL, MAX_PROMPT_CHARS, MAX_TOKENS, EFFORT, PROMPT_CACHE, webTools, analyzeMaxTokens, thinksByDefault } from '../shared/analyze-config.js';
 
 // 可用模型不寫死：只允許模型目錄（../shared/model-catalog.js）中各系列最新一版，
 // 避免有人改前端送出昂貴或未預期的模型；未指定或不在目錄中 → 用建議模型
 
-const MAX_PROMPT_CHARS = 24000;   // 提示詞長度上限（防濫用）
-// 輸出上限：新一代模型預設會先思考（思考 token 也計入），上限給得較寬；只依實際產生量計費
-const MAX_TOKENS = 64000;
-// 推理強度：分析用 high（多查、查得仔細，減少「未查得」），改寫只刪除與更正用 low
-const EFFORT = { analyze: 'high', revise: 'low', support: 'medium' };
-// 網路工具：搜尋 ≤15 次（與 index.html 的 WEB_SEARCH_MAX 一致）；讀取網頁全文 ≤6 次（論文、政府文件中的數值多半不在搜尋摘要裡）。
-// Sonnet／Opus 4.6 以上用可過濾結果的新版工具（先以程式篩出相關段落再放進內容，省 token）；Haiku 只搜尋（維持便宜、快速）。
-const WEB_SEARCH_MAX = 15, WEB_FETCH_MAX = 6, FETCH_MAX_CONTENT_TOKENS = 15000;
-function webTools(model) {
-  if (supportsDynamicTools(model)) {
-    return [
-      { type: 'web_search_20260209', name: 'web_search', max_uses: WEB_SEARCH_MAX },
-      { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: WEB_FETCH_MAX, max_content_tokens: FETCH_MAX_CONTENT_TOKENS, citations: { enabled: true } },
-    ];
-  }
-  return [{ type: 'web_search_20250305', name: 'web_search', max_uses: WEB_SEARCH_MAX }];
-}
-
+// MAX_PROMPT_CHARS、MAX_TOKENS、EFFORT、webTools 見 ../shared/analyze-config.js
 // 提示快取（2026-11-05 開）：只開在會上網的分析（mode 'analyze'）。
 // 伺服器端的搜尋迴圈每搜尋一次、每讀一個網頁，就把前面全部的內容（提示詞＋搜尋結果＋網頁全文）重讀一遍，
 // 一份報告的輸入 token 因此是最後內容長度的好幾倍——2026-11-04 之前 7 天 Sonnet 5.5 共 8,500 萬個輸入 token，快取命中 0%。
@@ -38,7 +21,7 @@ function webTools(model) {
 // （Sonnet 5.5／Opus 5.5 是輸入單價的 0.05 倍、其他模型 0.1 倍；寫入快取 1.25 倍，存 5 分鐘、每讀一次重新計時）。
 // revise／support 不開：各只送一次、沒有重讀的前段，開了只會多付寫入快取的那 1.25 倍。
 // https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching
-const PROMPT_CACHE = { type: 'ephemeral' };
+// （PROMPT_CACHE 定義在 analyze-config.js）
 
 // mode: 'revise'（排除未通過查證的內容）：輸入是整份報告 <article> 加上排除清單，因此另有較高的長度上限；
 // 不提供任何工具（不做網路搜尋）——改寫只能刪除與更正，不得引入未經查證的新資料。
@@ -185,7 +168,7 @@ export default async (request, context) => {
     ? SUPPORT_MAX_TOKENS + (thinksByDefault(model) ? 16000 : 0)
     : revise
     ? Math.min(MAX_TOKENS, Math.max(REVISE_MIN_TOKENS, Math.ceil(prompt.length * 1.2)) + (thinksByDefault(model) ? 16000 : 0))
-    : (/haiku/.test(model) ? 32000 : MAX_TOKENS);
+    : analyzeMaxTokens(model);
 
   // 提示快取（見檔案開頭 PROMPT_CACHE）：提示詞本身標一個快取點，確定「請求裡有 cache_control」，搜尋迴圈才會自動設快取點
   let cache = !(revise || support);

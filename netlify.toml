@@ -14,6 +14,9 @@
 # `export const config = { path }`，不必在這裡逐一列出：
 #   /api/pdf-text  PDF 內文抽取（pdf-text.mjs）
 #   /api/tbn       TBN 臺灣生物多樣性網絡物種查詢（tbn.mjs）
+#   /api/ndvi      Sentinel-2 NDVI 植生與景觀結構（ndvi.mjs）
+#   /api/jobs      分析背景工作：建立與輪詢（jobs.mjs；結果在 Netlify Blobs）
+#   /api/analyze-bg 分析背景工作的執行者（analyze-bg.mjs；config.background = true，單次最多 15 分鐘，只接受帶密鑰的內部呼叫）
 #   /api/ndvi      Sentinel-2 NDVI 中位數合成與四個半徑的景觀結構（ndvi.mjs；GET，回應由 CDN 快取一天）
 #
 # 這三件事放 Function 而不是 Edge Function，都是同一個原因：
