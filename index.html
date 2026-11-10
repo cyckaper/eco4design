@@ -5260,7 +5260,7 @@ ${a}
 
   const WEB_SEARCH_MAX = 15;       // 與 netlify/edge-functions/analyze.js 的 WEB_SEARCH_MAX 一致
   const WEB_FETCH_MAX = 6;         // 讀取網頁全文的次數（analyze.js 的 WEB_FETCH_MAX）
-  const PROMPT_MAX_CHARS = 24000;  // 與 analyze.js 的 MAX_PROMPT_CHARS 一致
+  const PROMPT_MAX_CHARS = 50000;  // 與 analyze.js 的 MAX_PROMPT_CHARS 一致（字元數；英文提示詞約是中文的 2.7 倍，英文全配約 38,000）
   // API 路徑的回應格式指令（搜尋上限與優先序）：有「未來使用活動」時，加查這些活動對焦點物種的影響
   function responseFormatSuffix(en, act) {
     return en
