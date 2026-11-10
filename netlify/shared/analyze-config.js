@@ -5,7 +5,10 @@
 import { supportsEffort, supportsDynamicTools, thinksByDefault } from './model-catalog.js';
 
 export const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-export const MAX_PROMPT_CHARS = 24000;   // 提示詞長度上限（防濫用；與 index.html 的 PROMPT_MAX_CHARS 一致）
+// 提示詞長度上限（防濫用；與 index.html 的 PROMPT_MAX_CHARS 一致）。算的是字元不是 token：英文提示詞的字元數約是
+// 中文的 2.7 倍（英文 4 字元≈1 token，中文 1 字≈1 token），英文版帶活動、NDVI 與 iNaturalist／OSM／TBN 三組資料約 38,000 字元，
+// 中文版同樣條件約 20,000；舊上限 24,000 會擋掉正常的英文分析（2026-11-10 放寬）
+export const MAX_PROMPT_CHARS = 50000;
 // 輸出上限：新一代模型預設會先思考（思考 token 也計入），上限給得較寬；只依實際產生量計費
 export const MAX_TOKENS = 64000;
 // 推理強度：分析用 high（多查、查得仔細，減少「未查得」），改寫只刪除與更正用 low

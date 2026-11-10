@@ -4,6 +4,7 @@
 import { makeHandler } from '../netlify/functions/jobs.mjs';
 import { makeRunner } from '../netlify/functions/analyze-bg.mjs';
 import { memoryStore, metaKey, promptKey, chunkKey, jobSecret, cleanupOldJobs, newJobId } from '../netlify/shared/jobs-store.js';
+import { MAX_PROMPT_CHARS } from '../netlify/shared/analyze-config.js';
 
 const results = [];
 let failed = 0;
@@ -59,7 +60,7 @@ const catalogResponse = () => new Response(JSON.stringify({ data: [
   check('建立：沒有通行碼 → 401 PASSCODE_REQUIRED', r.status === 401 && (await r.json()).code === 'PASSCODE_REQUIRED', r.status);
   r = await post({ prompt: 'x', passcode: 'wrong' });
   check('建立：通行碼錯 → 401 PASSCODE_INVALID', r.status === 401 && (await r.json()).code === 'PASSCODE_INVALID', r.status);
-  r = await post({ prompt: 'x'.repeat(24001), passcode: 'test-pass' });
+  r = await post({ prompt: 'x'.repeat(MAX_PROMPT_CHARS + 1), passcode: 'test-pass' });
   check('建立：提示詞過長 → 413', r.status === 413, r.status);
   r = await post({ prompt: '   ', passcode: 'test-pass' });
   check('建立：空提示詞 → 400', r.status === 400, r.status);
