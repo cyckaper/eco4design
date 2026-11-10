@@ -216,7 +216,8 @@ Cloud-Optimized GeoTIFF，用 HTTP Range 只讀視窗需要的 tile。沒有環�
 近 12（或 24）個月、整景雲量 < 70% 的 Level-2A 景，分季各取雲量最低的（最多 8 景）；以基地點為中心
 20 km 見方、10 m 像元的視窗，讀 B04、B08 與 SCL；SCL 保留類別 2、4、5、6、7（暗區、植生、無植生、水、未分類），
 其餘（無資料、瑕疵、雲影、雲、卷雲、雪）遮掉；逐像元取 NDVI 中位數；再算 500 m、1 km、5 km、10 km 四個半徑的
-組成比例與塊區指標。回應裡 `notes` 的那幾句話（NDVI 不是棲地品質、門檻是通用值、塊區不是土地覆蓋圖）會原樣進面板與提示詞。
+組成比例與塊區指標（`radii[].patch.{water,bare,low,dense}`：四種覆蓋類型各自切塊、各自算，不合併）。
+回應裡 `notes` 的那幾句話（NDVI 不是棲地品質、門檻是通用值、塊區依類型分別計算、不是土地覆蓋圖）會原樣進面板與提示詞。
 
 ### 時間預算
 
@@ -226,15 +227,16 @@ Cloud-Optimized GeoTIFF，用 HTTP Range 只讀視窗需要的 tile。沒有環�
 
 ### 快取
 
-回應帶 `Netlify-CDN-Cache-Control: public, max-age=86400, durable` 與 `Netlify-Vary: query=lat|lon|months`，
-所以用 GET、不用 POST：同一個基地（經緯度四位小數）、同一個月，CDN 只讓函式算一次。
+回應帶 `Netlify-CDN-Cache-Control: public, max-age=86400, durable` 與 `Netlify-Vary: query=lat|lon|months|v`，
+所以用 GET、不用 POST：同一個基地（經緯度四位小數）、同一個月，CDN 只讓函式算一次。`v` 是回應格式版本（前端目前送 `v=2`）：
+格式改變時前端換 v，durable 快取裡舊格式的回應就不會再被拿到，不必手動清快取。
 期間取「本月 1 日往前 N 個月」，鍵值一個月內不變；跨月之後第一個人會等 10–20 秒重算。
 
 ### 改動前請先跑測試
 
 ```bash
-node test/ndvi.test.mjs       # 投影、COG 讀取、雲遮罩、景觀指標手算對照、逾時只少幾景、HTTP 層（36 項，不需網路）
-node test/ndvi-ui.mjs         # 面板、小地圖、提示詞、匯出、附錄、語言切換（29 項，需要 playwright 與 /tmp/lf 的 Leaflet）
+node test/ndvi.test.mjs       # 投影、COG 讀取、雲遮罩、各類塊區指標手算對照、逾時只少幾景、HTTP 層（37 項，不需網路）
+node test/ndvi-ui.mjs         # 面板、小地圖、提示詞、報告表、判讀依據、匯出、附錄、語言切換（47 項，需要 playwright 與 /tmp/lf 的 Leaflet）
 node test/tool-datasets.test.mjs   # 查證把 Sentinel-2 認成本工具資料集（與 TBN 一起，40 項）
 ```
 

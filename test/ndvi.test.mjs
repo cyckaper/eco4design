@@ -251,13 +251,16 @@ if (!res.error) {
   const e500 = expectFor(500), e1k = expectFor(1000);
   check('500 m：圓內像元數與手算一致，全部有值（雲與無資料被其他景補上）', r500.pixels === e500.nIn && r500.valid === e500.nIn, JSON.stringify({ pixels: r500.pixels, valid: r500.valid, want: e500.nIn }));
   check('500 m：密植生 400 像元（4 ha）、沒有水、沒有裸露', near(r500.classes.dense, 400 / e500.nIn, 1e-9) && r500.classes.water === 0 && r500.classes.bare === 0, JSON.stringify(r500.classes));
-  check('500 m：密植生 1 個塊區、4 ha、最大塊區比例 400/n、邊緣 800 m、有效網目 = 4²/景觀面積', r500.dense.patches === 1 && near(r500.dense.largestHa, 4, 1e-9) && near(r500.dense.largestShare, 400 / e500.nIn, 1e-9)
-    && near(r500.dense.edgeMPerHa, 800 / (e500.nIn * 0.01), 1e-6) && near(r500.dense.meshHa, 16 / (e500.nIn * 0.01), 1e-6), JSON.stringify(r500.dense));
-  check('500 m：植生（≥0.2）覆蓋 100%、1 個塊區、沒有邊緣', r500.veg.share === 1 && r500.veg.patches === 1 && r500.veg.edgeMPerHa === 0, JSON.stringify(r500.veg));
+  check('500 m：密植生 1 個塊區、4 ha、最大塊區比例 400/n、邊緣 800 m、有效網目 = 4²/景觀面積', r500.patch.dense.patches === 1 && near(r500.patch.dense.largestHa, 4, 1e-9) && near(r500.patch.dense.largestShare, 400 / e500.nIn, 1e-9)
+    && near(r500.patch.dense.edgeMPerHa, 800 / (e500.nIn * 0.01), 1e-6) && near(r500.patch.dense.meshHa, 16 / (e500.nIn * 0.01), 1e-6), JSON.stringify(r500.patch.dense));
+  check('500 m：低植生塊區 1 個（背景，密植生是洞）、佔 1−400/n、邊緣 = 與密植生的交界 800 m；水體與無植生 0 個塊區', r500.patch.low.patches === 1 && near(r500.patch.low.share, 1 - 400 / e500.nIn, 1e-9)
+    && near(r500.patch.low.edgeMPerHa, 800 / (e500.nIn * 0.01), 1e-6) && r500.patch.water.patches === 0 && r500.patch.bare.patches === 0 && r500.patch.water.edgeMPerHa === 0, JSON.stringify({ low: r500.patch.low, water: r500.patch.water }));
+  check('四類分別計算、不合併：各類塊區面積比例相加 = 1，且沒有合併的「植生」類', near(r500.patch.water.share + r500.patch.bare.share + r500.patch.low.share + r500.patch.dense.share, 1, 1e-9) && r500.veg === undefined && r500.dense === undefined, JSON.stringify(Object.keys(r500)));
   check('500 m：NDVI 中位數 0.3、p90 0.3、平均略高', near(r500.ndvi.median, 0.3, 0.0005) && near(r500.ndvi.p90, 0.3, 0.0005) && r500.ndvi.mean > 0.3 && r500.ndvi.mean < 0.35, JSON.stringify(r500.ndvi));
   check('1 km：水 100 像元、密植生 400 像元', near(r1k.classes.water, 100 / e1k.nIn, 1e-9) && near(r1k.classes.dense, 400 / e1k.nIn, 1e-9) && r1k.pixels === e1k.nIn, JSON.stringify({ ...r1k.classes, pixels: r1k.pixels, want: e1k.nIn }));
-  check('1 km：植生有 1 個塊區（水是洞），邊緣 = 水的周長 400 m', r1k.veg.patches === 1 && near(r1k.veg.edgeMPerHa, 400 / (e1k.nIn * 0.01), 1e-6), JSON.stringify(r1k.veg));
-  check('5 km 與 10 km：圓貼齊視窗邊，全部有值，密植生仍是 1 個塊區', r5k.validShare === 1 && r10k.validShare > 0.999 && r5k.dense.patches === 1 && r10k.dense.patches === 1, JSON.stringify({ v5: r5k.validShare, v10: r10k.validShare, d5: r5k.dense.patches, d10: r10k.dense.patches }));
+  check('1 km：水體 1 個塊區、1 ha、邊緣 = 水的周長 400 m；低植生 1 個塊區，邊緣 = 水 400 m + 密植生 800 m', r1k.patch.water.patches === 1 && near(r1k.patch.water.largestHa, 1, 1e-9) && near(r1k.patch.water.edgeMPerHa, 400 / (e1k.nIn * 0.01), 1e-6)
+    && r1k.patch.low.patches === 1 && near(r1k.patch.low.edgeMPerHa, 1200 / (e1k.nIn * 0.01), 1e-6), JSON.stringify({ water: r1k.patch.water, low: r1k.patch.low }));
+  check('5 km 與 10 km：圓貼齊視窗邊，全部有值，密植生仍是 1 個塊區', r5k.validShare === 1 && r10k.validShare > 0.999 && r5k.patch.dense.patches === 1 && r10k.patch.dense.patches === 1, JSON.stringify({ v5: r5k.validShare, v10: r10k.validShare, d5: r5k.patch.dense.patches, d10: r10k.patch.dense.patches }));
   check('觀測次數：雲帶與無資料區只少一次觀測，沒有像元是 0 次', res.observations.noData === 0 && res.observations.ge3Share === 1 && res.observations.histogram[5] > 0 && res.observations.histogram[4] > 0, JSON.stringify(res.observations));
   const nRange = requests.filter(u => u.startsWith('mem://')).length;
   check('每景 3 個檔頭 + 9+9 個影像 tile + 9 個 SCL tile 的 Range 請求（5 景 = 150 次）', nRange === 150, nRange);

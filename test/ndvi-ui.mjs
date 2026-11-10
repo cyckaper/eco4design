@@ -74,8 +74,9 @@ const ths = await page.locator('#ndviTable thead th').allTextContents();
 check('表格欄：半徑 500 m、1 km、5 km、10 km', ths.join(',') === '半徑,500 m,1 km,5 km,10 km', ths.join(','));
 const cell = async (label, i) => (await page.locator('#ndviTable tbody tr', { hasText: label }).first().locator('td').allTextContents())[i];
 check('500 m 密植生 5.1%（合成資料：400 像元／7845）', await cell('密植生（≥ 0.5）', 0) === '5.1%', await cell('密植生（≥ 0.5）', 0));
-check('1 km 水域 0.3%（100 像元）、500 m 水域 0%', await cell('水域（< 0）', 1) === '0.3%' && await cell('水域（< 0）', 0) === '0%', `${await cell('水域（< 0）', 0)} ${await cell('水域（< 0）', 1)}`);
-check('密植生塊區：四個半徑都是 1 個、4.0 ha', await cell('塊區數', 0) === '1' && await cell('塊區數', 3) === '1' && /^4\.0 ·/.test(await cell('最大塊區', 0)), `${await cell('塊區數', 0)} ${await cell('最大塊區', 0)}`);
+check('1 km 水體 0.3%（100 像元）、500 m 水體 0%', await cell('水體（NDVI < 0）', 1) === '0.3%' && await cell('水體（NDVI < 0）', 0) === '0%', `${await cell('水體（NDVI < 0）', 0)} ${await cell('水體（NDVI < 0）', 1)}`);
+check('密植生塊區：四個半徑都是 1 個、4.0 ha（列標籤寫明類型）', await cell('密植生塊區數', 0) === '1' && await cell('密植生塊區數', 3) === '1' && /^4\.0 ·/.test(await cell('密植生最大塊區', 0)), `${await cell('密植生塊區數', 0)} ${await cell('密植生最大塊區', 0)}`);
+check('各類塊區分開列：水體塊區 500 m 0 個、1 km 1 個（1.0 ha）；低植生塊區 1 個；沒有合併的「植生塊區」列', await cell('水體塊區數', 0) === '0' && await cell('水體塊區數', 1) === '1' && /^1\.0 ·/.test(await cell('水體最大塊區', 1)) && await cell('低植生塊區數', 0) === '1' && (await page.locator('#ndviTable').textContent()).indexOf('植生塊區（≥ 0.2）') < 0, `${await cell('水體塊區數', 0)} ${await cell('水體塊區數', 1)} ${await cell('水體最大塊區', 1)} ${await cell('低植生塊區數', 0)}`);
 const scenesTxt = await page.locator('#ndviScenes').textContent();
 check('使用影像依日期列出 5 景與雲量', (scenesTxt.match(/（雲 \d+%）/g) || []).length === 5 && scenesTxt.indexOf('2026-01-15') < scenesTxt.indexOf('2026-02-10'), scenesTxt);
 check('沒有警示（景數夠、沒有缺值）', await page.locator('#ndviNote').evaluate(e => e.style.display === 'none'), await page.locator('#ndviNote').textContent());
@@ -92,12 +93,12 @@ if (haveLeaflet) {
 const prompt = await page.evaluate(() => window.__qiPrompt.buildPrompt());
 const blk = prompt.slice(prompt.indexOf('🛰️'));
 check('提示詞有 NDVI 區塊，在基地條件之後、報告結構之前', prompt.indexOf('🛰️') > prompt.indexOf('🌳 基地條件') && prompt.indexOf('🛰️') < prompt.indexOf('📋 報告結構'), prompt.indexOf('🛰️') + ' / ' + prompt.indexOf('📋'));
-check('區塊含門檻說明、四個半徑、使用方式與不可寫成森林覆蓋率的提醒', /門檻：水域 NDVI < 0/.test(blk) && /半徑 500 m（78 ha/.test(blk) && /半徑 10 km（31416 ha/.test(blk) && /使用方式：500 m 與 1 km/.test(blk) && /不可寫成「森林覆蓋率」/.test(blk), blk.slice(0, 600));
+check('區塊含門檻說明、四個半徑、使用方式與不可寫成森林覆蓋率的提醒', /覆蓋類型依 NDVI：水體 < 0/.test(blk) && /半徑 500 m（78 ha/.test(blk) && /半徑 10 km（31416 ha/.test(blk) && /使用方式：500 m 與 1 km/.test(blk) && /不可寫成「森林覆蓋率」/.test(blk), blk.slice(0, 600));
 check('區塊含歐洲太空總署的 APA 參考文獻與 STAC 網址', /歐洲太空總署（無日期）。［Copernicus Sentinel-2 Level-2A/.test(blk) && /earth-search\.aws\.element84\.com\/v1\/search\?collections=sentinel-2-c1-l2a&bbox=/.test(blk), blk.slice(blk.indexOf('歐洲'), blk.indexOf('歐洲') + 300));
-check('提示詞裡的 NDVI 數字與面板一致（密植生 5.1%）', /密植生 5\.1%/.test(blk), blk.match(/半徑 500 m[^\n]*/)[0]);
+check('提示詞裡的 NDVI 數字與面板一致（密植生 5.1%），塊區依類型分列、寫明類型', /密植生 5\.1%/.test(blk) && /密植生塊區 1 個，最大 4\.0 ha/.test(blk) && /水體塊區 0 個/.test(blk) && /低植生塊區 1 個/.test(blk) && !/全部植生/.test(blk) && /不同類型不合併/.test(blk), blk.match(/半徑 500 m[^\n]*/)[0]);
 
 check('提示詞附三本景觀生態學專書的原則摘要與書目（Forman 1995、Dramstad 等 1996、Botequilha Leitão 等 2006）', /判讀依據（本工具提供/.test(prompt) && /Forman, R\. T\. T\. \(1995\)\. Land mosaics/.test(prompt) && /Dramstad, W\. E\., Olson, J\. D\., & Forman, R\. T\. T\. \(1996\)/.test(prompt) && /Botequilha Leitão, A\., Miller, J\., Ahern, J\., & McGarigal, K\. \(2006\)/.test(prompt) && /聚集並保留離群點/.test(prompt), prompt.slice(prompt.indexOf('判讀依據'), prompt.indexOf('判讀依據') + 300));
-check('報告結構：1.1 景觀結構判讀一段（兩個尺度、對應分區、引用三本書）、第 1 節除 1.1 外不寫敘述段落', /<h3>1\.1 景觀結構判讀<\/h3> 寫一段 120–200 字/.test(prompt) && /Botequilha Leitão et al\., 2006）。數字引用寫（歐洲太空總署，無日期）/.test(prompt) && /除 1\.1 外不寫敘述段落/.test(prompt), prompt.slice(prompt.indexOf('1.1 景觀'), prompt.indexOf('1.1 景觀') + 200));
+check('報告結構：1.1 景觀結構判讀一段（兩個尺度、對應分區、引用三本書）、第 1 節除 1.1 外不寫敘述段落', /<h3>1\.1 景觀結構判讀<\/h3> 寫一段 120–200 字/.test(prompt) && /Botequilha Leitão et al\., 2006）。水體塊區與低植生塊區的數字只在與焦點物種相關時引用/.test(prompt) && /塊區一律寫明類型（密植生塊區、水體塊區…），不同類型的塊區不可相加或混談。數字引用寫（歐洲太空總署，無日期）/.test(prompt) && /除 1\.1 外不寫敘述段落/.test(prompt), prompt.slice(prompt.indexOf('1.1 景觀'), prompt.indexOf('1.1 景觀') + 200));
 const fw = await page.evaluate(() => {
   const X = window.__qiExclusion, ds = window.__qiData.captureDatasets();
   const refs = X.LANDSCAPE_REFS.map(b => ({ text: b.entry }));
@@ -114,14 +115,14 @@ check('報告結構：第 1 節多一列「景觀結構」並要求輸出 <!--HE
 const art = '<article><h1>測試基地 生態共存設計分析</h1><ul class="summary"><li>x</li></ul><!--HEALS:MAP--><h2>1 基地判讀</h2><table><tbody><tr><td>海拔</td><td>未查得</td></tr></tbody></table>MARK<ul class="warn"><li>w</li></ul><h2>2 物種需求表</h2><table><tbody><tr><td>s</td></tr></tbody></table></article>';
 const wrapped = await page.evaluate(a => window.__qiData.wrapReport(a, { lang: 'zh', site: { lat: 24.7958, lon: 121.5543 }, landscape: window.__qiData.ndviSummary(), provenance: { route: 'api', model: 'x', searchCalls: 0, timestamp: new Date().toISOString() } }), art.replace('MARK', '<!--HEALS:LANDSCAPE-->'));
 const lf = wrapped.match(/<figure class="heals-landscape">[\s\S]*?<\/figure>/);
-check('wrapReport 把標記換成景觀結構表（四個半徑、密植生 5.1%、塊區 1 個、圖說有 Sentinel-2）', !!lf && /<th>500 m<\/th><th>1 km<\/th><th>5 km<\/th><th>10 km<\/th>/.test(lf[0]) && /密植生（≥ 0.5）<\/th><td>5\.1%<\/td>/.test(lf[0]) && /密植生塊區數<\/th><td>1<\/td>/.test(lf[0]) && /Sentinel-2 NDVI 中位數合成（2025-11-01～2026-11-01，5 景/.test(lf[0]) && !/HEALS:LANDSCAPE/.test(wrapped), lf ? lf[0].slice(0, 500) : wrapped.slice(0, 300));
+check('wrapReport 把標記換成景觀結構表（四個半徑、密植生 5.1%、密植生塊區 1 個、水體塊區群組、圖說有 Sentinel-2）', !!lf && /<th>500 m<\/th><th>1 km<\/th><th>5 km<\/th><th>10 km<\/th>/.test(lf[0]) && /密植生（≥ 0.5）<\/th><td>5\.1%<\/td>/.test(lf[0]) && /密植生塊區數<\/th><td>1<\/td>/.test(lf[0]) && /水體塊區（NDVI &lt; 0；8 鄰接，只算此類）/.test(lf[0]) && /水體塊區數<\/th><td>0<\/td><td>1<\/td>/.test(lf[0]) && /Sentinel-2 NDVI 中位數合成（2025-11-01～2026-11-01，5 景/.test(lf[0]) && !/HEALS:LANDSCAPE/.test(wrapped), lf ? lf[0].slice(0, 700) : wrapped.slice(0, 300));
 const FIG = '<figure class="heals-landscape">';
 check('表在第 1 節的表之後、設計警示之前', wrapped.indexOf(FIG) > wrapped.indexOf('未查得') && wrapped.indexOf(FIG) < wrapped.indexOf('class="warn"'), `${wrapped.indexOf('未查得')} < ${wrapped.indexOf(FIG)} < ${wrapped.indexOf('class="warn"')}`);
 const wrappedNoMark = await page.evaluate(a => window.__qiData.wrapReport(a, { lang: 'zh', site: { lat: 24.7958, lon: 121.5543 }, landscape: window.__qiData.ndviSummary(), provenance: { route: 'api', model: 'x', searchCalls: 0, timestamp: new Date().toISOString() } }), art.replace('MARK', ''));
 check('模型漏了標記：表仍放在第 1 節第一張表之後', wrappedNoMark.split(FIG).length === 2 && wrappedNoMark.indexOf(FIG) > wrappedNoMark.indexOf('未查得') && wrappedNoMark.indexOf(FIG) < wrappedNoMark.indexOf('2 物種需求表'), wrappedNoMark.slice(wrappedNoMark.indexOf('<h2>'), wrappedNoMark.indexOf('<h2>') + 400));
 const wrappedNoData = await page.evaluate(a => window.__qiData.wrapReport(a, { lang: 'zh', site: { lat: 24.7958, lon: 121.5543 }, landscape: null, provenance: { route: 'api', model: 'x', searchCalls: 0, timestamp: new Date().toISOString() } }), art.replace('MARK', '<!--HEALS:LANDSCAPE-->'));
 check('沒有 NDVI 資料：只移除標記、不插表', !wrappedNoData.includes(FIG) && !/HEALS:LANDSCAPE/.test(wrappedNoData), wrappedNoData.slice(wrappedNoData.indexOf('<h2>'), wrappedNoData.indexOf('<h2>') + 200));
-check('wrapReport 的表內數字與面板相同（最大塊區 4.0 ha）', !!lf && /最大塊區（ha・佔比）<\/th><td>4\.0 · 5\.1%<\/td>/.test(lf[0]), lf ? (lf[0].match(/最大塊區[^\n]{0,80}/) || [])[0] : '');
+check('wrapReport 的表內數字與面板相同（密植生最大塊區 4.0 ha）', !!lf && /密植生最大塊區（ha・佔比）<\/th><td>4\.0 · 5\.1%<\/td>/.test(lf[0]), lf ? (lf[0].match(/密植生最大塊區[^\n]{0,80}/) || [])[0] : '');
 
 // 報告檢視區：標題列顯示報告的 <h1> 與時間；查證以規則完成的附註用中性樣式
 await page.evaluate(h => window.__qiData.showResult(h, { trusted: true, ts: '2026-11-10T06:50:00+08:00', filter: { status: 'rules', why: 'revise_added', wt: 'AI 改寫加入了 1 處原報告沒有的內容（已刪除）', excluded: [{ k: 'ref', l: 'x' }], repaired: [], at: '2026-11-10T06:55:00+08:00' } }), wrapped);

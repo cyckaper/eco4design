@@ -23,7 +23,11 @@
 // 是通用值、不是在地校正過的分類；塊區是依門檻切出來的，不是土地覆蓋圖。這些話跟著資料回傳，
 // 前端放進提示詞與報告附錄。
 //
-// 請求（GET）：/api/ndvi?lat=&lon=&months=12|24
+// 塊區（patch）是「同一類」的連續區域：水體、無植生／人工鋪面、低植生、密植生四類各自切塊、各自算指標，
+// 不同類型不合併（2026-11-10 起；之前把 ≥0.2 的低植生與密植生合成一個「植生」類一起算）。
+//
+// 請求（GET）：/api/ndvi?lat=&lon=&months=12|24&v=2
+//   v 是回應格式版本（CDN 快取鍵的一部分）：格式改變時前端換 v，舊的快取就不會再被拿到
 //   用 GET 是為了讓 Netlify 的 CDN 快取（Netlify-CDN-Cache-Control）接手：同一個基地、同一個月，
 //   全班五十個人只算一次。期間取「本月 1 日往前 N 個月」，所以一個月內鍵值不變。
 // 回應：見檔尾組裝處。
@@ -391,6 +395,7 @@ export function medianComposite(layers, n) {
 // 邊緣只算圓內兩個有值像元之間的類別交界（不算圓周、不算無資料邊）。
 // 有效網目大小（effective mesh size, Jaeger 2000）＝ Σ 塊區面積² ／ 景觀面積：
 // 兩個隨機落點在同一塊區的機率乘以景觀面積，越小表示越破碎。
+// 四個覆蓋類型（水體 < tW、無植生 [tW,tV)、低植生 [tV,tD)、密植生 ≥ tD）各自算一組（FRAGSTATS 的 class level）。
 export function landscapeMetrics(med, w, h, cx, cy, radiusPx, labels) {
   const r2 = radiusPx * radiusPx;
   const rmin = Math.max(0, Math.floor(cy - radiusPx) - 1), rmax = Math.min(h - 1, Math.ceil(cy + radiusPx) + 1);
@@ -419,7 +424,7 @@ export function landscapeMetrics(med, w, h, cx, cy, radiusPx, labels) {
   const haPerPx = (PIXEL_M * PIXEL_M) / 10000;
   const out = {
     r: Math.round(radiusPx * PIXEL_M), pixels: nIn, valid: nValid, validShare: nIn ? nValid / nIn : 0,
-    areaHa: nValid * haPerPx, ndvi: null, classes: null, veg: null, dense: null,
+    areaHa: nValid * haPerPx, ndvi: null, classes: null, patch: null,
   };
   if (!nValid) return out;
   const quantile = p => { let acc = 0; const target = p * nValid; for (let i = 0; i < hist.length; i++) { acc += hist[i]; if (acc > target) return (i - 10000) / 10000; } return 1; };
@@ -429,18 +434,20 @@ export function landscapeMetrics(med, w, h, cx, cy, radiusPx, labels) {
   // labels 只用外接方框的那一段（索引同 inside／val），大小夠：labels.length ≥ w*h ≥ bw*bh。
   const lab = labels.subarray(0, bw * bh);
   const stack = new Int32Array(bw * bh);
-  const patchStats = thr => {
+  // 一個覆蓋類型的塊區指標：類型 = lo ≤ NDVI×10000 < hi 的像元
+  const patchStats = (lo, hi) => {
     lab.fill(0);
+    const inCls = i => inside[i] && val[i] >= lo && val[i] < hi;
     let edge = 0, total = 0, largest = 0, sumSq = 0, nPatch = 0;
     for (let r = 0; r < bh; r++) {
       for (let c = 0; c < bw; c++) {
         const i = r * bw + c;
-        if (!inside[i] || val[i] < thr) continue;
-        // 右、下、左、上
-        if (c + 1 < bw && inside[i + 1] && val[i + 1] < thr) edge++;
-        if (r + 1 < bh && inside[i + bw] && val[i + bw] < thr) edge++;
-        if (c > 0 && inside[i - 1] && val[i - 1] < thr) edge++;
-        if (r > 0 && inside[i - bw] && val[i - bw] < thr) edge++;
+        if (!inCls(i)) continue;
+        // 右、下、左、上：鄰居在圓內、有值、但不是同一類 → 一條邊
+        if (c + 1 < bw && inside[i + 1] && !inCls(i + 1)) edge++;
+        if (r + 1 < bh && inside[i + bw] && !inCls(i + bw)) edge++;
+        if (c > 0 && inside[i - 1] && !inCls(i - 1)) edge++;
+        if (r > 0 && inside[i - bw] && !inCls(i - bw)) edge++;
         if (lab[i]) continue;
         const id = ++nPatch;
         let area = 0, sp = 0;
@@ -454,7 +461,7 @@ export function landscapeMetrics(med, w, h, cx, cy, radiusPx, labels) {
             const base = nr * bw;
             for (let nc = c0; nc <= c1; nc++) {
               const q = base + nc;
-              if (lab[q] || !inside[q] || val[q] < thr) continue;
+              if (lab[q] || !inCls(q)) continue;
               lab[q] = id; stack[sp++] = q;
             }
           }
@@ -474,8 +481,13 @@ export function landscapeMetrics(med, w, h, cx, cy, radiusPx, labels) {
       densityPer100Ha: landscapeHa ? nPatch / landscapeHa * 100 : 0,
     };
   };
-  out.veg = patchStats(tV);
-  out.dense = patchStats(tD);
+  // 每一類各自一組；不提供合併的「植生」類（低植生與密植生是不同類型的塊區，不合在一起算）
+  out.patch = {
+    water: patchStats(-32767, tW),
+    bare: patchStats(tW, tV),
+    low: patchStats(tV, tD),
+    dense: patchStats(tD, 32767),
+  };
   return out;
 }
 
@@ -640,8 +652,8 @@ function buildNotes(nScenes, period) {
   return [
     `NDVI 為 ${period.start}～${period.end} 期間 ${nScenes} 景 Sentinel-2 Level-2A 影像、經 SCL 雲遮罩後的逐像元中位數合成，像元 10 m。`,
     '植生（NDVI ≥ 0.2）與密植生（NDVI ≥ 0.5）是通用門檻，不是在地校正的土地覆蓋分類；農田、人工草坪也會被算成植生，密植生不等於天然林。',
-    'NDVI 量的是綠色生物量與活力，不是棲地品質；塊區（patch）是依門檻切出來的連續像元（8 鄰接），不是依土地利用或植群調查劃分。',
-    '水域以 NDVI < 0 判定，會把陰影、裸露濕地一併算進去；山區陡坡的陰影也可能壓低 NDVI。',
+    'NDVI 量的是綠色生物量與活力，不是棲地品質；塊區（patch）是同一覆蓋類型（水體、無植生、低植生、密植生）依門檻切出來的連續像元（8 鄰接），四類分別計算、不合併，不是依土地利用或植群調查劃分。',
+    '水體以 NDVI < 0 判定，會把陰影、裸露濕地一併算進去；山區陡坡的陰影也可能壓低 NDVI。',
     '半徑 500 m 與 1 km 說明基地及其周邊的綠量與破碎程度；5 km 與 10 km 說明基地所在的景觀基質，供活動範圍大的物種（猛禽、中大型哺乳類）與連結度討論使用。',
   ];
 }
@@ -668,7 +680,7 @@ export default async (request, context) => {
   if (lon === null || lon < -180 || lon > 180) return json(400, { error: 'lon out of range' }, cors);
 
   // 四位小數（約 11 m）當鍵：微調基地點不該讓快取失效
-  const key = `${lat.toFixed(4)}|${lon.toFixed(4)}|${months}|${periodFor(months).start}`;
+  const key = `${lat.toFixed(4)}|${lon.toFixed(4)}|${months}|${periodFor(months).start}|${q.v || ''}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
     cache.delete(key); cache.set(key, hit);
@@ -701,7 +713,7 @@ function cdnCache() {
   return {
     'cache-control': 'public, max-age=3600',
     'netlify-cdn-cache-control': 'public, max-age=86400, durable',
-    'netlify-vary': 'query=lat|lon|months',
+    'netlify-vary': 'query=lat|lon|months|v',
   };
 }
 
