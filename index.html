@@ -285,6 +285,10 @@
   .ndvi-results { display: none; }
   .ndvi-results.on { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 14px; align-items: start; }
   @media (max-width: 760px) { .ndvi-results.on { grid-template-columns: 1fr; } }
+  /* 手機上表格的最小寬度（不換行的列標題與分段標題）會把整個格線撐寬、整頁變成可以左右捲（2026-11-15 iPhone 上看到）：
+     格線項目可以縮，表格太寬時只在自己的框裡左右捲；分段標題與手機上的列標題可以換行 */
+  .ndvi-results.on > div { min-width: 0; }
+  #ndviTable { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .ndvi-map { width: 100%; aspect-ratio: 1; min-height: 220px; border: 1px solid var(--border-soft); border-radius: 3px; background: #eef0e6; }
   .ndvi-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-family: var(--serif); font-size: 10.5px; color: var(--ink-soft); margin-top: 6px; }
   .ndvi-ramp { flex: 1 1 90px; height: 9px; border-radius: 2px; background: linear-gradient(90deg, #a67646, #d6be6e, #96be5a, #3c8c3c, #10501e); }
@@ -294,7 +298,8 @@
   .ndvi-table th { font-weight: 500; color: var(--moss); font-size: 11.5px; }
   .ndvi-table th:first-child, .ndvi-table td:first-child { text-align: left; }
   .ndvi-table tbody th { text-align: left; color: var(--ink-soft); font-weight: 400; }
-  .ndvi-table tr.ndvi-sect th { padding-top: 9px; color: var(--moss); font-weight: 500; font-size: 11.5px; letter-spacing: 0.02em; }
+  .ndvi-table tr.ndvi-sect th { padding-top: 9px; color: var(--moss); font-weight: 500; font-size: 11.5px; letter-spacing: 0.02em; white-space: normal; }
+  @media (max-width: 760px) { .ndvi-table tbody th { white-space: normal; min-width: 6.5em; } }
   .ndvi-bar { display: inline-flex; width: 100%; height: 10px; border-radius: 2px; overflow: hidden; background: rgba(255,255,255,0.6); border: 1px solid var(--border-soft); }
   .ndvi-bar span { display: block; height: 100%; }
   .ndvi-scenes { font-family: var(--serif); font-size: 11px; color: var(--ink-soft); line-height: 1.6; margin-top: 8px; }

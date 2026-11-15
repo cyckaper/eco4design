@@ -244,6 +244,29 @@ await page.route('**/*', async route => {
 await page.evaluate(() => window.__qiData.setLocation(25.03, 121.56));
 await page.waitForFunction(() => /失敗/.test(document.getElementById('ndviStatus').textContent), null, { timeout: 15000 });
 check('伺服器回錯誤：狀態列顯示中文原因', /NDVI 分析失敗：這段期間內沒有雲量可用的 Sentinel-2 影像/.test(await page.locator('#ndviStatus').textContent()), await page.locator('#ndviStatus').textContent());
+// 手機寬度：面板的表格不可以把整頁撐寬（2026-11-15 之前 iPhone 上整頁可以左右捲 151 px）
+{
+  const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, locale: 'zh-TW' });
+  const mp = await mctx.newPage();
+  mp.on('pageerror', e => errors.push('mobile pageerror: ' + String(e.message || e)));
+  await mp.route('**/*', async route => {
+    const url = route.request().url();
+    if (url.includes('/api/ndvi')) return route.fulfill({ status: 200, contentType: 'application/json', body: sample });
+    if (url.startsWith(`http://127.0.0.1:${port}/`)) return route.continue();
+    for (const [suffix, [file, type]] of Object.entries(localFile)) {
+      if (url.includes(suffix)) return haveLeaflet ? route.fulfill({ status: 200, contentType: type, body: readFileSync(file) }) : route.abort();
+    }
+    if (/\.(png|jpg|jpeg|webp)(\?|$)/i.test(url) || /tile/i.test(url)) return route.fulfill({ status: 200, contentType: 'image/png', body: PNG_1X1 });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"elements":[],"results":[],"models":[],"total_results":0,"groups":[],"species":[]}' });
+  });
+  await mp.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'load' });
+  await mp.evaluate(() => window.__qiData.setLocation(24.7958, 121.5543));
+  await mp.waitForFunction(() => document.getElementById('ndviResults').classList.contains('on'), null, { timeout: 15000 });
+  await mp.waitForTimeout(400);
+  const m = await mp.evaluate(() => ({ vw: document.documentElement.clientWidth, sw: document.documentElement.scrollWidth, map: Math.round(document.getElementById('ndviMap').getBoundingClientRect().width), tbl: (() => { const t = document.getElementById('ndviTable'); return { client: t.clientWidth, scroll: t.scrollWidth }; })() }));
+  check('手機（390 px）：整頁不會左右捲，小地圖在畫面內，表格太寬時只在自己的框裡左右捲', m.sw <= m.vw && m.map <= m.vw && m.tbl.client <= m.vw, JSON.stringify(m));
+  await mctx.close();
+}
 check('沒有頁面錯誤', errors.length === 0, errors.join('\n'));
 
 await browser.close();
