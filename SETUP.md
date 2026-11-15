@@ -270,7 +270,7 @@ STAC 用整個視窗（不是基地那一點）查景，一次 1,000 筆、只�
 
 ```bash
 node test/ndvi.test.mjs       # 投影、COG 讀取、雲遮罩、各類塊區指標手算對照、跨圖幅拼接、預覽圖讀回、逾時只少幾景、HTTP 層（49 項，不需網路）
-node test/ndvi-ui.mjs         # 面板、小地圖（含縮放）、跨圖幅標示、提示詞、報告表、判讀依據、匯出、附錄、語言切換（51 項，需要 playwright 與 /tmp/lf 的 Leaflet）
+node test/ndvi-ui.mjs         # 面板、小地圖（含縮放）、跨圖幅標示、提示詞、報告表、判讀依據、匯出、附錄、語言切換（53 項，需要 playwright 與 /tmp/lf 的 Leaflet）
 node test/tool-datasets.test.mjs   # 查證把 Sentinel-2 認成本工具資料集（與 TBN 一起，40 項）
 ```
 
