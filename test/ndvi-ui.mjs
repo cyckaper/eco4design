@@ -108,6 +108,17 @@ if (haveLeaflet) {
   check('跨圖幅：狀態列寫「圖幅 51QTF＋51QTG 拼接」', /圖幅 51QTF＋51QTG 拼接/.test(st), st);
   check('10 km 圓有一成不在任何圖幅內：提醒那部分沒有資料', /約 10(\.0)?% 不在任何可用的 Sentinel-2 圖幅內/.test(nt), nt);
   check('說明區塊：這次查詢寫出兩個圖幅、第 1 節說明同一天的相鄰圖幅拼接', /圖幅 51QTF＋51QTG 拼接/.test(mt) && /同一天、同一軌道的相鄰圖幅拼接成一景/.test(mt), mt.slice(0, 300));
+  // 時間內來不及讀的景：寫在「使用影像」那一行、不進提醒框；真的讀取失敗才提醒
+  const timed = JSON.parse(sample);
+  timed.skipped = [{ id: 'X1', date: '2026-09-18', why: 'time' }, { id: 'X2', date: '2026-10-31', why: 'time' }];
+  await page.evaluate(d => window.__qiData.renderNdvi(d), timed);
+  const sc1 = await page.locator('#ndviScenes').textContent();
+  const hidden1 = await page.locator('#ndviNote').evaluate(e => e.style.display === 'none');
+  check('2 景時間內來不及讀：寫在使用影像那一行（另 2 景時間內來不及讀，未納入），不跳提醒框', /另 2 景時間內來不及讀，未納入/.test(sc1) && hidden1, `${sc1} | hidden=${hidden1}`);
+  timed.skipped.push({ id: 'X3', date: '2026-08-01', why: 'http_503' });
+  await page.evaluate(d => window.__qiData.renderNdvi(d), timed);
+  const nt2 = await page.locator('#ndviNote').textContent();
+  check('有一景讀取失敗（http_503）：提醒框寫出來', /1 景讀取失敗（http_503），未納入/.test(nt2) && !/time/.test(nt2), nt2);
   // 還原成正常查詢的結果（含抓取時間，後面的資料集檢查要用）
   await page.evaluate(d => window.__qiData.renderNdvi({ ...d, __fetchedAt: new Date().toISOString(), __months: 12 }), JSON.parse(sample));
 }

@@ -3161,8 +3161,14 @@ out tags center;`;
     document.getElementById('ndviTable').innerHTML = h;
 
     const obs = data.observations || {};
+    // 沒用上的景：時間內來不及讀、整片被雲遮是常態，寫在這一行就好；真的讀取失敗才放進提醒框
+    const skipped = Array.isArray(data.skipped) ? data.skipped : [];
+    const ROUTINE = ['time', 'all_masked', 'grid'];
+    const skipLabel = { time: en ? 'not read within the time budget' : '時間內來不及讀', all_masked: en ? 'fully clouded' : '整片被雲遮', grid: en ? 'grid mismatch' : '格網對不齊' };
+    const routine = ROUTINE.map(k => [k, skipped.filter(x => x.why === k).length]).filter(([, n]) => n);
+    const routineTxt = routine.length ? (en ? ` (another ${routine.map(([k, n]) => `${n} ${skipLabel[k]}`).join(', ')}; not used)` : `（另 ${routine.map(([k, n]) => `${n} 景${skipLabel[k]}`).join('、')}，未納入）`) : '';
     document.getElementById('ndviScenes').innerHTML =
-      `<b>${en ? 'Scenes' : '使用影像'}</b>：${scenes.map(x => `${x.date}（${en ? 'cloud' : '雲'} ${Math.round(x.cloud)}%）`).join(en ? ', ' : '、')}<br>`
+      `<b>${en ? 'Scenes' : '使用影像'}</b>：${scenes.map(x => `${x.date}（${en ? 'cloud' : '雲'} ${Math.round(x.cloud)}%）`).join(en ? ', ' : '、')}${routineTxt}<br>`
       + (en ? `Pixels with ≥ 3 cloud-free observations: ${pct(obs.ge3Share || 0)} · no observation: ${pct(obs.noData || 0, 1)}`
             : `≥ 3 次無雲觀測的像元：${pct(obs.ge3Share || 0)}・整年沒有無雲觀測：${pct(obs.noData || 0, 1)}`)
       + (data.timing ? `<br>${en ? 'computed in' : '計算時間'} ${(data.timing.totalMs / 1000).toFixed(1)} s` : '');
@@ -3172,7 +3178,8 @@ out tags center;`;
     if (scenes.length < 3) warn.push(en ? `Only ${scenes.length} scene(s) were usable; the composite may carry residual cloud or season bias.` : `只有 ${scenes.length} 景可用，合成結果可能帶殘雲或季節偏差。`);
     if ((obs.noData || 0) > 0.05) warn.push(en ? `${pct(obs.noData)} of pixels had no cloud-free observation in the period (treated as missing).` : `${pct(obs.noData)} 的像元整個期間都沒有無雲觀測（視為缺值）。`);
     if (data.source && data.source.windowCoverage != null && data.source.windowCoverage < 0.99) warn.push(en ? `About ${pct(1 - data.source.windowCoverage)} of the 10 km circle lies outside every available Sentinel-2 tile (e.g. open sea); that part has no data.` : `10 km 圓內約 ${pct(1 - data.source.windowCoverage)} 不在任何可用的 Sentinel-2 圖幅內（例如外海），那部分沒有資料。`);
-    if (data.skipped && data.skipped.length) warn.push(en ? `${data.skipped.length} scene(s) skipped (${data.skipped.map(x => x.why).join(', ')}).` : `跳過 ${data.skipped.length} 景（${data.skipped.map(x => x.why).join('、')}）。`);
+    const failedReads = skipped.filter(x => !ROUTINE.includes(x.why));
+    if (failedReads.length) warn.push(en ? `${failedReads.length} scene(s) could not be read (${failedReads.map(x => x.why).join(', ')}) and were left out.` : `${failedReads.length} 景讀取失敗（${failedReads.map(x => x.why).join('、')}），未納入。`);
     note.style.display = warn.length ? '' : 'none';
     note.textContent = warn.join(' ');
 
