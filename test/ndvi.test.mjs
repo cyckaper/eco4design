@@ -7,17 +7,18 @@
 //   - COG 讀取：IFD、tile 表、predictor 還原、視窗跨 tile、視窗超出影像的部分留 no data
 //   - 雲遮罩：SCL 標為雲的像元不進中位數，即使它的 NDVI 看起來正常
 //   - 景觀指標：已知圖形（一塊 20×20 像元的密植生、一塊 10×10 的水）算出來的覆蓋、塊區、邊緣、有效網目與手算一致
-//   - 預覽圖是合法的 PNG；回應含來源、期間、景與說明
+//   - 預覽圖是合法的 PNG（10 m、每列濾波可還原），基地、密植生、圓外的顏色在對的位置；回應含來源、期間、景與說明
+//   - 視窗跨圖幅：同一天的相鄰圖幅拼成一景，跨接縫的塊區仍是一塊；後面的圖幅只讀前面沒涵蓋的部分
 //   - 抓取逾時只是少幾景，不是整個失敗
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { deflateSync } from 'node:zlib';
+import { deflateSync, inflateSync } from 'node:zlib';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'netlify', 'functions', 'ndvi.mjs');
 const mod = await import('data:text/javascript;base64,' + Buffer.from(
   readFileSync(SRC, 'utf8').replace(/from 'node:/g, "from 'node:")).toString('base64'));
-const { toUtm, fromUtm, periodFor, parseIfd0, cogHeader, readWindow, pickScenes, medianComposite, landscapeMetrics, analyze, RADII_M, THRESHOLDS } = mod;
+const { toUtm, fromUtm, periodFor, parseIfd0, cogHeader, readWindow, planScenes, circleSamples, mosaicPlan, encodePalettePng, medianComposite, landscapeMetrics, analyze, RADII_M, THRESHOLDS } = mod;
 const handler = mod.default;
 
 const results = [];
@@ -27,6 +28,28 @@ const check = (name, pass, got) => {
   if (!pass) failed++;
 };
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
+
+// 讀回 8 位元調色盤 PNG（驗證編碼與每列濾波）：回 { w, h, idx }
+function decodePalettePng(buf) {
+  const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20);
+  const parts = [];
+  for (let o = 8; o < buf.length;) {
+    const len = buf.readUInt32BE(o), type = buf.toString('ascii', o + 4, o + 8);
+    if (type === 'IDAT') parts.push(buf.subarray(o + 8, o + 8 + len));
+    o += 12 + len;
+  }
+  const raw = inflateSync(Buffer.concat(parts));
+  const idx = new Uint8Array(w * h);
+  const paeth = (a, b, c) => { const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c); return pa <= pb && pa <= pc ? a : pb <= pc ? b : c; };
+  for (let r = 0; r < h; r++) {
+    const ft = raw[r * (w + 1)];
+    for (let c = 0; c < w; c++) {
+      const x = raw[r * (w + 1) + 1 + c], a = c ? idx[r * w + c - 1] : 0, b = r ? idx[(r - 1) * w + c] : 0, cc = r && c ? idx[(r - 1) * w + c - 1] : 0;
+      idx[r * w + c] = (x + (ft === 0 ? 0 : ft === 1 ? a : ft === 2 ? b : ft === 3 ? (a + b) >> 1 : paeth(a, b, cc))) & 255;
+    }
+  }
+  return { w, h, idx };
+}
 
 // ── 1. 投影：與 pyproj 3.8（EPSG:326xx／327xx）比對 ──────────────────────────
 const REF = [[25.034, 121.5645, 51, 355174.205, 2769480.345], [23.673, 120.795, 51, 275126.161, 2619761.831],
@@ -208,14 +231,34 @@ STAC_FEATURES = [
   makeScene('FAR2', '2026-06-01', 2, { gridCode: 'MGRS-51RUG', geom: FAR_GEOM }),
 ];
 
-// pickScenes：選對格、分季
+// planScenes：選 UTM 帶、依日期併景、分季
+const SAMPLES = circleSamples({ x: PX, y: PY }, ZONE, true, 10000);
 {
-  const corners = [[-10000, -10000], [10000, -10000], [-10000, 10000], [10000, 10000]].map(([dx, dy]) => corner(PX + dx, PY + dy));
-  const picked = pickScenes(STAC_FEATURES, corners, 8);
-  check('pickScenes 選四角都在資料範圍內的 MGRS 格，不選雲量最低但只蓋一角的那格', picked.grid === 'MGRS-51RUH' && picked.cover === 4, JSON.stringify({ grid: picked.grid, cover: picked.cover }));
-  check('pickScenes 分季取景、依日期排序', picked.scenes.map(f => f.id).join(',') === 'S1,S5,S2,S3,S4', picked.scenes.map(f => f.id).join(','));
-  const few = pickScenes(STAC_FEATURES.filter(f => /^S/.test(f.id)), corners, 2);
-  check('pickScenes 上限 2 景：兩個不同季別中雲量最低的（S1、S4）', few.scenes.map(f => f.id).join(',') === 'S1,S4', few.scenes.map(f => f.id).join(','));
+  const plan = planScenes(STAC_FEATURES, SAMPLES, { maxScenes: 8, preferZone: ZONE });
+  const ids = plan.dates.map(d => d.items.map(f => f.id).join('+')).join(',');
+  check('planScenes：51 帶、整個圓都有資料、只要 1 個圖幅；只擦到視窗一角的日期（涵蓋 < 兩成）不考慮', plan.epsg === 32651 && plan.coverage === 1 && plan.tilesNeeded === 1 && plan.grids.join() === '51RUH' && !/FAR/.test(ids),
+    JSON.stringify({ epsg: plan.epsg, coverage: plan.coverage, need: plan.tilesNeeded, grids: plan.grids, ids }));
+  check('planScenes：分季取景、依日期排序', ids === 'S1,S5,S2,S3,S4', ids);
+  const loose = planScenes(STAC_FEATURES, SAMPLES, { maxScenes: 8, preferZone: ZONE, minCoverage: 0 });
+  const farCov = loose.dates.filter(d => /FAR/.test(d.items[0].id)).map(d => d.coverage);
+  check('只擦到一角的日期涵蓋率很低、排在最後（門檻設 0 時才會被選）', farCov.length === 2 && farCov.every(c => c > 0 && c < 0.05), JSON.stringify(farCov));
+  const few = planScenes(STAC_FEATURES.filter(f => /^S/.test(f.id)), SAMPLES, { maxScenes: 2 });
+  check('planScenes 上限 2 景：兩個不同季別中雲量最低的（S1、S4）', few.dates.map(d => d.items[0].id).join(',') === 'S1,S4', few.dates.map(d => d.items[0].id).join(','));
+}
+
+// encodePalettePng：每列挑的濾波（None／Sub／Up／Paeth）都要能原樣還原
+{
+  const w = 301, h = 157, idx = new Uint8Array(w * h);
+  let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) {
+    const zone = Math.floor(r / 40);
+    idx[r * w + c] = zone === 0 ? 0 : zone === 1 ? 3 + ((c >> 3) % 61) : zone === 2 ? 3 + Math.floor(rnd() * 61) : 3 + ((r + c) % 61);
+  }
+  const png = Buffer.from(encodePalettePng(idx, w, h), 'base64');
+  const back = decodePalettePng(png);
+  let bad = 0; for (let i = 0; i < idx.length; i++) if (back.idx[i] !== idx[i]) bad++;
+  const filters = new Set(); const raw = inflateSync(Buffer.concat([png.subarray(8 + 25 + 12 + 64 * 3 + 12 + 64 + 8, png.length - 12 - 4)]));
+  check('PNG 每列濾波可原樣還原（301×157，含透明、漸層、雜訊、斜紋）', back.w === w && back.h === h && bad === 0, `bad=${bad} ${back.w}×${back.h}`);
 }
 
 // 手算期望值（獨立於 landscapeMetrics 的實作）
@@ -239,13 +282,19 @@ check('analyze 完成且不報錯', !res.error, JSON.stringify(res).slice(0, 300
 if (process.env.NDVI_FIXTURE) (await import('node:fs')).writeFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'ndvi_sample.json'), JSON.stringify({ ...res, cache: 'miss', ms: 1234 }));
 if (!res.error) {
   check('用了 5 景（本格全部），跳過 0 景', res.scenes.length === 5 && res.skipped.length === 0, JSON.stringify({ scenes: res.scenes.map(s => s.id), skipped: res.skipped }));
-  check('回應含來源、期間、門檻、說明與預覽', res.source.grid === 'MGRS-51RUH' && res.period.start === '2025-11-01' && res.thresholds.veg === 0.2 && res.notes.length >= 4 && res.preview && res.preview.png.startsWith('data:image/png;base64,'), Object.keys(res).join(','));
+  check('回應含來源、期間、門檻、說明與預覽', res.source.grid === '51RUH' && res.source.grids.join() === 'MGRS-51RUH' && res.source.windowCoverage === 1 && !res.notes.some(n => /拼接/.test(n)) && res.period.start === '2025-11-01' && res.thresholds.veg === 0.2 && res.notes.length >= 4 && res.preview && res.preview.png.startsWith('data:image/png;base64,'), Object.keys(res).join(','));
   const png = Buffer.from(res.preview.png.split(',')[1], 'base64');
   const sig = png.subarray(0, 8).toString('hex') === '89504e470d0a1a0a';
   const pw = png.readUInt32BE(16), ph = png.readUInt32BE(20);
-  check('預覽圖是 PNG，寬 384、高接近 384（方形視窗）、8 位元調色盤', sig && pw === 384 && Math.abs(ph - 384) <= 8 && png[24] === 8 && png[25] === 3, `${sig} ${pw}×${ph} depth ${png[24]} type ${png[25]} bytes ${png.length}`);
+  check('預覽圖是 PNG、8 位元調色盤，像元約 10 m（20 km 視窗轉成經緯度外框約 2,000 像元寬）', sig && pw >= 1990 && pw <= 2100 && Math.abs(ph - pw) <= 40 && png[24] === 8 && png[25] === 3 && near(res.preview.pixelM, 10, 0.3),
+    `${sig} ${pw}×${ph} depth ${png[24]} type ${png[25]} bytes ${png.length} pixelM ${res.preview.pixelM}`);
   const b = res.preview.bounds;
   check('預覽邊界含基地點，約 20 km 見方', b[0][0] < site.lat && site.lat < b[1][0] && b[0][1] < site.lon && site.lon < b[1][1] && near((b[1][0] - b[0][0]) * 111000, 20000, 400), JSON.stringify(b));
+  // 讀回預覽圖：基地是背景色（NDVI 0.3）、密植生（0.8）是最深綠、視窗角落在圓外是透明
+  const dec = decodePalettePng(png);
+  const at = (x, y) => { const q = fromUtm(x, y, ZONE, true); const c = Math.floor((q.lon - b[0][1]) / (b[1][1] - b[0][1]) * dec.w), r = Math.floor((b[1][0] - q.lat) / (b[1][0] - b[0][0]) * dec.h); return dec.idx[r * dec.w + c]; };
+  const pSite = at(PX, PY), pDense = at(X0 + 11205, Y0 - 11205), pWater = at(X0 + 10555, Y0 - 10555), pCorner = at(PX - 9500, PY + 9500);
+  check('預覽圖讀回：基地＝NDVI 0.3 的色階、密植生＝最深綠、水＝藍、圓外＝透明', pSite === 3 + Math.floor(0.3 / 0.8 * 60) && pDense === 63 && pWater === 2 && pCorner === 0, JSON.stringify({ pSite, pDense, pWater, pCorner }));
   const r500 = res.radii.find(x => x.r === 500), r1k = res.radii.find(x => x.r === 1000), r5k = res.radii.find(x => x.r === 5000), r10k = res.radii.find(x => x.r === 10000);
   check('四個半徑都在', res.radii.map(x => x.r).join(',') === '500,1000,5000,10000', res.radii.map(x => x.r).join(','));
   const e500 = expectFor(500), e1k = expectFor(1000);
@@ -265,6 +314,70 @@ if (!res.error) {
   const nRange = requests.filter(u => u.startsWith('mem://')).length;
   check('每景 3 個檔頭 + 9+9 個影像 tile + 9 個 SCL tile 的 Range 請求（5 景 = 150 次）', nRange === 150, nRange);
   check(`整個流程在 8 秒內（${ms} ms）`, ms < 8000, ms + ' ms');
+}
+
+// ── 4b. 跨圖幅：基地在南圖幅北緣以南 600 m，視窗北邊三分之一落在北鄰圖幅 ───────────
+// 北鄰圖幅的原點比南圖幅高 99,960 m（與實際的 50QRL／50QRM 相同），兩個圖幅重疊 9.8 km。
+// 一塊 40×20 像元的密植生跨過南圖幅的北緣（第 -20..19 列）：拼接正確的話仍是 1 個 8 ha 的塊區。
+{
+  const YB = Y0 + 99960;                                               // 北鄰圖幅的原點
+  const CR = 60.4;                                                     // 基地在南圖幅的列（距北緣 604 m）
+  const MX = X0 + C0 * 10, MY = Y0 - CR * 10;
+  const msite = fromUtm(MX, MY, ZONE, true);
+  const geomOf = (ox, oy) => ({ type: 'Polygon', coordinates: [[corner(ox, oy), corner(ox + N10 * 10, oy), corner(ox + N10 * 10, oy - N10 * 10), corner(ox, oy - N10 * 10), corner(ox, oy)]] });
+  // 值用南圖幅的像元座標定義（rA = 列、cA = 欄），兩個圖幅在重疊區給一樣的值
+  const denseM = (rA, cA) => rA >= -20 && rA < 20 && cA >= 1110 && cA < 1130;
+  const files = (name, oy, rows10, rows20) => {
+    const off = (Y0 - oy) / 10;                                        // 這個圖幅的列 + off = 南圖幅的列
+    const base = `mem://${name}/`;
+    FILES.set(base + 'B04.tif', makeCog({ width: N10, height: N10, tileW: 1024, tileH: 1024, bytes: 2, tileFilter: (tr, tc) => rows10.includes(tr) && tc < 3, fill: (r, c) => denseM(r + off, c) ? dn(0.03) : dn(0.05) }));
+    FILES.set(base + 'B08.tif', makeCog({ width: N10, height: N10, tileW: 1024, tileH: 1024, bytes: 2, tileFilter: (tr, tc) => rows10.includes(tr) && tc < 3, fill: (r, c) => denseM(r + off, c) ? dn(0.27) : dn(0.0929) }));
+    FILES.set(base + 'SCL.tif', makeCog({ width: N10 / 2, height: N10 / 2, tileW: 512, tileH: 512, bytes: 1, tileFilter: (tr, tc) => rows20.includes(tr) && tc < 3, fill: () => 4 }));
+    return base;
+  };
+  const baseA = files('TA', Y0, [0, 1], [0, 1]);                       // 南圖幅：視窗只用到第 0–1 列 tile
+  const baseB = files('TB', YB, [8, 9, 10], [8, 9, 10]);               // 北圖幅：只給北邊時會用到 8–10 列
+  const band = [{ nodata: 0, data_type: 'uint16', spatial_resolution: 10, scale: 0.0001, offset: -0.1 }];
+  const item = (id, date, base, oy, grid) => {
+    const asset = (nm, res) => ({ href: base + nm, 'proj:shape': [N10 * 10 / res, N10 * 10 / res], 'proj:transform': [res, 0, X0, 0, -res, oy], 'raster:bands': res === 10 ? band : [{ data_type: 'uint8', spatial_resolution: 20 }] });
+    return { id, geometry: geomOf(X0, oy), properties: { datetime: date + 'T02:41:20Z', 'eo:cloud_cover': 10, 'grid:code': grid, 'proj:epsg': 32651, 's2:nodata_pixel_percentage': 0, 'sat:relative_orbit': 32 },
+      assets: { red: asset('B04.tif', 10), nir: asset('B08.tif', 10), scl: asset('SCL.tif', 20) } };
+  };
+  const saved = STAC_FEATURES;
+  STAC_FEATURES = [
+    item('M1A', '2026-01-10', baseA, Y0, 'MGRS-51RUH'), item('M1B', '2026-01-10', baseB, YB, 'MGRS-51RUJ'),
+    item('M2A', '2026-04-10', baseA, Y0, 'MGRS-51RUH'), item('M2B', '2026-04-10', baseB, YB, 'MGRS-51RUJ'),
+    item('M3A', '2026-07-10', baseA, Y0, 'MGRS-51RUH'),                // 這天只有南圖幅（北圖幅雲太多，沒被查到）
+    item('M4B', '2026-10-10', baseB, YB, 'MGRS-51RUJ'),                // 這天只有北圖幅
+  ];
+  const mplan = planScenes(STAC_FEATURES, circleSamples({ x: MX, y: MY }, ZONE, true, 10000), { preferZone: ZONE });
+  check('跨圖幅：同一天的兩個圖幅併成一景，四個日期都選到；涵蓋率＝1、需要 2 個圖幅', mplan.dates.length === 4 && mplan.dates[0].items.length === 2 && mplan.coverage === 1 && mplan.tilesNeeded === 2 && mplan.grids.join() === '51RUH,51RUJ',
+    JSON.stringify({ n: mplan.dates.length, items: mplan.dates.map(d => d.items.map(f => f.id).join('+')), cov: mplan.coverage, need: mplan.tilesNeeded, grids: mplan.grids }));
+  const onlyA = mplan.dates.find(d => d.date === '2026-07-10'), onlyB = mplan.dates.find(d => d.date === '2026-10-10');
+  check('只有一個圖幅的日期：涵蓋率按實際涵蓋算（南圖幅約一半、北圖幅幾乎全部），分數因此往後排', onlyA.coverage > 0.4 && onlyA.coverage < 0.65 && onlyB.coverage > 0.9 && onlyB.coverage < 1 && onlyA.score > onlyB.score,
+    JSON.stringify({ a: onlyA.coverage, b: onlyB.coverage }));
+  // 讀取計畫：先讀南圖幅（視窗南半，2 列 tile）再讀北圖幅「南圖幅沒涵蓋的部分」（1 列 → 第 8–9 列 tile），比反過來少抓 tile
+  const ref = { x: X0, y: YB };
+  const win = { ref, col0: 100, row0: Math.round(CR) - 1000 + 9996 };
+  win.x0 = ref.x + win.col0 * 10; win.y0 = ref.y - win.row0 * 10;
+  const mp = mosaicPlan(mplan.dates[0].items, win);
+  check('拼接順序：南圖幅負責第 0 列以南、北圖幅只負責第 0 列以北，合計 12 個 10 m tile（反過來要 15 個）', mp.parts.length === 2 && mp.parts[0].f.id === 'M1A' && mp.blocks === 12
+    && mp.parts[1].rects.length === 1 && mp.parts[1].rects[0].r1 === 940 && mp.parts[1].rects[0].r0 === 0 && mp.parts[0].rects[0].r0 === 940,
+    JSON.stringify({ order: mp.parts.map(p => p.f.id), blocks: mp.blocks, rects: mp.parts.map(p => p.rects) }));
+  requests = [];
+  const mres = await analyze(msite.lat, msite.lon, 12, { now: new Date('2026-11-09T05:00:00Z') });
+  check('跨圖幅分析完成，四景都用上', !mres.error && mres.scenes.length === 4 && mres.skipped.length === 0, JSON.stringify(mres.error ? mres : { scenes: mres.scenes.map(x => x.id), skipped: mres.skipped }));
+  if (!mres.error) {
+    const m1k = mres.radii.find(x => x.r === 1000), m10k = mres.radii.find(x => x.r === 10000);
+    check('10 km 圓內全部有值（之前只讀一個圖幅時，北邊那一塊整片是空的）', m10k.validShare === 1 && mres.observations.noData === 0, JSON.stringify({ v10: m10k.validShare, noData: mres.observations.noData }));
+    check('跨接縫的密植生仍是 1 個塊區、8 ha（40×20 像元）', m1k.patch.dense.patches === 1 && near(m1k.patch.dense.largestHa, 8, 1e-9), JSON.stringify(m1k.patch.dense));
+    check('觀測次數：兩圖幅重疊處 4 次、只有一個圖幅的地方 3 次', mres.observations.histogram[4] > 0 && mres.observations.histogram[3] > 0 && mres.observations.histogram[2] === 0, JSON.stringify(mres.observations.histogram));
+    check('回應標出兩個圖幅與拼接說明', mres.source.grid === '51RUH+51RUJ' && mres.source.grids.join() === 'MGRS-51RUH,MGRS-51RUJ' && mres.source.windowCoverage === 1 && mres.notes.some(n => /拼接/.test(n)) && mres.scenes[0].tiles.join() === '51RUH,51RUJ',
+      JSON.stringify({ grid: mres.source.grid, grids: mres.source.grids, cov: mres.source.windowCoverage, tiles: mres.scenes[0].tiles }));
+    const nRange = requests.filter(u => u.startsWith('mem://')).length;
+    check('Range 請求只抓需要的：兩圖幅的日期 6 檔頭 + 12+12 影像 + 12 SCL（×2）、只南 21、只北 30，共 135 次', nRange === 135, nRange);
+  }
+  STAC_FEATURES = saved;
 }
 
 // ── 5. 中位數：偶數個取中間兩者平均、全無效為 NA ───────────────────────────

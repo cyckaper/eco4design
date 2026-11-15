@@ -2962,14 +2962,14 @@ out tags center;`;
     const T = (d && d.thresholds) || { water: 0, veg: 0.2, dense: 0.5 };
     const nS = d && Array.isArray(d.scenes) ? d.scenes.length : null;
     const per = d && d.period ? `${d.period.start}～${d.period.end}` : '';
-    const grid = d && d.source && d.source.grid ? d.source.grid : '';
+    const grid = d && d.source && d.source.grid ? tileLabel(d, en) : '';
     const sec = (title, body) => `<details><summary>${title}</summary>${body}</details>`;
     const fm = x => `<span class="fm">${x}</span>`;
     if (en) {
-      return `<p class="mt-note">Everything below is computed on the server by <code>/api/ndvi</code> from public Sentinel-2 imagery; the panel, the prompt and the report table all show the same numbers.${per ? ` This query: ${per}${nS != null ? `, ${nS} scenes` : ''}${grid ? `, tile ${grid}` : ''}.` : ''}</p>`
-      + sec('1 · Imagery and period', `<p>Copernicus Sentinel-2 Level-2A (atmospherically corrected surface reflectance, Collection 1), found through the Earth Search STAC catalogue (Element 84, AWS). The period runs from the first day of the current month back 12 (or 24) months, so the same site asks for the same scenes all month and is served from cache. Only scenes whose whole-tile cloud cover is below 70% and whose no-data share is below 60% are considered, and only the MGRS 100 km tile that contains the 20 km window around the site (other tiles are ignored).</p>`)
-      + sec('2 · Which scenes are used', `<p>Scenes are grouped by season (calendar quarter of the acquisition date). Each round takes the least cloudy remaining scene from every season, until 8 scenes are chosen, so a 12-month query usually ends with about two scenes per season rather than only the clear winter ones. Scenes that cannot be downloaded within the time budget are listed as skipped and left out.</p>`)
-      + sec('3 · What is read', `<p>A 20 km × 20 km window centred on the site (2,000 × 2,000 pixels at 10 m, in the tile’s own UTM grid). Only the Cloud-Optimized GeoTIFF tiles that intersect the window are fetched, with HTTP range requests: red (B04) and near-infrared (B08) at 10 m and the Scene Classification Layer (SCL) at 20 m, which is resampled to the 10 m grid by pixel duplication.</p>`)
+      return `<p class="mt-note">Everything below is computed on the server by <code>/api/ndvi</code> from public Sentinel-2 imagery; the panel, the prompt and the report table all show the same numbers.${per ? ` This query: ${per}${nS != null ? `, ${nS} scenes` : ''}${grid ? `, ${grid}` : ''}.` : ''}</p>`
+      + sec('1 · Imagery and period', `<p>Copernicus Sentinel-2 Level-2A (atmospherically corrected surface reflectance, Collection 1), found through the Earth Search STAC catalogue (Element 84, AWS). The period runs from the first day of the current month back 12 (or 24) months, so the same site asks for the same scenes all month and is served from cache. Only scenes whose whole-tile cloud cover is below 70% are considered. Sentinel-2 is cut into MGRS tiles 109.8 km square that overlap by only 9.8 km, so whenever the site is less than 10 km from a tile edge the 20 km window reaches into the neighbouring tile (roughly one site in five in Taiwan). The tiles of the same day and orbit are then mosaicked into one scene; within one UTM zone their pixel grids line up exactly, so nothing is resampled. Where two UTM zones overlap (zones 50 and 51 across Taiwan), the zone whose tiles cover the whole window with the fewest tiles is used; zones are never mixed.</p>`)
+      + sec('2 · Which scenes are used', `<p>A scene is one acquisition date (with the neighbouring tiles of that day mosaicked in). Its cloud cover is the tiles’ cloud cover weighted by how much of the 10 km circle each tile supplies; dates that do not cover the whole circle (for example when one of the tiles was too cloudy to be listed) are ranked lower, and dates covering less than a fifth of it are not used. Scenes are grouped by season (calendar quarter of the acquisition date). Each round takes the best remaining scene from every season, until 8 scenes are chosen, so a 12-month query usually ends with about two scenes per season rather than only the clear winter ones. Scenes that cannot be downloaded within the time budget are listed as skipped and left out.</p>`)
+      + sec('3 · What is read', `<p>A 20 km × 20 km window centred on the site (2,000 × 2,000 pixels at 10 m, in the UTM grid of the chosen zone). When the window spans two or more satellite tiles, each tile supplies only the part of the window the previous ones do not cover. Only the Cloud-Optimized GeoTIFF tiles that intersect the window are fetched, with HTTP range requests: red (B04) and near-infrared (B08) at 10 m and the Scene Classification Layer (SCL) at 20 m, which is resampled to the 10 m grid by pixel duplication.</p>`)
       + sec('4 · Cloud mask and NDVI per scene', `<p>SCL keeps classes 2 (shadow-dark areas), 4 (vegetation), 5 (bare), 6 (water) and 7 (unclassified); cloud shadow (3), clouds (8, 9), thin cirrus (10), snow and ice (11), no-data and defective pixels (0, 1) are dropped. Digital numbers become reflectance with the Collection 1 scale and offset ${fm('ρ = DN × 0.0001 − 0.1')} (clipped at 0); pixels with ${fm('ρ_NIR + ρ_red < 0.01')} (no signal) are dropped. Then ${fm('NDVI = (ρ_NIR − ρ_red) / (ρ_NIR + ρ_red)')}, stored as an integer × 10,000.</p>`)
       + sec('5 · Median composite', `<p>For every pixel, the median of its cloud-free NDVI values across the chosen scenes (mean of the two middle values when the count is even). The median is used instead of the maximum because a maximum-value composite leans towards the growing season and picks up cloud-edge artefacts, while the median is robust to residual cloud and shadow. A pixel with no cloud-free observation in the whole period has no value; the panel reports their share when it exceeds 2%.</p>`)
       + sec('6 · Radii, area and observed share', `<p>Four circles of 500 m, 1 km, 5 km and 10 km. A pixel belongs to a circle when its centre is within the radius of the site point. ${fm('Area (ha) = number of pixels with a value × 0.01 ha')}; the observed share is the pixels with a value divided by all pixels in the circle. Every share below is computed over pixels with a value (the “landscape”).</p>`)
@@ -2982,13 +2982,13 @@ out tags center;`;
 <tr><td>Effective mesh size (ha)</td><td>${fm('m_eff = Σ aᵢ² / A')} over all patches aᵢ of that class, with A the landscape area (pixels with a value). It equals the probability that two random points fall in the same patch of that class, times A — the expected patch size seen from a random point. Smaller means more fragmented (Jaeger 2000).</td><td>MESH</td></tr>
 <tr><td>Edge density (m/ha)</td><td>${fm('edge length / landscape area')}. An edge is a 10 m side between a pixel of the class and a neighbouring pixel of any other class (4-neighbour sides); the circle boundary and no-data borders are not counted.</td><td>ED</td></tr>
 <tr><td>Patch density</td><td>${fm('patches per 100 ha')} (in the API response; not shown in the panel table)</td><td>PD</td></tr></table>`)
-      + sec('9 · Preview map', `<p>The median NDVI composite in a green ramp (0 to ≥ 0.8), water in blue, no data in grey, reprojected to latitude/longitude and overlaid on the OpenStreetMap base map at 55% opacity; the circles are the four radii, the dot is the site.</p>`)
+      + sec('9 · Preview map', `<p>The median NDVI composite in a green ramp (0 to ≥ 0.8), water in blue, no data in grey, at the same 10 m resolution as the analysis, reprojected to latitude/longitude (nearest pixel) and laid over a faded OpenStreetMap base map; the circles are the four radii, the dot is the site. Zoom in with + / −, a double tap or two fingers to see individual 10 m pixels.</p>`)
       + sec('10 · How far to trust it', `<p>This is a remote-sensing estimate of green biomass, not a habitat survey: dense vegetation is not necessarily natural forest, thresholds are not locally calibrated, a 12-month median blends seasons, 10 m pixels miss hedgerows and single trees, and cloudy mountain sites may end with fewer scenes (listed under the table). Use 500 m and 1 km for the site and its surroundings, 5 and 10 km for the landscape matrix and connectivity; never report the figures as forest cover or habitat area. References: Jaeger, J. A. G. (2000). Landscape division, splitting index, and effective mesh size. <i>Landscape Ecology</i>, 15, 115–130; McGarigal, K. &amp; Marks, B. J. (1995). FRAGSTATS: spatial pattern analysis program for quantifying landscape structure. USDA Forest Service GTR PNW-351.</p>`);
     }
-    return `<p class="mt-note">以下全部在伺服器端由 <code>/api/ndvi</code> 依公開的 Sentinel-2 影像計算；面板、提示詞和報告裡的表用的是同一組數字。${per ? `這次查詢：${per}${nS != null ? `，${nS} 景` : ''}${grid ? `，圖幅 ${grid}` : ''}。` : ''}</p>`
-    + sec('1 · 影像與期間', `<p>Copernicus Sentinel-2 Level-2A（大氣校正後的地表反射率，Collection 1），透過 Element 84 在 AWS 上的 Earth Search STAC 目錄搜尋。期間從本月 1 日往前推 12（或 24）個月，所以同一基地整個月問的都是同一批影像，可以走快取。只考慮整景雲量低於 70%、空白像元低於 60% 的景，而且只用包含基地周圍 20 km 視窗的那一個 MGRS 100 km 圖幅，其他圖幅不用。</p>`)
-    + sec('2 · 挑哪幾景', `<p>先依拍攝日期的季別（每季三個月）分成四組，每一輪從每一季各取剩下雲量最低的一景，直到湊滿 8 景；所以 12 個月的查詢大致是每季 2 景，不會只剩冬季乾季的晴天。臺灣的無雲景集中在冬季，不分季的話中位數會偏向枯水期。來不及在時間預算內下載完的景列為「跳過」，不納入。</p>`)
-    + sec('3 · 讀取範圍', `<p>以基地為中心 20 km × 20 km 的視窗（10 m 像元 2,000 × 2,000 個，用圖幅本身的 UTM 座標）。只透過 HTTP Range 讀取 COG 檔中與視窗相交的瓦片：紅光 B04 與近紅外 B08（10 m），以及 20 m 的場景分類層 SCL（以像元複製的方式對到 10 m 格網）。</p>`)
+    return `<p class="mt-note">以下全部在伺服器端由 <code>/api/ndvi</code> 依公開的 Sentinel-2 影像計算；面板、提示詞和報告裡的表用的是同一組數字。${per ? `這次查詢：${per}${nS != null ? `，${nS} 景` : ''}${grid ? `，${grid}` : ''}。` : ''}</p>`
+    + sec('1 · 影像與期間', `<p>Copernicus Sentinel-2 Level-2A（大氣校正後的地表反射率，Collection 1），透過 Element 84 在 AWS 上的 Earth Search STAC 目錄搜尋。期間從本月 1 日往前推 12（或 24）個月，所以同一基地整個月問的都是同一批影像，可以走快取。只考慮整景雲量低於 70% 的景。Sentinel-2 依 MGRS 切成 109.8 km 見方的圖幅、彼此只重疊 9.8 km，基地離圖幅邊不到 10 km 時，20 km 的視窗就會跨到相鄰圖幅（臺灣約五分之一的地點）；這時同一天、同一軌道的相鄰圖幅拼接成一景，同一 UTM 帶的圖幅像元格網完全對齊，不需重新取樣。兩個 UTM 帶的圖幅都涵蓋基地時（臺灣在 50、51 帶交界），選能涵蓋整個視窗、要拼的圖幅最少的那一帶，不同帶不混用。</p>`)
+    + sec('2 · 挑哪幾景', `<p>一景是一個拍攝日期（含拼接進來的相鄰圖幅）。每景的雲量是各圖幅雲量依其負責的 10 km 圓面積加權；沒有涵蓋整個圓的日期（例如其中一個圖幅雲太多、沒被列出）往後排，涵蓋不到兩成的不用。先依拍攝日期的季別（每季三個月）分成四組，每一輪從每一季各取剩下最好的一景，直到湊滿 8 景；所以 12 個月的查詢大致是每季 2 景，不會只剩冬季乾季的晴天。臺灣的無雲景集中在冬季，不分季的話中位數會偏向枯水期。來不及在時間預算內下載完的景列為「跳過」，不納入。</p>`)
+    + sec('3 · 讀取範圍', `<p>以基地為中心 20 km × 20 km 的視窗（10 m 像元 2,000 × 2,000 個，用所選 UTM 帶的座標）。視窗跨兩個以上圖幅時，每個圖幅只負責前面圖幅沒涵蓋的部分。只透過 HTTP Range 讀取 COG 檔中與視窗相交的瓦片：紅光 B04 與近紅外 B08（10 m），以及 20 m 的場景分類層 SCL（以像元複製的方式對到 10 m 格網）。</p>`)
     + sec('4 · 雲遮罩與每景的 NDVI', `<p>SCL 只保留 2（暗區／地形陰影）、4（植生）、5（非植生）、6（水）、7（未分類）；雲影（3）、雲（8、9）、卷雲（10）、雪冰（11）、無資料與瑕疵像元（0、1）一律去掉。數值依 Collection 1 的尺度與位移換成反射率 ${fm('ρ = DN × 0.0001 − 0.1')}（負值截為 0）；${fm('ρ_NIR + ρ_red < 0.01')} 的像元（幾乎沒有訊號）也去掉。然後 ${fm('NDVI = (ρ_NIR − ρ_red) / (ρ_NIR + ρ_red)')}，以 ×10,000 的整數儲存。</p>`)
     + sec('5 · 中位數合成', `<p>每個像元取它在各景無雲 NDVI 值的中位數（偶數個時取中間兩個的平均）。不用最大值是因為最大值合成偏向生長季、又會撿到雲邊緣的異常值，中位數對殘雲和陰影比較穩健。整個期間一次無雲觀測都沒有的像元就是無資料；這類像元超過 2% 時面板會提醒。</p>`)
     + sec('6 · 半徑、面積與有效像元', `<p>四個圓：500 m、1 km、5 km、10 km。像元中心到基地點的距離不超過半徑就算圓內。${fm('面積（ha）＝有值像元數 × 0.01 ha')}；有效像元比例＝有值像元÷圓內全部像元。下面所有比例的分母都是有值像元（稱為「景觀」）。</p>`)
@@ -3001,7 +3001,7 @@ out tags center;`;
 <tr><td>有效網目大小（ha）</td><td>${fm('m_eff = Σ aᵢ² ／ A')}，aᵢ 為該類各塊區的面積、A 為景觀面積（有值像元）。意思是兩個隨機落點落在同一塊（同類）塊區的機率乘以 A，也就是「隨機站在一點時，腳下那塊同類塊區平均有多大」；越小越破碎（Jaeger 2000）。</td><td>MESH</td></tr>
 <tr><td>邊緣密度（m/ha）</td><td>${fm('邊緣總長 ÷ 景觀面積')}。邊緣是該類像元與相鄰其他類像元之間那一條 10 m 的邊（上下左右 4 鄰接），圓周與無資料的交界不算。</td><td>ED</td></tr>
 <tr><td>塊區密度</td><td>${fm('每 100 ha 的塊區數')}（在 API 回傳裡；面板的表沒有列）</td><td>PD</td></tr></table>`)
-    + sec('9 · 預覽圖', `<p>中位數 NDVI 以綠色漸層顯示（0 到 ≥ 0.8），水體藍色、無資料灰色，重投影成經緯度後以 55% 不透明度疊在 OpenStreetMap 底圖上；四個圈是四個半徑，圓點是基地。</p>`)
+    + sec('9 · 預覽圖', `<p>中位數 NDVI 以綠色漸層顯示（0 到 ≥ 0.8），水體藍色、無資料灰色；解析度與分析相同為 10 m，重投影成經緯度（取最近像元）後疊在淡化的 OpenStreetMap 底圖上；四個圈是四個半徑，圓點是基地。可以按 ＋／－、點兩下或兩指縮放，放大到看得出一個個 10 m 像元。</p>`)
     + sec('10 · 可以信到什麼程度', `<p>這是遙測推估的綠色生物量，不是棲地調查：密植生不等於天然林，門檻沒有在地校正，12 個月的中位數抹平了季節差，10 m 像元看不到樹籬和單株大樹，雲多的山區可能只湊到較少的景（表下會列出）。500 m 與 1 km 用來看基地及其周邊，5 km 與 10 km 看景觀基質與連結度；不可寫成「森林覆蓋率」或「棲地面積」。參考文獻：Jaeger, J. A. G. (2000). Landscape division, splitting index, and effective mesh size. <i>Landscape Ecology</i>, 15, 115–130；McGarigal, K. &amp; Marks, B. J. (1995). FRAGSTATS: spatial pattern analysis program for quantifying landscape structure. USDA Forest Service GTR PNW-351.</p>`);
   }
   function renderNdviMethod() {
@@ -3047,7 +3047,7 @@ out tags center;`;
     let settle;
     ndviInflight = new Promise(r => { settle = r; });
     try {
-      const url = `/api/ndvi?lat=${state.lat.toFixed(4)}&lon=${state.lon.toFixed(4)}&months=${months}&v=2`;   // v：回應格式版本（CDN 快取鍵）
+      const url = `/api/ndvi?lat=${state.lat.toFixed(4)}&lon=${state.lon.toFixed(4)}&months=${months}&v=3`;   // v：回應格式版本（CDN 快取鍵；3＝跨圖幅拼接、10 m 預覽圖）
       const res = await fetch(url, { signal: ac.signal });
       const body = await res.json().catch(() => null);
       if (seq !== ndviSeq) return;
@@ -3092,10 +3092,18 @@ out tags center;`;
   function ensureNdviMap() {
     if (ndviMap || typeof L === 'undefined') return ndviMap;
     try {
-      ndviMap = L.map('ndviMap', { zoomControl: false, attributionControl: false, scrollWheelZoom: false, dragging: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false });
+      // 可以用 ＋／－、兩指或點兩下放大看 10 m 的細節；單指拖曳只在桌機開（手機上單指留給捲動頁面），滾輪不縮放（免得捲頁時誤觸）
+      ndviMap = L.map('ndviMap', { zoomControl: true, attributionControl: false, scrollWheelZoom: false, dragging: !L.Browser.mobile, doubleClickZoom: true, boxZoom: false, keyboard: false, touchZoom: true, maxZoom: 18, zoomSnap: 0.5 });
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, opacity: 0.55 }).addTo(ndviMap);
     } catch (e) { console.warn('[ndvi] map init failed:', e); ndviMap = null; }
     return ndviMap;
+  }
+
+  // 圖幅：視窗跨圖幅時是兩個以上（同一天的相鄰圖幅拼成一景）
+  function tileLabel(data, en) {
+    const t = String((data.source && data.source.grid) || '').replace(/MGRS-/g, '').split('+').filter(Boolean);
+    if (!t.length) return '';
+    return t.length > 1 ? (en ? `tiles ${t.join(' + ')} (mosaicked)` : `圖幅 ${t.join('＋')} 拼接`) : (en ? `tile ${t[0]}` : `圖幅 ${t[0]}`);
   }
 
   function renderNdvi(data) {
@@ -3109,8 +3117,8 @@ out tags center;`;
     const scenes = Array.isArray(data.scenes) ? data.scenes : [];
     const dates = scenes.map(x => x.date).filter(Boolean).sort();
     status.textContent = en
-      ? `✅ NDVI composite of ${scenes.length} Sentinel-2 scenes, ${data.period.start} – ${data.period.end} · 10 m · tile ${String(data.source.grid || '').replace('MGRS-', '')}${data.cache === 'hit' ? ' · cached' : ''}`
-      : `✅ 完成：${scenes.length} 景 Sentinel-2 的 NDVI 中位數合成（${data.period.start}～${data.period.end}・10 m・圖幅 ${String(data.source.grid || '').replace('MGRS-', '')}）${data.cache === 'hit' ? '・快取' : ''}`;
+      ? `✅ NDVI composite of ${scenes.length} Sentinel-2 scenes, ${data.period.start} – ${data.period.end} · 10 m · ${tileLabel(data, true)}${data.cache === 'hit' ? ' · cached' : ''}`
+      : `✅ 完成：${scenes.length} 景 Sentinel-2 的 NDVI 中位數合成（${data.period.start}～${data.period.end}・10 m・${tileLabel(data, false)}）${data.cache === 'hit' ? '・快取' : ''}`;
     results.classList.add('on');
 
     // 表格：列是指標、欄是四個半徑
@@ -3163,7 +3171,7 @@ out tags center;`;
     const warn = [];
     if (scenes.length < 3) warn.push(en ? `Only ${scenes.length} scene(s) were usable; the composite may carry residual cloud or season bias.` : `只有 ${scenes.length} 景可用，合成結果可能帶殘雲或季節偏差。`);
     if ((obs.noData || 0) > 0.05) warn.push(en ? `${pct(obs.noData)} of pixels had no cloud-free observation in the period (treated as missing).` : `${pct(obs.noData)} 的像元整個期間都沒有無雲觀測（視為缺值）。`);
-    if (data.source && data.source.windowCornersInGrid != null && data.source.windowCornersInGrid < 4) warn.push(en ? 'The 10 km window crosses the edge of the satellite tile; the outer radii are partly unobserved.' : '10 km 視窗跨到衛星圖幅邊界，外圈半徑有一部分沒有資料。');
+    if (data.source && data.source.windowCoverage != null && data.source.windowCoverage < 0.99) warn.push(en ? `About ${pct(1 - data.source.windowCoverage)} of the 10 km circle lies outside every available Sentinel-2 tile (e.g. open sea); that part has no data.` : `10 km 圓內約 ${pct(1 - data.source.windowCoverage)} 不在任何可用的 Sentinel-2 圖幅內（例如外海），那部分沒有資料。`);
     if (data.skipped && data.skipped.length) warn.push(en ? `${data.skipped.length} scene(s) skipped (${data.skipped.map(x => x.why).join(', ')}).` : `跳過 ${data.skipped.length} 景（${data.skipped.map(x => x.why).join('、')}）。`);
     note.style.display = warn.length ? '' : 'none';
     note.textContent = warn.join(' ');
@@ -7292,7 +7300,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
     const v = ndviLastSummary;
     if (v && v.nScenes && v.start && v.end) {
       ds.ndvi = { lat, lon, radius: 10, months: +v.months || 12, start: v.start, end: v.end, scenes: +v.nScenes || 0,
-        grid: String(v.grid || '').slice(0, 20), at: v.fetchedAt || null };
+        grid: String(v.grid || '').slice(0, 40), at: v.fetchedAt || null };
     }
     return ds;
   }
@@ -7402,7 +7410,7 @@ table.hx-key{width:100%;table-layout:fixed;border-collapse:collapse;font-family:
       // Sentinel-2 NDVI（植生與景觀結構）：同樣要被認成本工具的資料集，否則查證會拿 STAC 網址去開、判為無法確認
       if (v && numIn(v.lat, -90, 90) && numIn(v.lon, -180, 180) && /^\d{4}-\d{2}-\d{2}$/.test(String(v.start)) && /^\d{4}-\d{2}-\d{2}$/.test(String(v.end))) {
         ds.ndvi = { lat: v.lat, lon: v.lon, radius: 10, months: v.months === 24 ? 24 : 12, start: v.start, end: v.end,
-          scenes: numIn(v.scenes, 0, 100) ? Math.round(v.scenes) : null, grid: str(v.grid, 20), at: isoOrNull(v.at) };
+          scenes: numIn(v.scenes, 0, 100) ? Math.round(v.scenes) : null, grid: str(v.grid, 40), at: isoOrNull(v.at) };
       }
       out.ds = ds;
     }

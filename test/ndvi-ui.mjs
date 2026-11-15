@@ -85,8 +85,31 @@ if (haveLeaflet) {
   const overlay = await page.locator('#ndviMap .leaflet-image-layer').count();
   const paths = await page.locator('#ndviMap path').count();
   check('小地圖：1 張預覽圖、4 個半徑圈 + 1 個基地點', overlay === 1 && paths === 5, `overlay=${overlay} paths=${paths}`);
+  // 小地圖可以放大看 10 m 的細節：有 ＋／－，按 ＋ 之後預覽圖變大
+  const z0 = await page.evaluate(() => document.querySelector('#ndviMap .leaflet-control-zoom-in') ? 1 : 0);
+  const zoomed = await page.evaluate(async () => {
+    const m = document.querySelector('#ndviMap'); const before = m.querySelector('.leaflet-image-layer').getBoundingClientRect().width;
+    m.querySelector('.leaflet-control-zoom-in').click(); await new Promise(r => setTimeout(r, 600));
+    return m.querySelector('.leaflet-image-layer').getBoundingClientRect().width / before;
+  });
+  check('小地圖有 ＋／－，按 ＋ 會放大預覽圖', z0 === 1 && zoomed > 1.3, `zoomControl=${z0} scale=${zoomed}`);
 } else {
   results.push('SKIP  小地圖（本機沒有 Leaflet：mkdir -p /tmp/lf && cd /tmp/lf && npm i leaflet@1.9.4 leaflet-image@0.4.0）');
+}
+
+// 視窗跨圖幅：狀態列與說明寫出兩個圖幅與「拼接」；10 km 圓有一部分在所有圖幅之外時提醒
+{
+  const mosaic = JSON.parse(sample);
+  mosaic.source = { ...mosaic.source, grid: '51QTF+51QTG', grids: ['MGRS-51QTF', 'MGRS-51QTG'], windowCoverage: 0.9 };
+  await page.evaluate(d => window.__qiData.renderNdvi(d), mosaic);
+  const st = await page.locator('#ndviStatus').textContent();
+  const nt = await page.locator('#ndviNote').textContent();
+  const mt = await page.locator('#ndviMethodBody').textContent();
+  check('跨圖幅：狀態列寫「圖幅 51QTF＋51QTG 拼接」', /圖幅 51QTF＋51QTG 拼接/.test(st), st);
+  check('10 km 圓有一成不在任何圖幅內：提醒那部分沒有資料', /約 10(\.0)?% 不在任何可用的 Sentinel-2 圖幅內/.test(nt), nt);
+  check('說明區塊：這次查詢寫出兩個圖幅、第 1 節說明同一天的相鄰圖幅拼接', /圖幅 51QTF＋51QTG 拼接/.test(mt) && /同一天、同一軌道的相鄰圖幅拼接成一景/.test(mt), mt.slice(0, 300));
+  // 還原成正常查詢的結果（含抓取時間，後面的資料集檢查要用）
+  await page.evaluate(d => window.__qiData.renderNdvi({ ...d, __fetchedAt: new Date().toISOString(), __months: 12 }), JSON.parse(sample));
 }
 
 // 提示詞
@@ -140,7 +163,7 @@ check('未過濾（failed）仍是琥珀色警示（陶土色左框、1px 外框
 
 // 資料集紀錄 → 查證認得 → 附錄
 const ds = await page.evaluate(() => window.__qiData.captureDatasets());
-check('captureDatasets 有 ndvi（座標、期間、景數、圖幅）', ds.ndvi && ds.ndvi.lat === 24.7958 && ds.ndvi.start === '2025-11-01' && ds.ndvi.scenes === 5 && ds.ndvi.grid === 'MGRS-51RUH' && !!ds.ndvi.at, JSON.stringify(ds.ndvi));
+check('captureDatasets 有 ndvi（座標、期間、景數、圖幅）', ds.ndvi && ds.ndvi.lat === 24.7958 && ds.ndvi.start === '2025-11-01' && ds.ndvi.scenes === 5 && ds.ndvi.grid === '51RUH' && !!ds.ndvi.at, JSON.stringify(ds.ndvi));
 const meta = await page.evaluate(() => window.__qiExclusion.compactMeta({ route: 'api', ds: window.__qiData.captureDatasets() }));
 check('compactMeta 保留 ds.ndvi', meta.ds && meta.ds.ndvi && meta.ds.ndvi.scenes === 5, JSON.stringify(meta.ds && meta.ds.ndvi));
 const keys = await page.evaluate(() => [...window.__qiData.toolDatasetKeys({ ds: window.__qiData.captureDatasets() })]);
@@ -157,7 +180,7 @@ check('匯出給總控台的 JSON 有 landscape（四個半徑、期間、門檻
 const mSum = await page.locator('#ndviMethodSummary').textContent();
 const mSecs = await page.locator('#ndviMethodBody > details').count();
 const mBody = await page.locator('#ndviMethodBody').innerHTML();
-check('「這些指標是怎麼算的」區塊：10 個小節、帶入這次的期間與景數、有 NDVI 與有效網目公式、FRAGSTATS 對照', /怎麼算的/.test(mSum) && mSecs === 10 && /這次查詢：2025-11-01～2026-11-01，5 景，圖幅 MGRS-51RUH/.test(mBody) && /NDVI = \(ρ_NIR − ρ_red\)/.test(mBody) && /m_eff = Σ aᵢ² ／ A/.test(mBody) && /MESH<\/td>/.test(mBody) && /8 鄰接/.test(mBody), `${mSum} | secs=${mSecs} | ${mBody.slice(0, 200)}`);
+check('「這些指標是怎麼算的」區塊：10 個小節、帶入這次的期間與景數、有 NDVI 與有效網目公式、FRAGSTATS 對照', /怎麼算的/.test(mSum) && mSecs === 10 && /這次查詢：2025-11-01～2026-11-01，5 景，圖幅 51RUH/.test(mBody) && /NDVI = \(ρ_NIR − ρ_red\)/.test(mBody) && /m_eff = Σ aᵢ² ／ A/.test(mBody) && /MESH<\/td>/.test(mBody) && /8 鄰接/.test(mBody), `${mSum} | secs=${mSecs} | ${mBody.slice(0, 200)}`);
 
 // 英文
 await page.evaluate(() => window.__qiData.setLang('en'));
